@@ -1,0 +1,26 @@
+# Dependencies
+node_modules/
+dist/
+build/
+.env
+
+# Large Assets
+*.pdf
+*.jpg
+*.jpeg
+*.png
+*.zip
+*.jar
+
+# Keep some assets if needed (example)
+# !src/assets/*.png
+
+# Database and Uploads
+server/dev.db
+server/thumbnails/
+server/uploads/
+unpacked/
+
+# System Files
+.DS_Store
+Thumbs.db

@@ -1,0 +1,89 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model Store {
+  id        String     @id @default(uuid())
+  name      String
+  groups    Group[]
+  devices   Device[]
+  medias    Media[]
+  playlists Playlist[]
+  createdAt DateTime   @default(now())
+  updatedAt DateTime   @updatedAt
+}
+
+model Group {
+  id        String     @id @default(uuid())
+  name      String
+  storeId   String?
+  store     Store?     @relation(fields: [storeId], references: [id])
+  devices   Device[]
+  playlists Playlist[]
+  createdAt DateTime   @default(now())
+  updatedAt DateTime   @updatedAt
+}
+
+model Device {
+  id         String    @id @default(uuid())
+  name       String
+  macAddress String?   @unique
+  status     String    @default("offline") // online, offline
+  ip         String?
+  cpuUsage   Float?
+  memUsage   Float?
+  lastSeen   DateTime?
+  groupId    String?
+  group      Group?    @relation(fields: [groupId], references: [id])
+  storeId    String?
+  store      Store?    @relation(fields: [storeId], references: [id])
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+}
+
+model Media {
+  id        String   @id @default(uuid())
+  filename  String
+  path      String
+  type      String   // video, image
+  duration  Int?     // in seconds
+  size      Int?     // bytes
+  storeId   String?
+  store     Store?   @relation(fields: [storeId], references: [id])
+  createdAt DateTime @default(now())
+  
+  playlists PlaylistMedia[]
+}
+
+model Playlist {
+  id        String   @id @default(uuid())
+  name      String
+  groupId   String
+  group     Group    @relation(fields: [groupId], references: [id])
+  storeId   String?
+  store     Store?   @relation(fields: [storeId], references: [id])
+  medias    PlaylistMedia[]
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model PlaylistMedia {
+  id             String   @id @default(uuid())
+  playlistId     String
+  mediaId        String
+  order          Int
+  duration       Int?     // 개별 미디어 재생 시간 오버라이드
+  targetDeviceId String?  // 특정 기기 전용 필터링 (null이면 전체)
+  transition     String?  @default("fade") // 전환 효과 (fade, slide, none 등)
+  transitionTime Int?     @default(1000)
+  
+  playlist       Playlist @relation(fields: [playlistId], references: [id])
+  media          Media    @relation(fields: [mediaId], references: [id])
+
+  @@unique([playlistId, order])
+}
