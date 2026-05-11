@@ -1,0 +1,19 @@
+{
+  "name": "signagepro",
+  "version": "1.0.0",
+  "description": "오설록 제주점 디지털 사이니지 원격 관리 시스템",
+  "scripts": {
+    "server": "cd server && npm run dev",
+    "dashboard": "cd dashboard && npm run dev",
+    "dev": "concurrently --names \"SERVER,DASHBOARD\" --prefix-colors \"cyan,magenta\" \"npm run server\" \"npm run dashboard\"",
+    "install:all": "cd server && npm install && cd ../dashboard && npm install",
+    "db:generate": "cd server && npx prisma generate",
+    "db:push": "cd server && npx prisma db push",
+    "db:studio": "cd server && npx prisma studio",
+    "db:migrate": "cd server && npx prisma migrate dev"
+  },
+  "devDependencies": {
+    "concurrently": "^9.2.1",
+    "sharp": "^0.34.5"
+  }
+}

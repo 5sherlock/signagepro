@@ -24,3 +24,21 @@ unpacked/
 # System Files
 .DS_Store
 Thumbs.db
+
+# IDEs
+.idea/
+*.iml
+.vscode/
+
+# Build and Temp
+dist/
+build/
+dist_electron/
+unpacked/
+scratch/
+out/
+
+# Database and Uploads
+server/prisma/dev.db
+server/thumbnails/
+server/uploads/

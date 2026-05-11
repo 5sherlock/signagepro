@@ -1,0 +1,110 @@
+/* ── TransitionDivider ───────────────────────────────── */
+.transition-divider {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  padding: 0 6px;
+  cursor: pointer;
+  flex-shrink: 0;
+  min-width: 64px;
+}
+
+.transition-divider:hover .transition-divider-badge {
+  background: rgba(59,130,246,0.25);
+  border-color: rgba(59,130,246,0.6);
+  color: #93C5FD;
+}
+
+.transition-divider-line {
+  width: 1px;
+  flex: 1;
+  min-height: 16px;
+  background: rgba(255,255,255,0.12);
+}
+
+.transition-divider-badge {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  background: rgba(255,255,255,0.05);
+  border: 1px solid rgba(255,255,255,0.1);
+  border-radius: 6px;
+  padding: 5px 8px;
+  transition: all 0.2s;
+  white-space: nowrap;
+}
+
+.transition-divider-icon {
+  font-size: 9px;
+  color: rgba(255,255,255,0.4);
+}
+
+.transition-divider-effect {
+  font-size: 10px;
+  color: rgba(255,255,255,0.7);
+  font-weight: 500;
+}
+
+.transition-divider-time {
+  font-size: 9px;
+  color: rgba(255,255,255,0.4);
+}
+
+/* ── TransitionPreviewModal 타임라인 ─────────────────── */
+.trans-timeline {
+  display: flex;
+  align-items: stretch;
+  gap: 2px;
+  margin-top: 10px;
+  height: 28px;
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.trans-timeline-seg {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  min-width: 40px;
+}
+
+.trans-timeline-label {
+  font-size: 9px;
+  color: rgba(255,255,255,0.35);
+  white-space: nowrap;
+  transition: color 0.2s;
+}
+
+.trans-timeline-label.active {
+  color: #93C5FD;
+  font-weight: 600;
+}
+
+.trans-timeline-bar {
+  width: 100%;
+  height: 6px;
+  background: rgba(255,255,255,0.08);
+  border-radius: 3px;
+  transition: background 0.3s;
+}
+
+.trans-timeline-bar.active {
+  background: #3B82F6;
+}
+
+.trans-timeline-bar.done {
+  background: rgba(59,130,246,0.35);
+}
+
+.trans-timeline-bar.trans.active {
+  background: #F59E0B;
+}
+
+.trans-timeline-bar.trans.done {
+  background: rgba(245,158,11,0.35);
+}

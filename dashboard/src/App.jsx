@@ -2,9 +2,8 @@ import { useState, useEffect } from 'react';
 import { Activity, Monitor, Film, Settings, LayoutGrid, Plus } from 'lucide-react';
 import { io } from 'socket.io-client';
 import GroupManager from './components/GroupManager';
+import { SOCKET_URL } from './config';
 import MediaManager from './components/MediaManager';
-
-const SOCKET_URL = 'http://localhost:3000';
 
 function DevicePreview({ groupId, deviceId }) {
   const [playlist, setPlaylist] = useState([]);
@@ -81,7 +80,7 @@ function DevicePreview({ groupId, deviceId }) {
   let transitionClass = '';
   if (transType === 'slide') transitionClass = 'preview-slide';
   else if (transType === 'fade') transitionClass = 'preview-fade';
-  else if (transType === 'crossfade') transitionClass = 'preview-crossfade';
+  else if (transType === 'dissolve') transitionClass = 'preview-dissolve';
 
   const renderMedia = (item) => {
     if (!item) return null;
@@ -104,10 +103,14 @@ function DevicePreview({ groupId, deviceId }) {
 
   return (
     <div style={{ position: 'relative', width: '100%', height: '100%', overflow: 'hidden', background: '#000' }}>
-      {/* 이전 미디어 (전환 중일 때 서서히 사라짐) */}
-      {prevItem && isTransitioning && transType === 'crossfade' && (
+      {/* 이전 미디어 (전환 중일 때 사라짐) */}
+      {prevItem && isTransitioning && (transType === 'dissolve' || transType === 'fade' || transType === 'slide') && (
         <div 
-          className="preview-fade-out"
+          className={
+            transType === 'fade' ? 'preview-fade-out' : 
+            transType === 'dissolve' ? 'preview-dissolve-out' : 
+            'preview-slide-out'
+          }
           style={{ 
             position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', zIndex: 1,
             '--trans-time': `${transTime}ms`
@@ -141,7 +144,7 @@ function App() {
   const [gridLayout, setGridLayout] = useState('auto');
 
   const fetchDevices = () => {
-    fetch(`${SOCKET_URL}/api/devices`)
+    fetch(`${SOCKET_URL}/api/devices`, { cache: 'no-store' })
       .then(res => res.json())
       .then(data => {
         const mappedDevices = data.map(d => ({
@@ -205,6 +208,8 @@ function App() {
   }, []);
 
   const filteredDevices = devices.filter(d => {
+    // 그룹에 미배정된 기기는 대시보드에서 제외
+    if (!d.groupId) return false;
     if (selectedStoreId === 'all') return true;
     if (selectedStoreId === 'unassigned') return !d.storeId;
     return d.storeId === selectedStoreId;
@@ -275,7 +280,7 @@ function App() {
                   <option value="3x3">3 x 3</option>
                   <option value="4x3">4 x 3</option>
                 </select>
-                <button className="btn btn-primary" style={{ marginLeft: '12px' }}>
+                <button className="btn btn-primary" style={{ marginLeft: '12px' }} onClick={() => setActiveTab('groups')}>
                   <Plus size={18} />
                   기기 추가
                 </button>
@@ -353,12 +358,64 @@ function App() {
 
         {activeTab === 'groups' && (
           <div className="content-area" style={{ paddingTop: '10px' }}>
-            <GroupManager devices={devices} fetchDevices={fetchDevices} stores={stores} fetchStores={fetchStores} groups={groups} fetchGroups={fetchGroups} />
+            <GroupManager 
+              devices={devices} 
+              fetchDevices={fetchDevices} 
+              stores={stores} 
+              fetchStores={fetchStores} 
+              groups={groups} 
+              fetchGroups={fetchGroups} 
+              selectedStoreId={selectedStoreId}
+              setSelectedStoreId={setSelectedStoreId}
+            />
           </div>
         )}
         {activeTab === 'media' && (
           <div className="content-area" style={{ paddingTop: '10px' }}>
-            <MediaManager stores={stores} groups={groups} devices={devices} fetchDevices={fetchDevices} />
+            <MediaManager 
+              stores={stores} 
+              groups={groups} 
+              devices={devices}
+              fetchDevices={fetchDevices}
+              fetchGroups={fetchGroups}
+              selectedStoreId={selectedStoreId}
+              setSelectedStoreId={setSelectedStoreId}
+            />
+          </div>
+        )}
+        {activeTab === 'settings' && (
+          <div className="content-area">
+            <header className="header">
+              <h1 className="header-title">환경설정</h1>
+            </header>
+            <div className="glass-card" style={{ maxWidth: '600px', padding: '30px', marginTop: '20px' }}>
+              <h2 style={{ marginBottom: '20px', fontSize: '1.2rem' }}>서버 연결 설정</h2>
+              <div style={{ marginBottom: '20px' }}>
+                <label style={{ display: 'block', marginBottom: '8px', color: 'var(--text-secondary)' }}>중앙 서버 주소 (API/Socket)</label>
+                <input 
+                  type="text" 
+                  className="glass-input" 
+                  placeholder="예: http://192.168.0.10:3000"
+                  defaultValue={localStorage.getItem('SIGNAGE_SERVER_URL') || SOCKET_URL}
+                  id="server-url-input"
+                  style={{ width: '100%', padding: '12px' }}
+                />
+                <p style={{ marginTop: '8px', fontSize: '0.8rem', color: '#94a3b8' }}>
+                  입력된 주소로 모든 데이터 요청 및 실시간 통신이 이루어집니다. 변경 후 앱이 다시 시작됩니다.
+                </p>
+              </div>
+              <button 
+                className="btn btn-primary"
+                onClick={() => {
+                  const val = document.getElementById('server-url-input').value;
+                  localStorage.setItem('SIGNAGE_SERVER_URL', val);
+                  alert('서버 주소가 저장되었습니다. 앱을 재시작합니다.');
+                  window.location.reload();
+                }}
+              >
+                설정 저장 및 적용
+              </button>
+            </div>
           </div>
         )}
       </main>

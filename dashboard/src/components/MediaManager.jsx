@@ -1,1120 +1,836 @@
-import React, { useState, useEffect, useRef, useMemo } from 'react';
-import { Film, Image as ImageIcon, Upload, Play, Clock, Save, Trash2, GripVertical, Eye, X, ChevronLeft, ChevronRight, ChevronDown, ChevronUp, Maximize, Minimize } from 'lucide-react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
+import { SOCKET_URL } from '../config';
+import {
+  Plus,
+  Trash2,
+  Upload,
+  ChevronRight,
+  ChevronLeft,
+  Play,
+  Pause,
+  X,
+  ChevronDown,
+  Clock,
+  ExternalLink,
+  Save,
+  Monitor,
+  ArrowLeft,
+  ArrowRight,
+  ArrowUp,
+  ArrowDown
+} from 'lucide-react';
+import './PreviewModal.css';
+import './MediaManager.css';
 
-const SOCKET_URL = 'http://localhost:3000';
+const API = SOCKET_URL;
 
-export default function MediaManager({ stores, groups, devices, fetchDevices }) {
-  const [selectedStoreId, setSelectedStoreId] = useState('');
-  const [selectedGroupId, setSelectedGroupId] = useState('');
-  const [previewData, setPreviewData] = useState(null); // { playlist, startIndex }
-  const [libraryCollapsed, setLibraryCollapsed] = useState(false);
-  const [collapsedDevices, setCollapsedDevices] = useState({}); // { deviceId: boolean }
-  
-  const [mediaList, setMediaList] = useState([]);
-  const [playlist, setPlaylist] = useState([]);
-  const [initialPlaylist, setInitialPlaylist] = useState([]);
-  const [syncStatus, setSyncStatus] = useState('idle'); // 'idle', 'syncing', 'success'
-  
-  // 새로 추가된 상태
-  const [syncEnabled, setSyncEnabled] = useState(false); // 재생 동기화 여부
-  const [initialSyncEnabled, setInitialSyncEnabled] = useState(false);
-  
-  const [uploading, setUploading] = useState(false);
-  const [isModalOpen, setIsModalOpen] = useState(false);
-  
-  const [newDeviceId, setNewDeviceId] = useState('');
-  const [newDeviceName, setNewDeviceName] = useState('');
-  
-  const fileInputRef = useRef(null);
+// ── 미디어 렌더러 ─────────────────────────────────────────
+const MediaThumb = ({ path, style = {} }) => {
+  if (!path) return <div style={{ background: '#111', ...style }} />;
+  const url = `${API}${path}`;
+  const isVideo = /\.(mp4|webm|mov)$/i.test(path);
+  if (isVideo) return <video src={url} muted loop autoPlay playsInline style={{ objectFit: 'contain', ...style }} />;
+  return <img src={url} alt="" style={{ objectFit: 'contain', ...style }} />;
+};
 
-  // 초기 설정
-  useEffect(() => {
-    if (stores.length > 0 && !selectedStoreId) {
-      setSelectedStoreId(stores[0].id);
+// ── 트랙 효과 오버레이 계산 ─────────────────────────────────────
+// 실제 적용되는 전환 효과를 트랙에 시각적으로 표현하는 그라디언트 반환
+const getTrackOverlay = (transType, transTime, preWait, track) => {
+  const halfTrans = transTime / 2;
+  if (track === 1) {
+    const barTime = preWait + transTime;
+    const preWaitPct = (preWait / barTime) * 100;
+    const midPct = ((preWait + halfTrans) / barTime) * 100;
+    if (transType === 'fade') {
+      // PRE_WAIT 동안 투명 → 전환 절반까지 검정으로 페이드 → 끝까지 검정
+      return `linear-gradient(90deg, transparent 0%, transparent ${preWaitPct}%, #000 ${midPct}%, #000 100%)`;
     }
-  }, [stores, selectedStoreId]);
-
-  useEffect(() => {
-    const storeGroups = groups.filter(g => g.storeId === selectedStoreId);
-    if (storeGroups.length > 0) {
-      setSelectedGroupId(storeGroups[0].id);
-    } else {
-      setSelectedGroupId('');
+    if (transType === 'dissolve') {
+      // PRE_WAIT 동안 투명 → 전환 끝까지 점진적 검정(반투명)
+      return `linear-gradient(90deg, transparent 0%, transparent ${preWaitPct}%, rgba(0,0,0,0.7) 100%)`;
     }
-  }, [selectedStoreId, groups]);
-
-  // 미디어 목록 불러오기
-  useEffect(() => {
-    if (!selectedStoreId) return;
-    fetch(`${SOCKET_URL}/api/media?storeId=${selectedStoreId}`)
-      .then(res => res.json())
-      .then(setMediaList)
-      .catch(err => console.error(err));
-  }, [selectedStoreId]);
-
-  // 재생목록 불러오기
-  useEffect(() => {
-    if (!selectedGroupId) {
-      setPlaylist([]);
-      setInitialPlaylist([]);
-      return;
+    if (transType === 'slide') {
+      // 슬라이드: 트랙을 사선 또는 컷 지점에서 명확히 분리된 느낌으로 표현
+      return `linear-gradient(90deg, rgba(59,130,246,0.5) 0%, rgba(59,130,246,0.5) ${preWaitPct}%, transparent ${preWaitPct}%, transparent 100%)`;
     }
-    fetch(`${SOCKET_URL}/api/groups/${selectedGroupId}/playlist`)
-      .then(res => res.json())
-      .then(data => {
-        if (data && data.medias) {
-          // 정렬된 medias 배열을 state로 저장
-          const mapped = data.medias.map(pm => ({
-            ...pm.media, // 원본 media 정보
-            duration: pm.duration, // 설정된 재생 시간
-            playlistMediaId: pm.id, // 연결 ID
-            targetDeviceId: pm.targetDeviceId || null,
-            transition: pm.transition || 'fade' // 기본 전환 효과
-          }));
-          setPlaylist(mapped);
-          setInitialPlaylist(JSON.parse(JSON.stringify(mapped)));
-        } else {
-          setPlaylist([]);
-          setInitialPlaylist([]);
-        }
-        setSyncStatus('idle');
-      })
-      .catch(err => console.error(err));
-  }, [selectedGroupId]);
+    return 'transparent';
+  } else {
+    const barTime = transTime + 1000;
+    const halfTrans = transTime / 2;
+    const halfPct = (halfTrans / barTime) * 100;
+    const endPct = (transTime / barTime) * 100;
+    if (transType === 'fade') {
+      // 시작에 검정 → 전환 절반에서 페이드 인 → 끝까지 투명
+      return `linear-gradient(90deg, #000 0%, #000 ${halfPct}%, transparent ${endPct}%, transparent 100%)`;
+    }
+    if (transType === 'dissolve') {
+      // 시작 반투명 검정 → 전환 끝까지 페이드 아웃
+      return `linear-gradient(90deg, rgba(0,0,0,0.7) 0%, transparent ${endPct}%, transparent 100%)`;
+    }
+    if (transType === 'slide') {
+      return `linear-gradient(90deg, transparent 0%, transparent ${endPct}%, rgba(245,158,11,0.5) ${endPct}%, rgba(245,158,11,0.5) 100%)`;
+    }
+    return 'transparent';
+  }
+};
 
-  // 변경사항 감지 (스마트 비교)
-  const stagedDeviceIds = useMemo(() => {
-    const changed = new Set();
-    const currentDevices = [...new Set([...playlist.map(i => i.targetDeviceId), ...initialPlaylist.map(i => i.targetDeviceId)])].filter(Boolean);
-    
-    currentDevices.forEach(dId => {
-      const curr = playlist.filter(i => i.targetDeviceId === dId);
-      const init = initialPlaylist.filter(i => i.targetDeviceId === dId);
-      
-      if (curr.length !== init.length) { 
-        changed.add(dId); 
-        return; 
-      }
-      
-      for (let i = 0; i < curr.length; i++) {
-        if (curr[i].id !== init[i].id || curr[i].duration !== init[i].duration || curr[i].transition !== init[i].transition) {
-          changed.add(dId); 
-          break;
-        }
-      }
-    });
-    return Array.from(changed);
-  }, [playlist, initialPlaylist]);
+// ── 프리미어 스타일 필름스트립 (트랙 폭에 비례해 썸네일 반복) ────────────
+const TrackFilmstrip = ({ item }) => {
+  if (!item?.media?.path) return null;
+  const url = `${API}${item.media.path}`;
+  return (
+    <div 
+      className="track-filmstrip-background" 
+      style={{ 
+        backgroundImage: `url(${url})`,
+        backgroundRepeat: 'repeat-x',
+        backgroundSize: 'auto 100%'
+      }} 
+    />
+  );
+};
+
+// ── 슬라이드쇼 미리보기 모달 ─────────────────────────────
+// ── 슬라이드쇼 미리보기 모달 (전체 재생 목록 고도화) ─────────────────────────────
+const PlaylistPreviewModal = ({ items, deviceName, onClose }) => {
+  const [isPlaying, setIsPlaying] = useState(true);
+  const [currentTime, setCurrentTime] = useState(0); // ms
+  const lastUpdateRef = useRef(performance.now());
+  
+  const totalDuration = items.reduce((acc, item) => acc + (Number(item.duration || 10) * 1000), 0);
 
   useEffect(() => {
-    console.log('Playlist state updated. New length:', playlist.length);
-  }, [playlist]);
-
-  const hasChanges = useMemo(() => {
-    if (syncEnabled !== initialSyncEnabled) return true;
-    if (playlist.length !== initialPlaylist.length) return true;
-    
-    // 개별 항목 비교
-    for (let i = 0; i < playlist.length; i++) {
-      const p = playlist[i];
-      const init = initialPlaylist[i];
-      if (
-        p.id !== init.id || 
-        p.duration !== init.duration || 
-        p.transition !== init.transition || 
-        p.transitionTime !== init.transitionTime ||
-        p.targetDeviceId !== init.targetDeviceId
-      ) {
-        return true;
+    let raf;
+    const animate = (now) => {
+      if (isPlaying) {
+        const delta = now - lastUpdateRef.current;
+        setCurrentTime(prev => (prev + delta) % totalDuration);
       }
-    }
-    return false;
-  }, [playlist, initialPlaylist, syncEnabled, initialSyncEnabled]);
+      lastUpdateRef.current = now;
+      raf = requestAnimationFrame(animate);
+    };
+    raf = requestAnimationFrame(animate);
+    return () => cancelAnimationFrame(raf);
+  }, [isPlaying, totalDuration]);
 
-  // 다중 미디어 업로드
-  const handleUpload = async (e) => {
-    const files = Array.from(e.target.files);
-    if (files.length === 0 || !selectedStoreId) return;
-
-    setUploading(true);
-    
-    try {
-      const uploadPromises = files.map(file => {
-        const formData = new FormData();
-        formData.append('file', file);
-        formData.append('storeId', selectedStoreId);
-        
-        return fetch(`${SOCKET_URL}/api/media`, {
-          method: 'POST',
-          body: formData
-        }).then(res => res.json());
-      });
-
-      const newMedias = await Promise.all(uploadPromises);
-      setMediaList(prev => [...newMedias, ...prev]);
-    } catch (err) {
-      console.error('업로드 실패', err);
-      alert('일부 파일 업로드에 실패했습니다.');
-    } finally {
-      setUploading(false);
-      if (fileInputRef.current) fileInputRef.current.value = '';
-    }
-  };
-
-  // 라이브러리 항목 삭제
-  const handleLibraryDelete = async (mediaId) => {
-    if (!window.confirm('서버에서 이 미디어를 완전히 삭제하시겠습니까?')) return;
-    try {
-      const res = await fetch(`${SOCKET_URL}/api/media/${mediaId}`, { method: 'DELETE' });
-      if (res.ok) {
-        setMediaList(prev => prev.filter(m => m.id !== mediaId));
+  const getCurrentInfo = () => {
+    let accumulated = 0;
+    for (let i = 0; i < items.length; i++) {
+      const itemDur = Number(items[i].duration || 10) * 1000;
+      if (currentTime >= accumulated && currentTime < accumulated + itemDur) {
+        return { index: i, item: items[i], accumulated };
       }
-    } catch (err) {
-      console.error('삭제 실패', err);
-      alert('미디어 삭제에 실패했습니다.');
+      accumulated += itemDur;
     }
+    return { index: 0, item: items[0], accumulated: 0 };
   };
 
-  // 라이브러리 전체 삭제
-  const handleDeleteAll = async () => {
-    if (!selectedStoreId || mediaList.length === 0) return;
-    if (!window.confirm('서버에 업로드된 이 사업장의 모든 미디어를 정말 삭제하시겠습니까? (이 작업은 되돌릴 수 없습니다)')) return;
-    
-    try {
-      const res = await fetch(`${SOCKET_URL}/api/media?storeId=${selectedStoreId}`, { method: 'DELETE' });
-      if (res.ok) {
-        setMediaList([]);
-      }
-    } catch (err) {
-      console.error('전체 삭제 실패', err);
-      alert('전체 삭제에 실패했습니다.');
-    }
-  };
-
-  // 모달 내 기기 할당
-  const handleAssignDevice = async (deviceId) => {
-    try {
-      await fetch(`${SOCKET_URL}/api/devices/${deviceId}/group`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ groupId: selectedGroupId, storeId: selectedStoreId })
-      });
-      if (fetchDevices) fetchDevices(); // 기기 목록 새로고침
-    } catch (err) {
-      console.error('기기 할당 실패', err);
-    }
-  };
-
-  // 모달 내 신규 기기 등록 및 할당
-  const handleRegisterAndAssign = async () => {
-    if (!newDeviceId || !newDeviceName) return alert('기기의 물리적 주소(ID)와 별칭을 모두 입력하세요.');
-    try {
-      // 1. 기기 등록 (Upsert)
-      await fetch(`${SOCKET_URL}/api/devices`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ id: newDeviceId, name: newDeviceName, storeId: selectedStoreId })
-      });
-      // 2. 현재 구역으로 할당
-      await fetch(`${SOCKET_URL}/api/devices/${newDeviceId}/group`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ groupId: selectedGroupId, storeId: selectedStoreId })
-      });
-      
-      setNewDeviceId('');
-      setNewDeviceName('');
-      if (fetchDevices) fetchDevices();
-      alert('새 기기가 성공적으로 등록되고 구역에 추가되었습니다.');
-    } catch (err) {
-      console.error(err);
-      alert('기기 등록 실패');
-    }
-  };
-
-  // 드래그 앤 드롭: 라이브러리 -> 재생목록
-  const onDragStartLibrary = (e, media) => {
-    e.dataTransfer.setData('application/json', JSON.stringify(media));
-  };
-
-  const onDropPlaylist = (e) => {
-    e.preventDefault();
-    const mediaStr = e.dataTransfer.getData('application/json');
-    if (!mediaStr) return;
-    const media = JSON.parse(mediaStr);
-    
-    // 재생목록 맨 끝에 추가 (기본 10초)
-    setPlaylist([...playlist, { ...media, duration: 10 }]);
-  };
-
-  // 기기 개별 드롭
-  const onDropDevice = (e, deviceId) => {
-    e.preventDefault();
-    e.stopPropagation(); // 부모 컨테이너(onDropPlaylist)로 이벤트 전달 방지
-    const mediaStr = e.dataTransfer.getData('application/json');
-    if (!mediaStr) return;
-    const media = JSON.parse(mediaStr);
-    
-    setPlaylist([...playlist, { ...media, duration: 10, targetDeviceId: deviceId }]);
-  };
-
-  // 드래그 앤 드롭: 재생목록 순서 변경
-  const [draggedItemIndex, setDraggedItemIndex] = useState(null);
-
-  const onDragStartPlaylist = (e, index) => {
-    setDraggedItemIndex(index);
-    e.dataTransfer.effectAllowed = 'move';
-  };
-
-  const onDragOverPlaylist = (e, index) => {
-    e.preventDefault();
-    if (draggedItemIndex === null || draggedItemIndex === index) return;
-    
-    const items = [...playlist];
-    const draggedItem = items[draggedItemIndex];
-    items.splice(draggedItemIndex, 1);
-    items.splice(index, 0, draggedItem);
-    
-    setDraggedItemIndex(index);
-    setPlaylist(items);
-  };
-
-  // 재생목록에서 항목 제거
-  const removeFromPlaylist = (index) => {
-    const newPlaylist = [...playlist];
-    newPlaylist.splice(index, 1);
-    setPlaylist(newPlaylist);
-  };
-
-  // 시간 수정
-  const updateDuration = (index, value) => {
-    const newPlaylist = [...playlist];
-    newPlaylist[index].duration = parseInt(value, 10) || 10;
-    setPlaylist(newPlaylist);
-  };
-
-  // 전환 효과 수정
-  const updateTransition = (index, value) => {
-    const newPlaylist = [...playlist];
-    newPlaylist[index].transition = value;
-    setPlaylist(newPlaylist);
-  };
-
-  // 전환 시간 수정
-  const updateTransitionTime = (index, value) => {
-    const items = [...playlist];
-    items[index].transitionTime = parseInt(value) || 1000;
-    setPlaylist(items);
-  };
-
-  // 재생목록 저장 및 배포
-  const savePlaylist = async () => {
-    if (!selectedGroupId) return;
-
-    console.log('Saving playlist. Item count:', playlist.length);
-    setSyncStatus('syncing');
-
-    const items = playlist.map(item => ({
-      mediaId: item.id,
-      duration: item.duration,
-      targetDeviceId: item.targetDeviceId,
-      transition: item.transition,
-      transitionTime: item.transitionTime
-    }));
-
-    try {
-      const response = await fetch(`${SOCKET_URL}/api/groups/${selectedGroupId}/playlist`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ items })
-      });
-      const data = await response.json();
-      
-      if(data.success) {
-        console.log('Save successful');
-        const currentPlaylistCopy = JSON.parse(JSON.stringify(playlist));
-        setInitialPlaylist(currentPlaylistCopy);
-        setInitialSyncEnabled(syncEnabled);
-        setSyncStatus('success');
-        setTimeout(() => setSyncStatus('idle'), 3000);
-      } else {
-        console.error('Save failed:', data.error);
-        setSyncStatus('idle');
-        alert('저장에 실패했습니다: ' + (data.error || '알 수 없는 오류'));
-      }
-    } catch (err) {
-      console.error('저장 네트워크 에러:', err);
-      setSyncStatus('idle');
-      alert('서버와 통신 중 오류가 발생했습니다.');
-    }
-  };
-
-  const storeGroups = groups.filter(g => g.storeId === selectedStoreId);
+  const { index, item, accumulated } = getCurrentInfo();
+  const nextItem = items[(index + 1) % items.length];
+  const transTime = Number(item.transitionTime || 1000);
+  const itemDurMs = Number(item.duration || 10) * 1000;
+  
+  // 전환 진행률 계산 (0 ~ 1)
+  const remainingTime = itemDurMs - (currentTime - accumulated);
+  const isTransitioning = remainingTime < transTime && items.length > 1;
+  const transProgress = isTransitioning ? Math.min(1, Math.max(0, (transTime - remainingTime) / transTime)) : 0;
 
   return (
-    <div style={{ display: 'flex', gap: '20px', height: '100%', flexDirection: 'column' }}>
-      
-      {/* 상단 컨트롤 바 */}
-      <div className="glass-card" style={{ flex: 'none', height: 'auto', padding: '12px 20px', display: 'flex', flexDirection: 'row', gap: '20px', alignItems: 'center' }}>
-        <h2 style={{ display: 'flex', alignItems: 'center', gap: '8px', margin: 0, fontSize: '1.1rem' }}>
-          <Film size={20} /> 미디어 편성
-        </h2>
-        
-        <div style={{ width: '1px', height: '30px', background: 'var(--glass-border)' }}></div>
-        
-        <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-          <span style={{ color: 'var(--text-secondary)' }}>사업장:</span>
-          <select value={selectedStoreId} onChange={e => setSelectedStoreId(e.target.value)} className="glass-select">
-            {stores.length === 0 && <option value="">없음</option>}
-            {stores.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
-          </select>
+    <div className="preview-modal-overlay">
+      <div className="preview-modal-content playlist-preview-v4">
+        <div className="preview-header">
+          <div className="header-info">
+            <Monitor size={16} />
+            <span className="device-label">{deviceName}</span>
+            <span className="playlist-label">PLAYLIST TIMELINE</span>
+          </div>
+          <button className="preview-close-btn" onClick={onClose}><X size={20} /></button>
         </div>
 
-        <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-          <span style={{ color: 'var(--text-secondary)' }}>편성 구역(Group):</span>
-          <select value={selectedGroupId} onChange={e => setSelectedGroupId(e.target.value)} className="glass-select">
-            {storeGroups.length === 0 && <option value="">구역 없음</option>}
+        <div className="preview-main-display">
+          <div className="preview-aspect-ratio-box">
+            <div className="preview-container" style={{ background: '#000' }}>
+              {/* 기본 레이어: 현재 아이템 (FADE일 경우 50%까지 투명해짐) */}
+              <div
+                className="preview-layer"
+                style={{
+                  opacity: (isTransitioning && item.transition?.toLowerCase() === 'fade') 
+                    ? Math.max(0, 1 - (transProgress * 2)) 
+                    : 1,
+                  transform: (isTransitioning && item.transition?.toLowerCase() === 'slide')
+                    ? `translateX(${-transProgress * 100}%)`
+                    : 'none'
+                }}
+              >
+                <MediaThumb path={item.media?.path || item.path} style={{ width: '100%', height: '100%', objectFit: 'fill' }} />
+              </div>
+              
+              {/* 전환 레이어: 다음 아이템 */}
+              <div
+                className="preview-layer transition-layer"
+                style={{
+                  opacity: (isTransitioning)
+                    ? (item.transition?.toLowerCase() === 'fade'
+                        ? Math.max(0, (transProgress - 0.5) * 2) // 50% 이후부터 나타남
+                        : item.transition?.toLowerCase() === 'slide'
+                          ? 1 // SLIDE: 항상 불투명, 위치만 이동
+                          : transProgress // DISSOLVE: 교차 페이드
+                      )
+                    : 0,
+                  transform: (isTransitioning && item.transition?.toLowerCase() === 'slide') ? `translateX(${(1 - transProgress) * 100}%)` : 'none',
+                  zIndex: isTransitioning ? 10 : -1,
+                  visibility: isTransitioning ? 'visible' : 'hidden',
+                  pointerEvents: 'none',
+                  transition: isTransitioning ? 'none' : 'opacity 0.2s linear'
+                }}
+              >
+                <MediaThumb path={nextItem.media?.path || nextItem.path} style={{ width: '100%', height: '100%', objectFit: 'fill' }} />
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div className="playlist-timeline-bar">
+          {/* 타임라인 조각들 (썸네일 + 파일명 + 전환효과) */}
+          <div className="timeline-track-container">
+            <div className="timeline-track">
+              {items.map((it, i) => {
+                const isCurrent = index === i;
+                const itTrans = it.transition || 'fade';
+                const itTransTime = it.transitionTime || 1000;
+                
+                return (
+                  <div 
+                    key={i} 
+                    className={`timeline-chunk ${isCurrent ? 'active' : ''}`}
+                    style={{ width: `${((Number(it.duration || 10) * 1000) / totalDuration) * 100}%` }}
+                  >
+                    <div className="chunk-content">
+                      <div className="chunk-thumb">
+                        <MediaThumb path={it.media?.path || it.path} style={{ width: '100%', height: '100%' }} />
+                      </div>
+                      <div className="chunk-label">{it.media?.filename || 'Media'}</div>
+                    </div>
+                    <div className="chunk-transition-label">
+                      {itTrans.toUpperCase()} {(itTransTime/1000).toFixed(1)}s
+                    </div>
+                  </div>
+                );
+              })}
+              <div className="timeline-indicator-line" style={{ left: `${(currentTime / totalDuration) * 100}%` }} />
+            </div>
+          </div>
+
+          {/* 2. 하단: 독립형 슬라이드 바 (조작 전용) */}
+          <div className="dedicated-seekbar-container">
+            <input 
+              type="range" 
+              className="main-seekbar"
+              min={0}
+              max={totalDuration}
+              step={10}
+              value={currentTime}
+              onMouseDown={() => setIsPlaying(false)} // 조작 시 정지
+              onChange={(e) => {
+                const newTime = Number(e.target.value);
+                setCurrentTime(newTime);
+                lastUpdateRef.current = performance.now();
+              }}
+            />
+            <div className="seekbar-progress-fill" style={{ width: `${(currentTime / totalDuration) * 100}%` }} />
+          </div>
+
+          <div className="timeline-controls">
+            <div className="controls-left"></div>
+
+            <div className="controls-center">
+              <button className="play-pause-btn" onClick={() => setIsPlaying(!isPlaying)}>
+                {isPlaying ? <Pause size={24} fill="currentColor" /> : <Play size={24} fill="currentColor" />}
+              </button>
+              <div className="time-info">
+                <span className="current">{(currentTime / 1000).toFixed(1)}s</span>
+                <span className="total">/ {(totalDuration / 1000).toFixed(1)}s</span>
+              </div>
+            </div>
+
+            <div className="controls-right"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+// ── 전환 효과 전용 미리보기 모달 (고도화 버전) ───────────────────────────
+const TransitionPreviewModal = ({ currentItem, nextItem, onChange, onClose }) => {
+  const [isPlaying, setIsPlaying] = useState(true);
+  const [currentTime, setCurrentTime] = useState(0); // ms
+  const [transType, setTransType] = useState(currentItem.transition || 'fade');
+  const [slideDir, setSlideDir] = useState(currentItem.slideDirection || 'right');
+  const transTime = currentItem.transitionTime || 1000;
+
+  const PRE_WAIT = 1000; // 전환 전 1초 대기
+  const TOTAL_TIME = PRE_WAIT + transTime + 1000; // 총 3초 내외
+  const lastUpdateRef = useRef(performance.now());
+
+  const handleTransChange = (t) => {
+    setTransType(t);
+    if (onChange) onChange({ transition: t });
+  };
+
+  const handleSlideDir = (dir) => {
+    setSlideDir(dir);
+    if (onChange) onChange({ slideDirection: dir });
+  };
+
+  const handleTimeChange = (ms) => {
+    if (onChange) onChange({ transitionTime: ms });
+  };
+
+  useEffect(() => {
+    let raf;
+    const animate = (now) => {
+      if (isPlaying) {
+        const delta = now - lastUpdateRef.current;
+        setCurrentTime(prev => (prev + delta) % TOTAL_TIME);
+      }
+      lastUpdateRef.current = now;
+      raf = requestAnimationFrame(animate);
+    };
+    
+    raf = requestAnimationFrame(animate);
+    return () => cancelAnimationFrame(raf);
+  }, [isPlaying, TOTAL_TIME]);
+
+  const renderMedia = (item) => {
+    if (!item?.media?.path) return <div className="preview-media-empty">미디어 없음</div>;
+    const isVideo = /\.(mp4|webm|mov)$/i.test(item.media.path);
+    const url = `${API}${item.media.path}`;
+    // SLIDE는 여백 방지를 위해 cover, 나머지는 원본 비율 유지(contain)
+    const fit = transType === 'slide' ? 'cover' : 'contain';
+    return isVideo ? <video src={url} autoPlay muted style={{ width: '100%', height: '100%', objectFit: fit }} /> : <img src={url} alt="" style={{ width: '100%', height: '100%', objectFit: fit }} />;
+  };
+
+  // 현재 시간에 따른 애니메이션 계산
+  const getStyles = () => {
+    const progress = Math.max(0, Math.min(1, (currentTime - PRE_WAIT) / transTime));
+
+    if (transType === 'dissolve') {
+      return {
+        layer1: { opacity: 1 - progress, zIndex: 2 },
+        layer2: { opacity: progress, zIndex: 1 }
+      };
+    }
+
+    if (transType === 'fade') {
+      // 페이드: 검정으로 사라졌다 나타남
+      const l1Opacity = progress < 0.5 ? 1 - (progress * 2) : 0;
+      const l2Opacity = progress >= 0.5 ? (progress - 0.5) * 2 : 0;
+      return {
+        layer1: { opacity: l1Opacity, zIndex: 2 },
+        layer2: { opacity: l2Opacity, zIndex: 1 }
+      };
+    }
+    if (transType === 'slide') {
+      // 슬라이드 방향: right=다음이 오른쪽에서, left=왼쪽에서, up=아래에서, down=위에서
+      const isVertical = (slideDir === 'up' || slideDir === 'down');
+      const axis = isVertical ? 'Y' : 'X';
+      // right/up: layer1이 음의 방향으로, layer2가 양의 위치에서 진입
+      // left/down: 반대
+      const dir = (slideDir === 'right' || slideDir === 'up') ? -1 : 1;
+      return {
+        layer1: { transform: `translate${axis}(${dir * progress * 100}%)`, zIndex: 2 },
+        layer2: { transform: `translate${axis}(${-dir * (1 - progress) * 100}%)`, zIndex: 1 }
+      };
+    }
+    return { layer1: { opacity: 1 }, layer2: { opacity: 0 } };
+  };
+
+  const styles = getStyles();
+
+  return (
+    <div className="preview-modal-overlay" onClick={onClose}>
+      <div className="preview-modal transition-editor-box" onClick={e => e.stopPropagation()}>
+        <div className="editor-main-view">
+          <div className="transition-preview-container">
+            <div className="transition-layer" style={{ ...styles.layer1, transition: 'none' }}>
+              {renderMedia(currentItem)}
+            </div>
+            <div className="transition-layer" style={{ ...styles.layer2, transition: 'none' }}>
+              {renderMedia(nextItem)}
+            </div>
+          </div>
+          
+          <button className="preview-close-fixed" onClick={onClose}><X size={24} /></button>
+        </div>
+
+        {/* 하단 컨트롤 및 타임라인 */}
+        <div className="editor-controls">
+          <div className="control-bar">
+            <button className="ctrl-btn" onClick={() => setIsPlaying(!isPlaying)}>
+              {isPlaying ? <Pause size={20} fill="currentColor" /> : <Play size={20} fill="currentColor" />}
+            </button>
+            
+            <div className="trans-selector">
+              <span className="label">EFFECT</span>
+              <div className="trans-buttons">
+                {['fade', 'slide', 'dissolve'].map(t => (
+                  <button
+                    key={t}
+                    className={`trans-opt ${transType === t ? 'active' : ''}`}
+                    onClick={() => handleTransChange(t)}
+                  >
+                    {t.toUpperCase()}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {transType === 'slide' && (
+              <div className="slide-dir-selector">
+                <span className="label">DIRECTION</span>
+                <div className="slide-dir-buttons">
+                  {[
+                    { dir: 'right', Icon: ArrowLeft, title: '오른쪽 → 왼쪽 (다음이 오른쪽에서)' },
+                    { dir: 'left',  Icon: ArrowRight, title: '왼쪽 → 오른쪽 (다음이 왼쪽에서)' },
+                    { dir: 'up',    Icon: ArrowUp, title: '아래 → 위 (다음이 아래에서)' },
+                    { dir: 'down',  Icon: ArrowDown, title: '위 → 아래 (다음이 위에서)' },
+                  ].map(({ dir, Icon, title }) => (
+                    <button
+                      key={dir}
+                      className={`slide-dir-btn ${slideDir === dir ? 'active' : ''}`}
+                      onClick={() => handleSlideDir(dir)}
+                      title={title}
+                    >
+                      <Icon size={16} />
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            <div className="trans-duration-edit">
+              <span className="label">DURATION</span>
+              <div className="duration-input-wrapper">
+                <input 
+                  type="number" 
+                  value={transTime} 
+                  onChange={e => handleTimeChange(Number(e.target.value))}
+                  step={100}
+                  min={0}
+                />
+                <span className="unit">ms</span>
+              </div>
+            </div>
+            
+            <div className="time-display">
+              {(currentTime / 1000).toFixed(2)}s / {(TOTAL_TIME / 1000).toFixed(2)}s
+            </div>
+          </div>
+
+          <div className="dedicated-seekbar-container" style={{ marginTop: 20, marginBottom: 12 }}>
+            <input 
+              type="range" 
+              className="main-seekbar"
+              min={0}
+              max={TOTAL_TIME}
+              step={10}
+              value={currentTime}
+              onMouseDown={() => setIsPlaying(false)}
+              onChange={(e) => {
+                const newTime = Number(e.target.value);
+                setCurrentTime(newTime);
+                lastUpdateRef.current = performance.now();
+              }}
+            />
+            <div className="seekbar-progress-fill" style={{ width: `${(currentTime / TOTAL_TIME) * 100}%` }} />
+          </div>
+
+          <div className="timeline-container">
+            <div className="track-label">TRACK 1</div>
+            <div className="track-lane">
+              <div
+                className="track-bar track-1"
+                style={{ width: `${(PRE_WAIT + transTime) / TOTAL_TIME * 100}%` }}
+              >
+                <TrackFilmstrip item={currentItem} />
+                <div
+                  className="track-tint"
+                  style={{ background: getTrackOverlay(transType, transTime, PRE_WAIT, 1) }}
+                />
+                {currentItem?.media?.filename && (
+                  <span className="track-thumb-label">{currentItem.media.filename}</span>
+                )}
+              </div>
+            </div>
+
+            <div className="track-label">TRACK 2</div>
+            <div className="track-lane">
+              <div
+                className="track-bar track-2"
+                style={{
+                  left: `${PRE_WAIT / TOTAL_TIME * 100}%`,
+                  width: `${(transTime + 1000) / TOTAL_TIME * 100}%`
+                }}
+              >
+                <TrackFilmstrip item={nextItem} />
+                <div
+                  className="track-tint"
+                  style={{ background: getTrackOverlay(transType, transTime, PRE_WAIT, 2) }}
+                />
+                {nextItem?.media?.filename && (
+                  <span className="track-thumb-label">{nextItem.media.filename}</span>
+                )}
+              </div>
+            </div>
+
+            {/* 재생 헤드 */}
+            <div className="playhead" style={{ left: `${(currentTime / TOTAL_TIME) * 100}%` }}></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+// ── [V4] 고정형 미디어 아이템 ─────────────────────────────
+const MediaItemV4 = ({ item, onRemove, onChange }) => {
+  const { media, duration = 10 } = item;
+  return (
+    <div className="media-card-v4">
+      <div className="media-card-thumb">
+        <MediaThumb path={media?.path} style={{ width: '100%', height: '100%' }} />
+        <button className="media-card-del" onClick={onRemove} title="삭제">
+          <Trash2 size={12} />
+        </button>
+      </div>
+      <div className="media-card-name" title={media?.filename}>{media?.filename}</div>
+      <div className="media-card-duration">
+        <Clock size={12} color="#3b82f6" />
+        <input
+          className="duration-input"
+          type="number"
+          value={duration}
+          min={1}
+          onChange={e => onChange({ duration: Number(e.target.value) })}
+        />
+        <span>sec</span>
+      </div>
+    </div>
+  );
+};
+
+// ── [V4] 전환 효과 브릿지 ───────────────────────────────────
+const TransitionBridgeV4 = ({ item, isLoop, onChange, onPreview }) => {
+  const { transitionTime = 1000 } = item;
+  return (
+    <div className="transition-bridge-v4">
+      <div className="bridge-line" />
+      <div className="bridge-box">
+        <select 
+          className="mini-select" 
+          value={item.transition || 'fade'} 
+          onChange={e => onChange({ transition: e.target.value })}
+        >
+          <option value="fade">FADE</option>
+          <option value="slide">SLIDE</option>
+          <option value="dissolve">DISSOLVE</option>
+          <option value="none">없음</option>
+        </select>
+        <div className="bridge-time-row">
+          <input type="number" value={transitionTime} min={0} step={100} onChange={e => onChange({ transitionTime: Number(e.target.value) })} />
+          <span>ms</span>
+        </div>
+        <button className="bridge-preview-btn" onClick={onPreview}>미리보기</button>
+      </div>
+      <div className="bridge-line" />
+      {isLoop && <span className="loop-badge">LOOP ↩</span>}
+    </div>
+  );
+};
+
+// ── [V4] 기기 고정형 행 ──────────────────────────────────────
+const DeviceRowV4 = ({ device, items, isDirty, onDrop, onRemoveItem, onChangeItem, onDeleteDevice, onPreview, onTransitionPreview }) => {
+  const [dragOver, setDragOver] = useState(false);
+  return (
+    <div className="device-row-v4">
+      <div className={`device-card-v4 ${items.length > 0 ? 'has-media' : ''}`}>
+        <Trash2 
+          size={14} 
+          className="device-card-del-icon"
+          onClick={() => onDeleteDevice(device.id, device.name)}
+        />
+        <div className="device-card-header">
+          <span className={`device-dot ${device.status === 'online' ? 'online' : 'offline'}`} />
+          <span className="device-name">{device.name}</span>
+        </div>
+        {isDirty && <div className="device-card-pending">(배포 대기)</div>}
+        
+        {/* 중간 여백을 채워 버튼을 아래로 밀어냄 */}
+        <div style={{ flex: 1, minHeight: '20px' }}></div>
+
+        {items.length > 0 && (
+          <button className="device-full-preview-btn" onClick={onPreview}>
+            <ExternalLink size={12} style={{ marginRight: 4 }} />
+            전체 미리보기
+          </button>
+        )}
+      </div>
+
+      <div
+        className={`device-timeline-v4 ${dragOver ? 'drag-over' : ''}`}
+        onDragOver={e => { e.preventDefault(); setDragOver(true); }}
+        onDragLeave={() => setDragOver(false)}
+        onDrop={e => {
+          e.preventDefault();
+          setDragOver(false);
+          const mediaJson = e.dataTransfer.getData('application/json');
+          if (mediaJson) onDrop(JSON.parse(mediaJson));
+        }}
+      >
+        {items.length === 0 && <div className="timeline-empty">미디어를 드래그하여 추가하세요</div>}
+        {items.map((item, idx) => {
+          const isLast = idx === items.length - 1;
+          const nextItem = items.length > 1 ? items[(idx + 1) % items.length] : null;
+          return (
+            <React.Fragment key={item._key || idx}>
+              <MediaItemV4 item={item} onRemove={() => onRemoveItem(idx)} onChange={upd => onChangeItem(idx, upd)} />
+              {(nextItem || (isLast && items.length > 0)) && (
+                <TransitionBridgeV4
+                  item={item}
+                  isLoop={isLast}
+                  onChange={upd => onChangeItem(idx, upd)}
+                  onPreview={() => onTransitionPreview(item, nextItem, idx)}
+                />
+              )}
+            </React.Fragment>
+          );
+        })}
+      </div>
+    </div>
+  );
+};
+
+// ── 메인 MediaManager ─────────────────────────────────────
+const MediaManager = ({ stores = [], groups = [], devices = [], selectedStoreId, setSelectedStoreId, fetchDevices }) => {
+  const [mediaList, setMediaList] = useState([]);
+  const [selectedGroupId, setSelectedGroupId] = useState('');
+  const [lanes, setLanes] = useState({});
+  const [savedState, setSavedState] = useState({});
+  const [syncMode, setSyncMode] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [previewData, setPreviewData] = useState(null);
+  const [transPreview, setTransPreview] = useState(null);
+  const fileRef = useRef();
+
+  const storeGroups = groups.filter(g => g.storeId === selectedStoreId);
+  const groupDevices = devices.filter(d => d.groupId === selectedGroupId);
+
+  useEffect(() => {
+    setSelectedGroupId('');
+    setLanes({});
+    setSavedState({});
+  }, [selectedStoreId]);
+
+  useEffect(() => {
+    if (storeGroups.length > 0 && !selectedGroupId) setSelectedGroupId(storeGroups[0].id);
+  }, [storeGroups.length, selectedStoreId]);
+
+  const fetchMedia = useCallback(async () => {
+    if (!selectedStoreId) return;
+    try {
+      const res = await fetch(`${API}/api/media?storeId=${selectedStoreId}`);
+      setMediaList(await res.json());
+    } catch (e) { console.error(e); }
+  }, [selectedStoreId]);
+
+  const fetchPlaylist = useCallback(async () => {
+    if (!selectedGroupId || groupDevices.length === 0) return;
+    try {
+      const res = await fetch(`${API}/api/groups/${selectedGroupId}/playlist`);
+      const data = await res.json();
+      const medias = data.medias || [];
+      const newLanes = {};
+      groupDevices.forEach(d => { newLanes[d.id] = []; });
+      medias.forEach((pm, idx) => {
+        const item = { ...pm, _key: `${pm.mediaId}-${idx}` };
+        if (pm.targetDeviceId && newLanes[pm.targetDeviceId] !== undefined) {
+          newLanes[pm.targetDeviceId].push(item);
+        } else {
+          groupDevices.forEach(d => {
+            newLanes[d.id].push({ ...item, _key: `${pm.mediaId}-${idx}-${d.id}` });
+          });
+        }
+      });
+      setLanes(newLanes);
+      setSavedState(JSON.parse(JSON.stringify(newLanes)));
+    } catch (e) { console.error(e); }
+  }, [selectedGroupId, groupDevices.length]);
+
+  useEffect(() => { fetchMedia(); }, [fetchMedia]);
+  useEffect(() => {
+    if (selectedGroupId) fetchPlaylist();
+    else { setLanes({}); setSavedState({}); }
+  }, [selectedGroupId]);
+
+  const handleDrop = (deviceId, media) => {
+    const newItem = { mediaId: media.id, media, duration: 10, transition: 'fade', transitionTime: 1000, slideDirection: 'right', _key: `${media.id}-${Date.now()}` };
+    setLanes(prev => {
+      const updated = { ...prev };
+      if (syncMode) groupDevices.forEach(d => updated[d.id] = [...(updated[d.id] || []), { ...newItem, _key: `${newItem._key}-${d.id}` }]);
+      else updated[deviceId] = [...(updated[deviceId] || []), newItem];
+      return updated;
+    });
+  };
+
+  const handleRemoveItem = (deviceId, idx) => {
+    setLanes(prev => {
+      const updated = { ...prev };
+      if (syncMode) groupDevices.forEach(d => { const l = [...(updated[d.id] || [])]; l.splice(idx, 1); updated[d.id] = l; });
+      else { const l = [...(updated[deviceId] || [])]; l.splice(idx, 1); updated[deviceId] = l; }
+      return updated;
+    });
+  };
+
+  const handleChangeItem = (deviceId, idx, updates) => {
+    setLanes(prev => {
+      const updated = { ...prev };
+      if (syncMode) groupDevices.forEach(d => { const l = [...(updated[d.id] || [])]; if (l[idx]) l[idx] = { ...l[idx], ...updates }; updated[d.id] = l; });
+      else { const l = [...(updated[deviceId] || [])]; if (l[idx]) l[idx] = { ...l[idx], ...updates }; updated[deviceId] = l; }
+      return updated;
+    });
+  };
+
+  const handleDeleteDevice = async (deviceId, deviceName) => {
+    if (!window.confirm(`'${deviceName}' 기기를 그룹에서 해제하시겠습니까?`)) return;
+    try {
+      await fetch(`${API}/api/devices/${deviceId}/group`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ groupId: null }) });
+      fetchDevices?.();
+    } catch (e) { alert('해제 실패'); }
+  };
+
+  const handleSave = async () => {
+    if (!selectedGroupId || !isDirty) return;
+    setSaving(true);
+    try {
+      const allItems = [];
+      const seen = new Set();
+      groupDevices.forEach(device => {
+        (lanes[device.id] || []).forEach(item => {
+          const key = `${item.mediaId}-${device.id}`;
+          if (!seen.has(key)) { seen.add(key); allItems.push({ mediaId: item.mediaId, duration: item.duration, transition: item.transition, transitionTime: item.transitionTime, targetDeviceId: device.id }); }
+        });
+      });
+      await fetch(`${API}/api/groups/${selectedGroupId}/playlist`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ items: allItems }), });
+      setSavedState(JSON.parse(JSON.stringify(lanes)));
+      alert('배포 완료!');
+    } catch (e) { alert('저장 실패'); }
+    finally { setSaving(false); }
+  };
+
+  const handleUpload = async (e) => {
+    for (const file of [...e.target.files]) {
+      const form = new FormData();
+      form.append('file', file);
+      form.append('storeId', selectedStoreId);
+      await fetch(`${API}/api/media`, { method: 'POST', body: form });
+    }
+    fetchMedia();
+    e.target.value = '';
+  };
+
+  const isDirty = JSON.stringify(lanes) !== JSON.stringify(savedState);
+
+  return (
+    <div className="mm-root">
+      <div className="mm-header">
+        <div className="mm-title-group">
+          <Monitor size={20} color="#3b82f6" />
+          <span>미디어 편성</span>
+          <select className="glass-select" value={selectedStoreId} onChange={e => setSelectedStoreId(e.target.value)}>
+            {stores.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+          </select>
+          <select className="glass-select" value={selectedGroupId} onChange={e => setSelectedGroupId(e.target.value)}>
+            <option value="">그룹 선택</option>
             {storeGroups.map(g => <option key={g.id} value={g.id}>{g.name}</option>)}
           </select>
         </div>
-
-        <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: '16px' }}>
-          {selectedGroupId && (
-            <label 
-              style={{ 
-                display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer', 
-                fontSize: '0.9rem', color: syncEnabled ? '#10B981' : 'var(--text-secondary)',
-                padding: '6px 12px', background: 'rgba(0,0,0,0.2)', borderRadius: '6px',
-                border: syncEnabled ? '1px solid rgba(16, 185, 129, 0.3)' : '1px solid transparent'
-              }}
-            >
-              <input 
-                type="checkbox" 
-                checked={syncEnabled} 
-                onChange={(e) => setSyncEnabled(e.target.checked)} 
-                style={{ cursor: 'pointer' }}
-              />
-              재생 시간 동기화 (Sync)
-            </label>
-          )}
-          <button 
-            className="btn" 
-            onClick={savePlaylist} 
-            disabled={!selectedGroupId || !hasChanges || syncStatus === 'syncing'} 
-            style={{ 
-              background: hasChanges ? '#F59E0B' : 'rgba(255,255,255,0.08)', 
-              color: hasChanges ? '#fff' : 'rgba(255,255,255,0.3)',
-              border: hasChanges ? '1px solid #F59E0B' : '1px solid rgba(255,255,255,0.1)',
-              padding: '10px 20px',
-              borderRadius: '8px',
-              display: 'flex',
-              alignItems: 'center',
-              gap: '8px',
-              fontWeight: '600',
-              cursor: hasChanges ? 'pointer' : 'not-allowed',
-              boxShadow: hasChanges ? '0 4px 15px rgba(245, 158, 11, 0.4)' : 'none',
-              transform: hasChanges ? 'scale(1.05)' : 'scale(1)',
-              transition: 'all 0.3s cubic-bezier(0.4, 0, 0.2, 1)'
-            }}
-          >
-            <Save size={18} /> {syncStatus === 'syncing' ? '배포 중...' : syncStatus === 'success' ? '배포 완료!' : hasChanges ? '변경사항 저장 및 배포' : '저장 및 기기 배포'}
+        <div style={{ display: 'flex', gap: 20, alignItems: 'center' }}>
+          <label className="sync-toggle">
+            <input type="checkbox" checked={syncMode} onChange={e => setSyncMode(e.target.checked)} />
+            <span>재생 시간 동기화 (Sync)</span>
+          </label>
+          <button className={`btn-deploy ${isDirty ? '' : 'inactive'}`} onClick={handleSave} disabled={saving || !isDirty}>
+            <Save size={18} style={{ marginRight: 8 }} /> {saving ? '저장 중...' : '변경사항 저장 및 배포'}
           </button>
         </div>
       </div>
 
-      <div style={{ display: 'flex', gap: '10px', flex: 1, minHeight: '400px', overflow: 'hidden', position: 'relative' }}>
-        
-        {/* 왼쪽: 미디어 라이브러리 */}
-        <div 
-          className="glass-card" 
-          style={{ 
-            flex: libraryCollapsed ? '0 0 40px' : '0 0 280px', 
-            height: '100%', 
-            display: 'flex', 
-            flexDirection: 'column', 
-            padding: libraryCollapsed ? '12px 5px' : '12px',
-            transition: 'all 0.3s ease',
-            overflow: 'hidden'
-          }}
-        >
-          {!libraryCollapsed ? (
-            <>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
-                <h3 style={{ margin: 0, fontSize: '0.85rem', whiteSpace: 'nowrap', color: 'var(--text-secondary)' }}>에셋 라이브러리</h3>
-                <input type="file" ref={fileInputRef} onChange={handleUpload} style={{ display: 'none' }} accept="video/*,image/*" multiple />
-                <div style={{ display: 'flex', gap: '8px' }}>
-                  <button 
-                    className="btn btn-secondary" 
-                    style={{ padding: '6px 10px', fontSize: '0.8rem', background: 'rgba(239, 68, 68, 0.1)', color: '#EF4444', border: '1px solid rgba(239, 68, 68, 0.3)' }} 
-                    onClick={handleDeleteAll} 
-                    disabled={mediaList.length === 0}
-                    title="전체 삭제"
-                  >
-                    <Trash2 size={14} />
-                  </button>
-                  <button className="btn btn-primary" style={{ padding: '6px 12px', fontSize: '0.8rem' }} onClick={() => fileInputRef.current.click()} disabled={uploading}>
-                    <Upload size={14} />
-                  </button>
-                </div>
-              </div>
-              
-              <div style={{ flex: 1, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '4px', paddingRight: '4px' }}>
-                {mediaList.length === 0 && (
-                  <div style={{ color: 'var(--text-secondary)', textAlign: 'center', marginTop: '40px', fontSize: '0.8rem' }}>
-                    업로드된 미디어가 없습니다.
-                  </div>
-                )}
-                {mediaList.map(media => (
-                  <div 
-                    key={media.id} 
-                    draggable 
-                    onDragStart={(e) => onDragStartLibrary(e, media)}
-                    style={{ 
-                      padding: '6px 8px', cursor: 'grab', display: 'flex', gap: '10px', alignItems: 'center', 
-                      background: 'rgba(255,255,255,0.02)', borderBottom: '1px solid rgba(255,255,255,0.05)',
-                      borderRadius: '4px', transition: 'background 0.2s'
-                    }}
-                    onMouseEnter={(e) => e.currentTarget.style.background = 'rgba(255,255,255,0.05)'}
-                    onMouseLeave={(e) => e.currentTarget.style.background = 'rgba(255,255,255,0.02)'}
-                  >
-                    <div style={{ width: '40px', height: '30px', background: '#000', borderRadius: '3px', overflow: 'hidden', flexShrink: 0 }}>
-                      {media.type === 'video' ? (
-                        <video src={`${SOCKET_URL}${media.path}#t=1`} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
-                      ) : (
-                        <img src={`${SOCKET_URL}${media.path}`} style={{ width: '100%', height: '100%', objectFit: 'cover' }} alt="thumb" />
-                      )}
-                    </div>
-                    <div style={{ flex: 1, overflow: 'hidden' }}>
-                      <div style={{ fontSize: '0.75rem', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', color: 'rgba(255,255,255,0.8)' }}>
-                        {media.filename}
-                      </div>
-                    </div>
-                    <button 
-                      onClick={() => handleLibraryDelete(media.id)}
-                      style={{ background: 'transparent', border: 'none', color: 'rgba(255,255,255,0.3)', cursor: 'pointer', padding: '4px' }}
-                      onMouseEnter={(e) => e.currentTarget.style.color = '#EF4444'}
-                      onMouseLeave={(e) => e.currentTarget.style.color = 'rgba(255,255,255,0.3)'}
-                    >
-                      <Trash2 size={12} />
-                    </button>
-                  </div>
-                ))}
-              </div>
-            </>
-          ) : (
-            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '20px', height: '100%' }}>
-              <ImageIcon size={20} color="var(--text-secondary)" />
-              <div style={{ writingMode: 'vertical-rl', textOrientation: 'mixed', color: 'var(--text-secondary)', fontSize: '0.8rem', letterSpacing: '2px' }}>LIBRARY</div>
-            </div>
-          )}
-          
-        </div>
-
-        {/* 라이브러리 토글 버튼 (초소형 삼각형, 뷰포트 중앙 고정) */}
-        {!previewData && (
-          <button 
-            onClick={() => setLibraryCollapsed(!libraryCollapsed)}
-            style={{ 
-              position: 'fixed', 
-              top: '50%',
-              // 사이드바(260px) + 메인패딩(24px) + 라이브러리 너비에 맞춘 위치 계산
-              left: `calc(260px + 24px + ${libraryCollapsed ? '8px' : '272px'})`,
-              transform: 'translate(-50%, -50%)',
-              width: '6px', 
-              height: '12px',
-              background: '#3B82F6', 
-              border: 'none',
-              cursor: 'pointer', 
-              zIndex: 9999, 
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              clipPath: libraryCollapsed ? 'polygon(0 0, 100% 50%, 0 100%)' : 'polygon(100% 0, 0 50%, 100% 100%)',
-              filter: 'drop-shadow(0 0 2px rgba(0,0,0,0.8))',
-              transition: 'all 0.3s cubic-bezier(0.4, 0, 0.2, 1)',
-              padding: 0
-            }}
-            title={libraryCollapsed ? "라이브러리 펼치기" : "라이브러리 접기"}
-          />
-        )}
-
-        {/* 오른쪽: 재생목록 (타임라인) 또는 미리보기 */}
-        <div className="glass-card" style={{ flex: 1, display: 'flex', flexDirection: 'column', padding: previewData ? '0' : '20px', overflow: 'hidden', position: 'relative' }}>
-          {previewData ? (
-            <DevicePlaylistPreview 
-              playlist={previewData.playlist} 
-              startIndex={previewData.startIndex}
-              onUpdateItem={(idx, updates) => {
-                const items = [...playlist];
-                const item = items[idx];
-                if (item) {
-                  items[idx] = { ...item, ...updates };
-                  setPlaylist(items);
-                }
-              }}
-              onClose={() => setPreviewData(null)} 
-            />
-          ) : (
-            <>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px', padding: '0 20px' }}>
-                <h3 style={{ margin: 0, fontSize: '1.1rem' }}>
-                  {storeGroups.find(g => g.id === selectedGroupId)?.name || '선택됨'} - 재생목록 타임라인
-                </h3>
-                
-                {selectedGroupId && (
-                  <div style={{ display: 'flex', gap: '8px' }}>
-                    <button 
-                      onClick={() => {
-                        if (playlist.length === 0) return;
-                        setPlaylist([]);
-                      }}
-                      disabled={playlist.length === 0}
-                      style={{ 
-                        display: 'flex', alignItems: 'center', gap: '4px',
-                        padding: '6px 10px', borderRadius: '6px', 
-                        border: '1px solid rgba(239, 68, 68, 0.3)',
-                        background: 'rgba(239, 68, 68, 0.1)', color: '#EF4444',
-                        fontSize: '0.85rem', cursor: playlist.length === 0 ? 'not-allowed' : 'pointer',
-                        opacity: playlist.length === 0 ? 0.5 : 1
-                      }}
-                    >
-                      <Trash2 size={14} /> 전체 비우기
-                    </button>
-                    <button 
-                      onClick={() => setIsModalOpen(true)}
-                      style={{ 
-                        display: 'flex', alignItems: 'center', gap: '4px',
-                        padding: '6px 12px', borderRadius: '6px', 
-                        border: '1px solid rgba(59, 130, 246, 0.5)',
-                        background: 'rgba(59, 130, 246, 0.1)', color: '#3B82F6',
-                        fontSize: '0.85rem', cursor: 'pointer'
-                      }}
-                    >
-                      + 기기 추가
-                    </button>
-                  </div>
-                )}
-              </div>
-              
-              <div 
-                style={{ 
-                  flex: 1, overflowY: 'auto', background: 'rgba(0,0,0,0.1)', 
-                  borderRadius: '12px', border: '2px dashed rgba(255,255,255,0.2)',
-                  display: 'flex', flexDirection: 'column', padding: '16px'
-                }}
-              >
-                {selectedGroupId && devices && devices.filter(d => d.groupId === selectedGroupId).length > 0 ? (
-                  devices.filter(d => d.groupId === selectedGroupId).map(d => {
-                    const isStaged = stagedDeviceIds.includes(d.id);
-                    const isCollapsed = collapsedDevices[d.id];
-                    const devicePlaylist = playlist.map((item, idx) => ({ ...item, actualIndex: idx }))
-                                                   .filter(item => item.targetDeviceId === d.id || item.targetDeviceId == null);
-                    
-                    return (
-                      <div 
-                        key={d.id} 
-                        style={{ 
-                          display: 'flex', gap: '16px', marginBottom: '16px', 
-                          alignItems: 'stretch'
-                        }}
-                      >
-                        {/* 왼쪽: 기기 정보 뱃지 */}
-                        <div style={{ flex: '0 0 220px', display: 'flex', flexDirection: 'column' }}>
-                          <div 
-                            style={{ 
-                              display: 'flex', alignItems: 'center', gap: '8px',
-                              padding: '12px 16px', borderRadius: '8px', 
-                              border: isStaged ? '1px solid #F59E0B' : syncStatus === 'success' ? '1px solid #10B981' : '1px solid rgba(255,255,255,0.2)',
-                              background: syncStatus === 'success' ? 'rgba(16, 185, 129, 0.2)' : isStaged ? 'rgba(245, 158, 11, 0.1)' : 'rgba(0,0,0,0.3)',
-                              fontSize: '0.9rem', transition: 'all 0.3s ease', cursor: 'pointer'
-                            }}
-                            onClick={() => setCollapsedDevices(prev => ({ ...prev, [d.id]: !prev[d.id] }))}
-                          >
-                            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flex: 1 }}>
-                              {syncStatus === 'syncing' ? (
-                                <span style={{ fontSize: '1rem' }}>🔄</span>
-                              ) : syncStatus === 'success' ? (
-                                <span style={{ color: '#10B981', fontSize: '1rem' }}>✅</span>
-                              ) : (
-                                <span style={{ color: d.status === 'online' ? '#10B981' : '#EF4444' }}>●</span>
-                              )}
-                              <span style={{ fontWeight: '600' }}>{d.name}</span>
-                            </div>
-                            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                              {isStaged && syncStatus === 'idle' && (
-                                <span style={{ fontSize: '0.75rem', color: '#F59E0B' }}>(배포 대기)</span>
-                              )}
-                              {isCollapsed ? <ChevronDown size={16} /> : <ChevronUp size={16} />}
-                            </div>
-                          </div>
-                        </div>
-
-                        {/* 오른쪽: 기기별 재생목록 (가로 스크롤) */}
-                        {!isCollapsed && (
-                          <div 
-                            onDragOver={(e) => e.preventDefault()}
-                            onDrop={(e) => onDropDevice(e, d.id)}
-                            style={{ 
-                              flex: 1, display: 'flex', gap: '12px', overflowX: 'auto', 
-                              background: 'rgba(255,255,255,0.03)', borderRadius: '8px', 
-                              padding: '12px', minHeight: '100px', border: '1px dashed rgba(255,255,255,0.1)'
-                            }}
-                          >
-                          {devicePlaylist.length === 0 ? (
-                            <div style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', margin: 'auto', pointerEvents: 'none' }}>
-                              여기에 에셋을 드래그하세요
-                            </div>
-                          ) : (
-                            devicePlaylist.map((item, localIndex) => {
-                              const nextItem = devicePlaylist[(localIndex + 1) % devicePlaylist.length];
-                              const isLast = localIndex === devicePlaylist.length - 1;
-                              
-                              return (
-                                <React.Fragment key={`${item.id}-${item.actualIndex}`}>
-                                  <div 
-                                    draggable
-                                    onDragStart={(e) => onDragStartPlaylist(e, item.actualIndex)}
-                                    onDragOver={(e) => {
-                                      e.preventDefault();
-                                      if (draggedItemIndex !== null && draggedItemIndex !== item.actualIndex) {
-                                        const items = [...playlist];
-                                        const draggedItem = items[draggedItemIndex];
-                                        draggedItem.targetDeviceId = d.id;
-                                        items.splice(draggedItemIndex, 1);
-                                        items.splice(item.actualIndex, 0, draggedItem);
-                                        setDraggedItemIndex(item.actualIndex);
-                                        setPlaylist(items);
-                                      }
-                                    }}
-                                    onDragEnd={() => setDraggedItemIndex(null)}
-                                    style={{
-                                      flex: '0 0 140px', display: 'flex', flexDirection: 'column', 
-                                      background: 'var(--glass-bg)', border: '1px solid var(--glass-border)',
-                                      borderRadius: '8px', opacity: draggedItemIndex === item.actualIndex ? 0.5 : 1,
-                                      cursor: 'grab', padding: '6px', position: 'relative',
-                                      zIndex: 5
-                                    }}
-                                  >
-                                    <div style={{ width: '100%', height: '80px', background: 'rgba(0,0,0,0.3)', borderRadius: '4px', display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden', position: 'relative' }}>
-                                      {item.type === 'video' ? (
-                                        <>
-                                          <video src={`${SOCKET_URL}${item.path}#t=1`} style={{ width: '100%', height: '100%', objectFit: 'cover' }} preload="metadata" />
-                                          <div style={{ position: 'absolute', right: '4px', bottom: '4px', background: 'rgba(0,0,0,0.7)', borderRadius: '2px', padding: '2px 4px', fontSize: '10px', color: '#fff' }}>
-                                            VID
-                                          </div>
-                                        </>
-                                      ) : (
-                                        <img src={`${SOCKET_URL}${item.path}`} style={{ width: '100%', height: '100%', objectFit: 'cover' }} alt="thumb" />
-                                      )}
-                                    </div>
-                                    
-                                    <div style={{ fontSize: '0.85rem', fontWeight: '500', marginTop: '8px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                                      {item.filename}
-                                    </div>
-                                    
-                                    <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginTop: '12px', background: 'rgba(0,0,0,0.2)', padding: '6px', borderRadius: '6px' }}>
-                                      <Clock size={14} color="var(--text-secondary)" />
-                                      <input 
-                                        type="number" 
-                                        value={item.duration} 
-                                        onChange={(e) => updateDuration(item.actualIndex, e.target.value)}
-                                        style={{ 
-                                          width: '50px', padding: '4px 6px', borderRadius: '6px', 
-                                          border: '1px solid var(--glass-border)', background: 'rgba(255,255,255,0.05)', 
-                                          color: '#fff', textAlign: 'center', fontSize: '0.85rem',
-                                          fontWeight: '600'
-                                        }}
-                                      />
-                                      <span style={{ color: 'var(--text-secondary)', fontSize: '0.8rem' }}>초 재생</span>
-                                    </div>
-                                    
-                                    <button 
-                                      onClick={() => removeFromPlaylist(item.actualIndex)}
-                                      style={{ position: 'absolute', top: '4px', right: '4px', background: 'rgba(0,0,0,0.6)', border: 'none', color: '#EF4444', cursor: 'pointer', padding: '4px', borderRadius: '4px' }}
-                                    >
-                                      <Trash2 size={14} />
-                                    </button>
-                                  </div>
-
-                                  {/* 전환 효과 선택기 (이 아이템 -> 다음 아이템) */}
-                                  {devicePlaylist.length > 1 && (
-                                    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: '4px', padding: '0 6px', zIndex: 10 }}>
-                                      <div style={{ width: '2px', height: '10px', background: 'rgba(255,255,255,0.1)', borderRadius: '2px' }}></div>
-                                      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '4px', position: 'relative' }}>
-                                        {isLast && (
-                                          <div style={{ position: 'absolute', top: '-15px', fontSize: '0.55rem', color: '#F59E0B', whiteSpace: 'nowrap', fontWeight: 'bold' }}>
-                                            LOOP ↩
-                                          </div>
-                                        )}
-                                        <select 
-                                          value={nextItem.transition || 'fade'}
-                                          onChange={(e) => updateTransition(nextItem.actualIndex, e.target.value)}
-                                          style={{
-                                            padding: '3px 4px', borderRadius: '4px', fontSize: '0.7rem',
-                                            background: 'rgba(30, 41, 59, 0.8)', color: '#fff', border: '1px solid rgba(255, 255, 255, 0.2)',
-                                            width: '75px', cursor: 'pointer', outline: 'none'
-                                          }}
-                                        >
-                                          <option value="none">컷</option>
-                                          <option value="fade">페이드</option>
-                                          <option value="crossfade">디졸브</option>
-                                          <option value="slide">밀기</option>
-                                        </select>
-
-                                        <div style={{ position: 'relative', width: '75px' }}>
-                                          <input 
-                                            type="text" 
-                                            value={nextItem.transitionTime || 1000} 
-                                            onChange={(e) => {
-                                              const val = e.target.value.replace(/[^0-9]/g, '');
-                                              updateTransitionTime(nextItem.actualIndex, val);
-                                            }}
-                                            style={{ 
-                                              width: '100%', padding: '3px 22px 3px 4px', borderRadius: '4px', 
-                                              border: '1px solid rgba(255,255,255,0.15)', background: 'rgba(0,0,0,0.4)', 
-                                              color: '#fff', textAlign: 'left', fontSize: '0.75rem',
-                                              fontWeight: '600', outline: 'none', boxSizing: 'border-box'
-                                            }}
-                                          />
-                                          <span style={{ 
-                                            position: 'absolute', right: '4px', top: '50%', transform: 'translateY(-50%)',
-                                            fontSize: '0.6rem', color: 'rgba(255,255,255,0.4)', pointerEvents: 'none' 
-                                          }}>ms</span>
-                                        </div>
-                                        
-                                        <button 
-                                          onClick={() => setPreviewData({ playlist: devicePlaylist, startIndex: localIndex })}
-                                          style={{ 
-                                            background: 'rgba(255, 255, 255, 0.08)', border: '1px solid rgba(255,255,255,0.15)', 
-                                            borderRadius: '4px', padding: '3px 0', cursor: 'pointer',
-                                            color: '#fff', fontSize: '0.65rem', width: '75px', whiteSpace: 'nowrap',
-                                            fontWeight: '500'
-                                          }}
-                                          onMouseEnter={(e) => e.currentTarget.style.background = 'rgba(59, 130, 246, 0.4)'}
-                                          onMouseLeave={(e) => e.currentTarget.style.background = 'rgba(255, 255, 255, 0.08)'}
-                                        >
-                                          미리보기
-                                        </button>
-                                      </div>
-                                      <div style={{ width: '2px', height: '10px', background: 'rgba(255,255,255,0.1)', borderRadius: '2px' }}></div>
-                                    </div>
-                                  )}
-                                </React.Fragment>
-                              );
-                            })
-                          )}
-                        </div>
-                      )}
-                    </div>
-                  );
-                })
-                ) : (
-                  <div style={{ margin: 'auto', color: 'var(--text-secondary)', textAlign: 'center', paddingTop: '40px' }}>
-                    <p>연결된 기기가 없습니다. 기기를 추가해 주세요.</p>
-                  </div>
-                )}
-              </div>
-            </>
-          )}
-        </div>
-
-      </div>
-
-      {/* 기기 추가 모달 */}
-      {isModalOpen && (
-        <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 100 }}>
-          <div className="glass-card" style={{ width: '450px', padding: '24px', display: 'block' }}>
-            <h3 style={{ marginTop: 0 }}>'{storeGroups.find(g => g.id === selectedGroupId)?.name}' 구역에 기기 추가</h3>
-            
-            <div style={{ background: 'rgba(0,0,0,0.2)', padding: '16px', borderRadius: '8px', marginBottom: '20px', border: '1px solid rgba(255,255,255,0.1)' }}>
-              <h4 style={{ margin: '0 0 12px 0', fontSize: '0.95rem', color: '#60A5FA' }}>+ 신규 물리 기기 등록</h4>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                <input 
-                  type="text" 
-                  placeholder="물리적 주소 (예: MAC 또는 시리얼번호)" 
-                  value={newDeviceId} 
-                  onChange={e => setNewDeviceId(e.target.value)} 
-                  style={{ padding: '8px 12px', borderRadius: '6px', border: '1px solid rgba(255,255,255,0.2)', background: 'rgba(0,0,0,0.3)', color: '#fff' }}
-                />
-                <input 
-                  type="text" 
-                  placeholder="기기 별칭 (예: 로비 우측 사이니지)" 
-                  value={newDeviceName} 
-                  onChange={e => setNewDeviceName(e.target.value)} 
-                  style={{ padding: '8px 12px', borderRadius: '6px', border: '1px solid rgba(255,255,255,0.2)', background: 'rgba(0,0,0,0.3)', color: '#fff' }}
-                />
-                <button className="btn btn-primary" onClick={handleRegisterAndAssign} style={{ marginTop: '8px', padding: '10px' }}>
-                  등록 후 이 구역에 즉시 할당
-                </button>
-              </div>
-            </div>
-
-            <p style={{ color: 'var(--text-secondary)', fontSize: '0.9rem', margin: '0 0 12px 0' }}>또는 현재 사업장의 타 구역/미배정 기기 가져오기</p>
-            
-            <div style={{ maxHeight: '200px', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '8px', paddingRight: '4px' }}>
-              {devices && devices.filter(d => d.storeId === selectedStoreId && d.groupId !== selectedGroupId).length === 0 ? (
-                <div style={{ textAlign: 'center', padding: '20px', color: 'var(--text-secondary)' }}>가져올 수 있는 기기가 없습니다.</div>
-              ) : (
-                devices && devices.filter(d => d.storeId === selectedStoreId && d.groupId !== selectedGroupId).map(d => (
-                  <div key={d.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px', background: 'rgba(255,255,255,0.05)', borderRadius: '8px' }}>
-                    <div>
-                      <div>{d.name} <span style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>({d.id})</span></div>
-                      <div style={{ fontSize: '0.8rem', color: d.status === 'online' ? '#10B981' : '#EF4444' }}>
-                        {d.status === 'online' ? '온라인' : '오프라인'}
-                        <span style={{ color: 'var(--text-secondary)', marginLeft: '4px' }}>
-                          (현재: {groups.find(g => g.id === d.groupId)?.name || '미배정'})
-                        </span>
-                      </div>
-                    </div>
-                    <button className="btn btn-primary" style={{ padding: '4px 12px', fontSize: '0.8rem' }} onClick={() => handleAssignDevice(d.id)}>가져오기</button>
-                  </div>
-                ))
-              )}
-            </div>
-            <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '24px', paddingTop: '16px', borderTop: '1px dashed rgba(255,255,255,0.1)' }}>
-              <button className="btn btn-secondary" onClick={() => setIsModalOpen(false)}>닫기</button>
-            </div>
+      <div className="mm-body">
+        <div className="mm-library">
+          <div className="mm-library-header">
+            <span className="mm-library-title">에셋 라이브러리</span>
+            <button className="icon-btn" onClick={() => fileRef.current?.click()}><Upload size={14} /></button>
+            <input ref={fileRef} type="file" multiple accept="image/*,video/*" style={{ display: 'none' }} onChange={handleUpload} />
           </div>
-        </div>
-      )}
-
-    </div>
-  );
-}
-
-function DevicePlaylistPreview({ playlist, startIndex = 0, onUpdateItem, onClose }) {
-  const [currentIndex, setCurrentIndex] = useState(startIndex);
-  const [prevIndex, setPrevIndex] = useState(-1);
-  const [currentTime, setCurrentTime] = useState(0); 
-  const [isPaused, setIsPaused] = useState(false);
-  const [isDragging, setIsDragging] = useState(false);
-  const [isFullScreen, setIsFullScreen] = useState(false);
-  const [isEditMode, setIsEditMode] = useState(false);
-  const containerRef = useRef(null);
-  const timerRef = useRef(null);
-
-  const activeItem = playlist[currentIndex];
-  const prevIndexCalculated = prevIndex !== -1 ? prevIndex : (playlist.length > 1 ? (currentIndex - 1 + playlist.length) % playlist.length : -1);
-  const prevItem = prevIndexCalculated !== -1 ? playlist[prevIndexCalculated] : null;
-  
-  const durationMs = (activeItem?.duration || 10) * 1000;
-  const transType = activeItem?.transition || 'fade';
-  const transTime = activeItem?.transitionTime || 1000;
-
-  useEffect(() => {
-    if (!playlist.length || isPaused || isDragging) return;
-    const tick = 33; 
-    timerRef.current = setInterval(() => {
-      setCurrentTime(prev => {
-        const next = prev + tick;
-        if (next >= durationMs) {
-          setPrevIndex(currentIndex);
-          setCurrentIndex((prevIdx) => (prevIdx + 1) % playlist.length);
-          return 0;
-        }
-        return next;
-      });
-    }, tick);
-    return () => clearInterval(timerRef.current);
-  }, [currentIndex, playlist.length, durationMs, isPaused, isDragging]);
-
-  const toggleFullScreen = () => {
-    if (!document.fullscreenElement) {
-      const elem = containerRef.current;
-      if (elem.requestFullscreen) elem.requestFullscreen();
-      else if (elem.webkitRequestFullscreen) elem.webkitRequestFullscreen();
-      else if (elem.msRequestFullscreen) elem.msRequestFullscreen();
-    } else {
-      if (document.exitFullscreen) document.exitFullscreen();
-    }
-  };
-
-  useEffect(() => {
-    const handleFSChange = () => setIsFullScreen(!!document.fullscreenElement);
-    document.addEventListener('fullscreenchange', handleFSChange);
-    return () => document.removeEventListener('fullscreenchange', handleFSChange);
-  }, []);
-
-  const renderMedia = (item) => {
-    if (!item) return null;
-    const media = item.media || item;
-    const style = { width: '100%', height: '100%', objectFit: 'contain' };
-    return media.type === 'video' ? (
-      <video src={`${SOCKET_URL}${media.path}`} style={style} autoPlay muted loop />
-    ) : (
-      <img src={`${SOCKET_URL}${media.path}`} style={style} alt="preview" />
-    );
-  };
-
-  const progress = Math.min(currentTime / transTime, 1);
-  const getActiveOpacity = () => (transType === 'none' || currentTime > transTime) ? 1 : progress;
-  const getPrevOpacity = () => (transType === 'crossfade' && currentTime <= transTime) ? 1 - progress : 1;
-  const getTransform = () => (transType === 'slide' && currentTime < transTime) ? `translateX(${(1 - progress) * 100}%)` : 'none';
-
-  return (
-    <div 
-      ref={containerRef}
-      style={{
-        width: '100%', height: '100%',
-        background: '#000', display: 'flex', flexDirection: 'column',
-        borderRadius: '12px', overflow: 'hidden'
-      }}
-    >
-      {/* 상단: 미리보기 영역 (전환 결과물) */}
-      <div style={{ 
-        position: isEditMode ? 'relative' : 'absolute',
-        top: 0, left: 0, width: '100%',
-        height: isEditMode ? '40%' : '100%', 
-        overflow: 'hidden', background: '#000', transition: 'all 0.3s ease',
-        zIndex: 1
-      }}>
-        {prevItem && currentTime < transTime && (
-          <div style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', zIndex: 1, opacity: getPrevOpacity() }}>
-            {renderMedia(prevItem)}
-          </div>
-        )}
-        <div style={{ 
-          position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', zIndex: 2,
-          opacity: (transType === 'fade' || transType === 'crossfade') ? getActiveOpacity() : 1,
-          transform: getTransform(),
-          transition: isDragging ? 'none' : 'opacity 0.05s linear, transform 0.05s linear'
-        }}>
-          {renderMedia(activeItem)}
-        </div>
-        {isEditMode && <div style={{ position: 'absolute', bottom: '10px', left: '10px', background: 'rgba(0,0,0,0.6)', color: '#3B82F6', padding: '2px 8px', borderRadius: '4px', fontSize: '0.7rem', fontWeight: 'bold', zIndex: 10 }}>PREVIEW</div>}
-      </div>
-
-      {/* 하단: 프로 전환 편집기 (Based on user sketch) */}
-      <div style={{ 
-        position: isEditMode ? 'relative' : 'absolute',
-        bottom: 0, left: 0, width: '100%',
-        height: isEditMode ? '60%' : '80px', 
-        background: isEditMode ? '#1a1a1a' : 'rgba(0,0,0,0.7)', 
-        backdropFilter: isEditMode ? 'none' : 'blur(10px)', 
-        display: 'flex', flexDirection: 'column', 
-        borderTop: '1px solid rgba(255,255,255,0.1)', 
-        zIndex: 10002, transition: 'all 0.4s ease',
-        padding: isEditMode ? '30px' : '0 20px', 
-        overflow: 'hidden'
-      }}>
-        {isEditMode && (
-          <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '20px', position: 'relative' }}>
-            {/* 전환 구간 브라켓 (Dissolve Start -> End) */}
-            <div style={{ position: 'relative', height: '30px', display: 'flex', justifyContent: 'center', marginBottom: '10px' }}>
-              <div style={{ 
-                width: '300px', height: '20px', border: '2px solid rgba(59, 130, 246, 0.5)', 
-                borderBottom: 'none', position: 'relative' 
-              }}>
-                <span style={{ position: 'absolute', top: '-18px', left: '-10px', fontSize: '0.7rem', color: '#fff' }}>Dissolve start</span>
-                <span style={{ position: 'absolute', top: '-18px', right: '-10px', fontSize: '0.7rem', color: '#fff' }}>end</span>
-                <span style={{ position: 'absolute', top: '-5px', left: '50%', transform: 'translateX(-50%)', fontSize: '0.75rem', fontWeight: 'bold', color: '#3B82F6' }}>{transTime}ms</span>
+          <div className="mm-library-list">
+            {mediaList.map(media => (
+              <div key={media.id} className="library-item" draggable onDragStart={e => e.dataTransfer.setData('application/json', JSON.stringify(media))}>
+                <div className="library-item-thumb"><MediaThumb path={media.path} style={{ width: '100%', height: '100%' }} /></div>
+                <span className="library-item-name">{media.filename}</span>
               </div>
-            </div>
-
-            {/* 메인 타임라인 트랙 (Dual Track) */}
-            <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '8px', padding: '0 50px', position: 'relative' }}>
-              {/* Track 1: image1 (Fading Out) */}
-              <div style={{ height: '70px', display: 'flex', gap: '2px', alignItems: 'center' }}>
-                <div style={{ width: '80px', color: '#fff', fontSize: '0.8rem', fontWeight: 'bold' }}>image 1</div>
-                <div style={{ flex: 1, display: 'flex', gap: '2px', position: 'relative' }}>
-                  {[100, 100, 100, 90, 50, 10].map((opacity, i) => (
-                    <div key={i} style={{ width: '60px', height: '60px', background: 'rgba(255,255,255,0.05)', borderRadius: '4px', border: '1px solid rgba(255,255,255,0.1)', display: 'flex', alignItems: 'center', justifyContent: 'center', position: 'relative', opacity: opacity/100 }}>
-                      <img src={`${SOCKET_URL}${prevItem?.path}`} style={{ width: '100%', height: '100%', objectFit: 'cover', borderRadius: '4px' }} />
-                      <div style={{ position: 'absolute', bottom: '2px', right: '2px', fontSize: '10px', color: '#fff', fontWeight: 'bold', textShadow: '0 0 4px #000' }}>{opacity}%</div>
-                    </div>
-                  ))}
-                  <div style={{ flex: 1, borderBottom: '1px dashed rgba(255,255,255,0.1)' }}></div>
-                </div>
-              </div>
-
-              {/* Track 2: image2 (Fading In) */}
-              <div style={{ height: '70px', display: 'flex', gap: '2px', alignItems: 'center' }}>
-                <div style={{ width: '80px', color: '#fff', fontSize: '0.8rem', fontWeight: 'bold' }}>image 2</div>
-                <div style={{ flex: 1, display: 'flex', gap: '2px', position: 'relative' }}>
-                  <div style={{ width: '186px', borderBottom: '1px dashed rgba(255,255,255,0.1)' }}></div>
-                  {[10, 50, 90, 100, 100, 100].map((opacity, i) => (
-                    <div key={i} style={{ width: '60px', height: '60px', background: 'rgba(255,255,255,0.05)', borderRadius: '4px', border: '1px solid rgba(255,255,255,0.1)', display: 'flex', alignItems: 'center', justifyContent: 'center', position: 'relative', opacity: opacity/100 }}>
-                      <img src={`${SOCKET_URL}${activeItem?.path}`} style={{ width: '100%', height: '100%', objectFit: 'cover', borderRadius: '4px' }} />
-                      <div style={{ position: 'absolute', bottom: '2px', right: '2px', fontSize: '10px', color: '#fff', fontWeight: 'bold', textShadow: '0 0 4px #000' }}>{opacity}%</div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-
-              {/* Seeker / Ruler */}
-              <div style={{ position: 'absolute', top: 0, left: '50%', transform: 'translateX(-50%)', height: '100%', width: '1px', background: '#3B82F6', zIndex: 10 }}>
-                <div style={{ position: 'absolute', top: '-10px', left: '-25px', width: '50px', background: '#3B82F6', color: '#fff', fontSize: '10px', textAlign: 'center', borderRadius: '2px' }}>{Math.floor(currentTime)}ms</div>
-              </div>
-            </div>
-
-            {/* 전환 타입 메뉴 (Bottom Selection) */}
-            <div style={{ display: 'flex', justifyContent: 'center', gap: '10px', padding: '10px' }}>
-              {[
-                { id: 'crossfade', label: 'Dissolve' },
-                { id: 'none', label: 'Cut' },
-                { id: 'fade', label: '페이드' },
-                { id: 'slide', label: '밀어내기' }
-              ].map(type => (
-                <button 
-                  key={type.id}
-                  onClick={() => onUpdateItem?.(activeItem.actualIndex, { transition: type.id })}
-                  style={{ 
-                    padding: '8px 20px', background: transType === type.id ? '#3B82F6' : '#2a2a2a', 
-                    border: '1px solid rgba(255,255,255,0.1)', color: '#fff', borderRadius: '4px', 
-                    cursor: 'pointer', fontSize: '0.8rem', fontWeight: 'bold', minWidth: '100px'
-                  }}
-                >
-                  {type.label}
-                </button>
-              ))}
-            </div>
-
-            <div style={{ position: 'absolute', bottom: 0, width: '100%', padding: '0 20px' }}>
-              <input 
-                type="range" min={0} max={durationMs} value={currentTime}
-                onChange={(e) => setCurrentTime(parseInt(e.target.value))}
-                onMouseDown={() => setIsDragging(true)}
-                onMouseUp={() => setIsDragging(false)}
-                style={{ width: '100%', accentColor: '#3B82F6' }}
-              />
-            </div>
-          </div>
-        )}
-
-        {/* 통합 하단 컨트롤 줄 (Preview Only Mode) */}
-        <div style={{ height: '80px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%', position: 'relative' }}>
-          <div style={{ display: 'flex', gap: '10px' }}>
-            <button 
-              onClick={() => setIsPaused(!isPaused)} 
-              style={{ background: isPaused ? '#3B82F6' : 'rgba(255,255,255,0.1)', border: 'none', borderRadius: '6px', padding: '8px 16px', color: '#fff', fontWeight: '700', cursor: 'pointer', fontSize: '0.8rem' }}
-            >
-              {isPaused ? '▶ PLAY' : '⏸ PAUSE'}
-            </button>
-            <button 
-              onClick={() => setIsEditMode(!isEditMode)} 
-              style={{ background: isEditMode ? '#3B82F6' : 'rgba(255,255,255,0.1)', border: '1px solid rgba(255,255,255,0.2)', borderRadius: '6px', padding: '8px 16px', color: '#fff', fontWeight: '700', cursor: 'pointer', fontSize: '0.8rem' }}
-            >
-              {isEditMode ? '편집 종료' : '🛠 편집'}
-            </button>
-          </div>
-
-          <div style={{ display: 'flex', gap: '6px', alignItems: 'center', position: 'absolute', left: '50%', transform: 'translateX(-50%)' }}>
-            {playlist.map((_, idx) => (
-              <div key={idx} style={{ width: idx === currentIndex ? '16px' : '6px', height: '6px', borderRadius: '3px', background: idx === currentIndex ? '#3B82F6' : 'rgba(255,255,255,0.3)', transition: 'all 0.3s ease' }} />
             ))}
           </div>
+        </div>
 
-          <div style={{ display: 'flex', gap: '8px' }}>
-            <button onClick={toggleFullScreen} style={{ background: 'rgba(255,255,255,0.1)', border: '1px solid rgba(255,255,255,0.15)', borderRadius: '6px', padding: '8px 12px', color: '#fff', cursor: 'pointer', fontSize: '0.8rem' }}>
-              <Maximize size={14} />
-            </button>
-            <button onClick={onClose} style={{ background: '#EF4444', border: 'none', borderRadius: '6px', padding: '8px 16px', color: '#fff', cursor: 'pointer', fontWeight: '700', fontSize: '0.8rem' }}>
-              미리보기 종료
-            </button>
+        <div className="mm-timeline-area">
+          <div className="mm-timeline-header">
+            <span className="mm-timeline-title">재생목록 타임라인</span>
+            <button className="btn-primary-sm" style={{ background: 'var(--primary-blue)', color: '#fff', border: 'none', padding: '6px 12px', borderRadius: 6, cursor: 'pointer' }}>+ 기기 추가</button>
+          </div>
+
+          <div className="mm-lanes">
+            {groupDevices.map(device => (
+              <DeviceRowV4
+                key={device.id}
+                device={device}
+                items={lanes[device.id] || []}
+                isDirty={JSON.stringify(lanes[device.id] || []) !== JSON.stringify(savedState[device.id] || [])}
+                onDrop={media => handleDrop(device.id, media)}
+                onRemoveItem={idx => handleRemoveItem(device.id, idx)}
+                onChangeItem={(idx, upd) => handleChangeItem(device.id, idx, upd)}
+                onDeleteDevice={handleDeleteDevice}
+                onPreview={() => setPreviewData({ items: lanes[device.id] || [], deviceName: device.name })}
+                onTransitionPreview={(item, next, idx) => setTransPreview({ 
+                  currentItem: item, 
+                  nextItem: next, 
+                  laneIdx: device.id, 
+                  itemIdx: idx 
+                })}
+              />
+            ))}
           </div>
         </div>
       </div>
+
+      {transPreview && (
+        <TransitionPreviewModal 
+          currentItem={transPreview.currentItem} 
+          nextItem={transPreview.nextItem} 
+          onChange={(upd) => handleChangeItem(transPreview.laneIdx, transPreview.itemIdx, upd)}
+          onClose={() => setTransPreview(null)} 
+        />
+      )}
+
+      {previewData && (
+        <PlaylistPreviewModal 
+          items={previewData.items} 
+          deviceName={previewData.deviceName} 
+          onClose={() => setPreviewData(null)} 
+        />
+      )}
     </div>
   );
-}
+};
 
+export default MediaManager;
