@@ -36,18 +36,47 @@ const io = new Server(httpServer, { cors: { origin: '*' } });
 
 // 모든 사업장 조회
 app.get('/api/stores', async (req, res) => {
-  const stores = await prisma.store.findMany();
+  const stores = await prisma.store.findMany({
+    orderBy: { order: 'asc' }
+  });
   res.json(stores);
 });
 
 // 사업장 추가
 app.post('/api/stores', async (req, res) => {
   try {
-    const store = await prisma.store.create({ data: { name: req.body.name } });
+    // 가장 큰 order 값 찾기
+    const lastStore = await prisma.store.findFirst({
+      orderBy: { order: 'desc' }
+    });
+    const nextOrder = lastStore ? lastStore.order + 1 : 0;
+    
+    const store = await prisma.store.create({ 
+      data: { name: req.body.name, order: nextOrder } 
+    });
     res.json(store);
   } catch (err) {
     console.error('[API] 사업장 추가 에러:', err);
     res.status(500).json({ error: '사업장 추가 실패', details: err.message });
+  }
+});
+
+// 사업장 순서 변경
+app.post('/api/stores/reorder', async (req, res) => {
+  const { storeIds } = req.body; // [id1, id2, id3, ...]
+  try {
+    await prisma.$transaction(
+      storeIds.map((id, index) => 
+        prisma.store.update({
+          where: { id },
+          data: { order: index }
+        })
+      )
+    );
+    res.json({ success: true });
+  } catch (err) {
+    console.error('[API] 사업장 순서 변경 에러:', err);
+    res.status(500).json({ error: '순서 변경 실패' });
   }
 });
 

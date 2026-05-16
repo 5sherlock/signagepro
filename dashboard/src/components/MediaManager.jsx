@@ -50,8 +50,8 @@ const getTrackOverlay = (transType, transTime, preWait, track) => {
       return `linear-gradient(90deg, transparent 0%, transparent ${preWaitPct}%, rgba(0,0,0,0.7) 100%)`;
     }
     if (transType === 'slide') {
-      // 슬라이드: 트랙을 사선 또는 컷 지점에서 명확히 분리된 느낌으로 표현
-      return `linear-gradient(90deg, rgba(59,130,246,0.5) 0%, rgba(59,130,246,0.5) ${preWaitPct}%, transparent ${preWaitPct}%, transparent 100%)`;
+      // 슬라이드: 별도의 가이드 색상 없이 투명하게 처리
+      return 'transparent';
     }
     return 'transparent';
   } else {
@@ -68,7 +68,7 @@ const getTrackOverlay = (transType, transTime, preWait, track) => {
       return `linear-gradient(90deg, rgba(0,0,0,0.7) 0%, transparent ${endPct}%, transparent 100%)`;
     }
     if (transType === 'slide') {
-      return `linear-gradient(90deg, transparent 0%, transparent ${endPct}%, rgba(245,158,11,0.5) ${endPct}%, rgba(245,158,11,0.5) 100%)`;
+      return 'transparent';
     }
     return 'transparent';
   }
@@ -78,15 +78,21 @@ const getTrackOverlay = (transType, transTime, preWait, track) => {
 const TrackFilmstrip = ({ item }) => {
   if (!item?.media?.path) return null;
   const url = `${API}${item.media.path}`;
+  const isVideo = /\.(mp4|webm|mov)$/i.test(item.media.path);
+  const frames = Array.from({ length: 40 });
+  
   return (
-    <div 
-      className="track-filmstrip-background" 
-      style={{ 
-        backgroundImage: `url(${url})`,
-        backgroundRepeat: 'repeat-x',
-        backgroundSize: 'auto 100%'
-      }} 
-    />
+    <div style={{ display: 'flex', height: '100%', width: '100%', overflow: 'hidden' }}>
+      {frames.map((_, i) => (
+        <div key={i} className="track-frame-container">
+          {isVideo ? (
+            <video className="track-frame-thumb" src={url} muted />
+          ) : (
+            <img className="track-frame-thumb" src={url} alt="" />
+          )}
+        </div>
+      ))}
+    </div>
   );
 };
 
@@ -267,7 +273,9 @@ const TransitionPreviewModal = ({ currentItem, nextItem, onChange, onClose }) =>
   const [currentTime, setCurrentTime] = useState(0); // ms
   const [transType, setTransType] = useState(currentItem.transition || 'fade');
   const [slideDir, setSlideDir] = useState(currentItem.slideDirection || 'right');
-  const transTime = currentItem.transitionTime || 1000;
+  const [timeStr, setTimeStr] = useState(String(currentItem.transitionTime !== undefined ? currentItem.transitionTime : 1000));
+  const [localTransTime, setLocalTransTime] = useState(currentItem.transitionTime !== undefined ? currentItem.transitionTime : 1000);
+  const transTime = localTransTime;
 
   const PRE_WAIT = 1000; // 전환 전 1초 대기
   const TOTAL_TIME = PRE_WAIT + transTime + 1000; // 총 3초 내외
@@ -283,8 +291,13 @@ const TransitionPreviewModal = ({ currentItem, nextItem, onChange, onClose }) =>
     if (onChange) onChange({ slideDirection: dir });
   };
 
-  const handleTimeChange = (ms) => {
-    if (onChange) onChange({ transitionTime: ms });
+  const handleTimeChange = (val) => {
+    setTimeStr(val);
+    const parsed = parseInt(val, 10);
+    if (!isNaN(parsed) && parsed >= 0) {
+      setLocalTransTime(parsed);
+      if (onChange) onChange({ transitionTime: parsed });
+    }
   };
 
   useEffect(() => {
@@ -306,8 +319,8 @@ const TransitionPreviewModal = ({ currentItem, nextItem, onChange, onClose }) =>
     if (!item?.media?.path) return <div className="preview-media-empty">미디어 없음</div>;
     const isVideo = /\.(mp4|webm|mov)$/i.test(item.media.path);
     const url = `${API}${item.media.path}`;
-    // SLIDE는 여백 방지를 위해 cover, 나머지는 원본 비율 유지(contain)
-    const fit = transType === 'slide' ? 'cover' : 'contain';
+    // 항상 원본 비율 유지(contain)하여 이미지가 잘리지 않게 함
+    const fit = 'contain';
     return isVideo ? <video src={url} autoPlay muted style={{ width: '100%', height: '100%', objectFit: fit }} /> : <img src={url} alt="" style={{ width: '100%', height: '100%', objectFit: fit }} />;
   };
 
@@ -414,8 +427,8 @@ const TransitionPreviewModal = ({ currentItem, nextItem, onChange, onClose }) =>
               <div className="duration-input-wrapper">
                 <input 
                   type="number" 
-                  value={transTime} 
-                  onChange={e => handleTimeChange(Number(e.target.value))}
+                  value={timeStr} 
+                  onChange={e => handleTimeChange(e.target.value)}
                   step={100}
                   min={0}
                 />

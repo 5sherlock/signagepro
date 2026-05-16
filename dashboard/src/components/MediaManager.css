@@ -452,15 +452,16 @@
 }
 
 .editor-main-view {
-  flex: 1 1 auto;
-  min-height: 180px;
-  aspect-ratio: 21/9;
-  max-height: 58vh;
+  flex: 0 0 auto;
+  width: 100%;
+  max-width: calc(60vh * 16 / 9);
+  aspect-ratio: 16/9;
   background: #000;
   position: relative;
   display: flex;
   align-items: center;
   justify-content: center;
+  margin: 0 auto;
 }
 
 .preview-close-fixed {
@@ -668,7 +669,7 @@
 .track-lane {
   height: clamp(36px, 5.5vh, 56px);
   background: rgba(255,255,255,0.02);
-  border-radius: 6px;
+  border-radius: 0;
   position: relative;
   overflow: hidden;
 }
@@ -677,7 +678,7 @@
   position: absolute;
   top: 0;
   height: 100%;
-  border-radius: 6px;
+  border-radius: 0;
   overflow: hidden;
 }
 
@@ -726,7 +727,7 @@
 .track-tint {
   position: absolute;
   inset: 0;
-  border-radius: 6px;
+  border-radius: 0;
   pointer-events: none;
 }
 

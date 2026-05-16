@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Monitor, Plus, FolderTree, Building, HardDrive, Trash2 } from 'lucide-react';
+import { Monitor, Plus, FolderTree, Building, HardDrive, Trash2, GripVertical } from 'lucide-react';
 import { SOCKET_URL } from '../config';
 
 export default function GroupManager({ devices, fetchDevices, stores, fetchStores, groups, fetchGroups, selectedStoreId, setSelectedStoreId }) {
@@ -109,6 +109,61 @@ export default function GroupManager({ devices, fetchDevices, stores, fetchStore
     return (isNoStore || isThisStore) && isNoGroup;
   });
 
+  const [draggedStoreId, setDraggedStoreId] = useState(null);
+  const [dragOverStoreId, setDragOverStoreId] = useState(null);
+
+  const onStoreDragStart = (e, id) => {
+    setDraggedStoreId(id);
+    e.dataTransfer.setData('storeId', id);
+    e.dataTransfer.effectAllowed = 'move';
+    // 드래그 시 잔상 효과를 위해 약간의 지연 후 스타일 변경
+    setTimeout(() => {
+      e.target.style.opacity = '0.4';
+    }, 0);
+  };
+
+  const onStoreDragEnd = (e) => {
+    e.target.style.opacity = '1';
+    setDraggedStoreId(null);
+    setDragOverStoreId(null);
+  };
+
+  const onStoreDragOver = (e, id) => {
+    e.preventDefault();
+    if (dragOverStoreId !== id) {
+      setDragOverStoreId(id);
+    }
+  };
+
+  const onStoreDrop = (e, targetId) => {
+    e.preventDefault();
+    const draggedId = e.dataTransfer.getData('storeId') || draggedStoreId;
+    if (!draggedId || draggedId === targetId) return;
+
+    const newStores = [...stores];
+    const draggedIdx = newStores.findIndex(s => s.id === draggedId);
+    const targetIdx = newStores.findIndex(s => s.id === targetId);
+
+    if (draggedIdx === -1 || targetIdx === -1) return;
+
+    const [removed] = newStores.splice(draggedIdx, 1);
+    newStores.splice(targetIdx, 0, removed);
+
+    const storeIds = newStores.map(s => s.id);
+    
+    // 즉시 서버 전송
+    fetch(`${SOCKET_URL}/api/stores/reorder`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ storeIds })
+    }).then(() => {
+      fetchStores();
+    }).catch(err => console.error('Reorder error:', err));
+    
+    setDraggedStoreId(null);
+    setDragOverStoreId(null);
+  };
+
   return (
     <div className="group-manager-container" style={{ display: 'flex', gap: '20px', height: 'calc(100vh - 120px)', flexWrap: 'wrap', overflow: 'auto' }}>
 
@@ -127,16 +182,27 @@ export default function GroupManager({ devices, fetchDevices, stores, fetchStore
               <div 
                 key={s.id} 
                 onClick={() => setSelectedStoreId(s.id)}
+                draggable
+                onDragStart={(e) => onStoreDragStart(e, s.id)}
+                onDragOver={(e) => onStoreDragOver(e, s.id)}
+                onDragEnd={onStoreDragEnd}
+                onDrop={(e) => onStoreDrop(e, s.id)}
                 style={{ 
-                  padding: '12px 16px', borderRadius: '10px', cursor: 'pointer',
+                  padding: '12px 16px', borderRadius: '10px', cursor: 'grab',
                   background: selectedStoreId === s.id ? 'var(--accent-blue)' : 'rgba(255,255,255,0.05)',
                   border: '1px solid',
-                  borderColor: selectedStoreId === s.id ? 'var(--accent-blue)' : 'rgba(255,255,255,0.1)',
+                  borderColor: dragOverStoreId === s.id ? 'var(--accent-blue)' : (selectedStoreId === s.id ? 'var(--accent-blue)' : 'rgba(255,255,255,0.1)'),
                   display: 'flex', justifyContent: 'space-between', alignItems: 'center',
-                  transition: 'all 0.2s'
+                  transition: 'all 0.2s',
+                  transform: dragOverStoreId === s.id ? 'scale(1.02)' : 'scale(1)',
+                  boxShadow: dragOverStoreId === s.id ? '0 4px 12px rgba(59,130,246,0.3)' : 'none',
+                  zIndex: dragOverStoreId === s.id ? 10 : 1
                 }}
               >
-                <span style={{ fontWeight: selectedStoreId === s.id ? 'bold' : 'normal' }}>{s.name}</span>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '10px', pointerEvents: 'none' }}>
+                  <GripVertical size={16} style={{ color: 'rgba(255,255,255,0.3)' }} />
+                  <span style={{ fontWeight: selectedStoreId === s.id ? 'bold' : 'normal' }}>{s.name}</span>
+                </div>
                 <button 
                   onClick={(e) => { e.stopPropagation(); handleDeleteStore(s.id); }}
                   style={{ 

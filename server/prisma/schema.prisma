@@ -10,6 +10,7 @@ datasource db {
 model Store {
   id        String     @id @default(uuid())
   name      String
+  order     Int        @default(0)
   groups    Group[]
   devices   Device[]
   medias    Media[]
