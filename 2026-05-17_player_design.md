@@ -109,7 +109,7 @@ Player는 "자기 deviceId가 속한 groupId의 playlist를 가져와,
 
 ## 4. 와이브로드 레퍼런스에서 가져갈 점 / 버릴 점
 
-`src/net/ybroad/dispy/lib/PlayData.java`, `ClientData.java`에서:
+`reference/y-board-premium/net/ybroad/dispy/lib/PlayData.java`, `ClientData.java`에서:
 
 **가져갈 것:**
 - `type` 분류 (video/image/web/text) — 미디어 종류 확장 시 유용
@@ -163,7 +163,10 @@ Player는 "자기 deviceId가 속한 groupId의 playlist를 가져와,
 
 §6의 4가지 결정이 끝나면 아래 순서로 진행:
 
-1. **서버 보강** (player 의존성 선결 — §5 항목)
+1. **서버 보강** (player 의존성 선결 — §5 + §9.1 항목)
+   - **§9.1 #1 TCP 메시지 프레이밍 수정** (줄바꿈 구분자 + 버퍼 누적)
+   - **§9.1 #2 디바이스 오프라인 감지 구현** (소켓→deviceId 매핑 + close 핸들러)
+   - **§9.1 #3 최소 인증 추가** (TCP 핸드셰이크 + REST 토큰 헤더)
    - `GET /api/devices/:id` 추가 (group/store include)
    - `Media` 모델에 `hash` 필드 추가 + 업로드 시 SHA-256 계산
    - `Playlist`에 `epochStart` 또는 동등 동기화 anchor 추가 (C번 결정에 따라)
@@ -197,8 +200,125 @@ Player는 "자기 deviceId가 속한 groupId의 playlist를 가져와,
 - `implementation_plan.md`, `development_roadmap.md` (Phase 계획)
 - `2026-05-07_progress.md` (이전 진척)
 - `ruleforai.md` (개발 원칙)
-- `src/net/ybroad/dispy/lib/{PlayData,ClientData,MySocket}.java` (레퍼런스 프로토콜)
+- `reference/y-board-premium/net/ybroad/dispy/lib/{PlayData,ClientData,MySocket}.java` (레퍼런스 프로토콜)
 
 ---
 
 *본 문서는 §6의 4가지 결정을 받기 전까지 코드 변경 없이 분석 단계로만 유지.*
+
+---
+
+## 9. 현재 코드 전반의 발견된 문제점 (2026-05-17 추가 분석)
+
+### 9.1 Critical — 운영 시작하면 바로 터질 것들
+
+**#1 TCP 메시지 프레이밍 부재** (`server/index.js:391`)
+```js
+socket.on('data', async (data) => {
+  const msg = data.toString('utf-8').trim();
+```
+TCP는 바이트 스트림. `data` 이벤트가 메시지 단위가 아님:
+- 두 하트비트 합쳐서 1패킷 → 파싱 실패
+- 한 하트비트가 2패킷에 쪼개짐 → 절반은 startsWith 통과 안 함, 드롭
+지금 LAN 환경에서 우연히 작동. **줄바꿈(\n) 구분자 + 클라이언트별 버퍼 누적** 필요.
+
+**#2 디바이스 오프라인 감지 미작동** (`server/index.js:442`)
+```js
+socket.on('close', () => {
+  console.log(...);
+  // 여기서 해당 소켓에 매핑된 기기의 status를 offline으로 변경하는 로직이 들어갈 수 있습니다.
+});
+```
+주석에 자백되어 있음. **셋톱박스 전원 빠져도 대시보드는 영원히 "온라인"** 표시.
+→ `Map<socket, deviceId>` 유지 + close 시 `status='offline'` 업데이트.
+
+**#3 인증/인가가 어디에도 없음**
+- REST API 전체 공개: `DELETE /api/stores/:id`도 토큰 없이 가능 (`server/index.js:84`)
+- TCP 10080도 공개: 임의 클라이언트가 `status:device-A/cpu:99`로 deviceId 점유 가능
+- Socket.io CORS = `'*'` (`server/index.js:33`)
+
+와이파이 게스트망 노출 시 즉시 위험. **REST 토큰 헤더 + TCP 핸드셰이크에 deviceSecret** 최소 추가.
+
+### 9.2 Important — 기능 신뢰성에 영향
+
+**#4 Playlist 스키마는 1:N인데 API는 1:1로 취급**
+- 스키마: `Group.playlists Playlist[]` (`schema.prisma:28`)
+- API: `findFirst({where:{groupId}})` (`index.js:327`) → 그룹당 1개만 가정
+스케줄링·시간대별 재생목록 진입 막힘. **groupId에 unique 걸거나 명시적 시간 anchor 추가**.
+
+**#5 하트비트 파싱이 NaN을 그대로 DB 저장** (`server/index.js:404`)
+`parseFloat(p.substring(4))`만 호출. 깨진 입력 시 `cpuUsage = NaN`. Postgres 마이그레이션 시 폭발.
+→ `Number.isFinite` 가드.
+
+**#6 업로드 크기·타입 검증 없음 — DoS 가능** (`server/index.js:30`)
+- `multer({ storage })` — `limits.fileSize` 미설정
+- mimetype은 브라우저 자체 신고를 그대로 신뢰 (`index.js:237`) → `.exe`에 `video/mp4` 헤더 붙이면 통과
+
+**#7 DevicePreview가 디바이스당 별도 socket + 별도 fetch** (`App.jsx:43`)
+5대 보드 = Socket.io 연결 5개 + `/playlist` 호출 5번. App 부모에도 별도 소켓.
+→ 소켓 1개 공유 + playlist 캐시 단일화.
+
+**#8 `Device.macAddress` 필드는 죽은 코드** (`schema.prisma:36`)
+`@unique` 잡혀 있지만 upsert는 `id`로만. 의도와 사용처 불일치.
+
+**#9 `PlaylistMedia.targetDeviceId`는 FK가 아닌 문자열** (`schema.prisma:80`)
+디바이스 삭제 시 잔존 참조 → 영원히 매칭 안 되는 슬라이드가 playlist에 남음.
+
+### 9.3 Operational — 프로덕션 가기 전 보강
+
+**#10 비디오 미리보기가 실제 영상이 아님** (`App.jsx:117`) — `<div>VIDEO: filename</div>`로 끝.
+
+**#11 SQLite 인덱스 0개** — `Device.groupId`, `Media.storeId`, `PlaylistMedia.playlistId` 풀스캔. Track B(클라우드/PG) 전 보강 필수.
+
+**#12 Graceful shutdown 없음** — SIGTERM/Electron 종료 시 Prisma disconnect·TCP close 미구현. A-2 패키징 시 DB 락 잔존 위험.
+
+**#13 백업 전략 없음** — `server/prisma/dev.db` 단일 파일. HDD 죽으면 모든 매장/기기/미디어 메타 증발.
+
+**#14 구조화 로깅·로테이션 없음** — `console.log`만. 현장 장애 추적 불가.
+
+### 9.4 권장 우선순위
+
+| 순위 | 작업 | 이유 |
+|---|---|---|
+| 1 | #1 TCP 프레이밍 + #2 offline 감지 | 시스템 정확성의 기반 |
+| 2 | #3 최소 인증 | 와이파이 노출 위험 |
+| 3 | #4 Playlist 정리 + #9 targetDeviceId FK화 | A-1 player 진입 전 스키마 안정화 |
+| 4 | #5~#7 입력 검증·연결 최적화 | 안정성 |
+| 5 | #11~#13 운영 보강 | A-2 Electron 패키징 직전 |
+
+**#1~#3은 A-1 player 작업 시작 전 반드시 같이 처리** — player가 의존하는 contract가 바로 이 부분이라, 깨진 상태에서 player를 구현하면 두 번 일하게 됨.
+
+---
+
+## 10. 재작성(rewrite) vs 점진 개선 — 결정 기록
+
+§9의 문제 목록을 보고 "처음부터 다시 짜는 게 낫지 않냐"는 자연스러운 의문에 대한 답.
+
+### 결론: **재작성 불필요. 점진 개선 권장.**
+
+### 근거
+
+| 측면 | 분석 |
+|---|---|
+| **문제의 성격** | 모두 **국소적 수정**으로 해결 가능. TCP 프레이밍 ~20줄, offline 감지 ~30줄, auth 미들웨어 ~50줄. 아키텍처 결함이 아닌 구현 누락. |
+| **아키텍처 적합성** | Express + Socket.io + TCP + Prisma + Vite/React = 5대 보드 규모와 Track A/B(온프레→클라우드) 진로에 정확히 맞음. 재작성해도 같은 스택이 다시 나올 가능성 매우 높음. |
+| **이미 동작하는 부분** | 대시보드 Swimlane UI, 그룹/사업장 관리, 미디어 업로드, 전환 효과 → 잘 만들어졌고 버릴 이유 없음. |
+| **시간 비용** | 재작성 시 최소 2~3주 회귀. 그동안 player 작업 진입 못 함. 같은 결과물에 도달. |
+| **리스크** | 이미 검증된 코드를 버리고 새로 만들면 새로운 버그가 더 많이 생김. "재작성하면 깨끗해진다"는 흔한 함정. |
+
+### 재작성이 정당화될 시나리오 (지금은 해당 없음)
+
+- 스택 자체를 바꾸고 싶을 때 (예: Go로 단일 바이너리화, TypeScript로 통일)
+- 멀티 테넌시·SaaS 전환처럼 데이터 모델 자체가 근본적으로 달라질 때
+- 디버깅이 신규 작성보다 오래 걸리는 수준의 누적 부채 (현재 아님)
+
+### 권장 액션
+
+1. §6의 4가지 결정 받기
+2. §9.1 (#1~#3) 수정 — A-1 진입 전 함께 처리
+3. §7 진입점 순서대로 player 구현
+4. §9.2 항목은 player 결합하면서 자연스럽게 수정
+5. §9.3은 A-2(Electron 패키징) 직전에 보강
+
+> **요약**: "재작성"이 아니라 **A-1 진입과 동시에 §9.1 3개 항목을 같이 끝내는 통합 작업**으로 진행하면 됨. 같은 시간 동안 player 진척 + 기반 안정화를 동시에 얻음.
+
