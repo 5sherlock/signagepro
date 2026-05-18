@@ -54,6 +54,7 @@ model Media {
   type      String   // video, image
   duration  Int?     // in seconds
   size      Int?     // bytes
+  hash      String?  // SHA-256 (player 캐시 검증용)
   storeId   String?
   store     Store?   @relation(fields: [storeId], references: [id])
   createdAt DateTime @default(now())

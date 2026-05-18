@@ -8,9 +8,15 @@ const { Server } = require('socket.io');
 const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
+const crypto = require('crypto');
 
 const prisma = new PrismaClient();
 const app = express();
+
+const DEVICE_SECRET = process.env.DEVICE_SECRET || 'changeme';
+if (DEVICE_SECRET === 'changeme') {
+  console.warn('[WARN] DEVICE_SECRET이 기본값입니다. .env에서 변경하세요.');
+}
 app.use(cors());
 app.use(express.json());
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
@@ -27,7 +33,15 @@ const storage = multer.diskStorage({
   destination: (req, file, cb) => cb(null, uploadDir),
   filename: (req, file, cb) => cb(null, Date.now() + '-' + file.originalname)
 });
-const upload = multer({ storage });
+const ALLOWED_MIME = ['video/mp4', 'video/webm', 'image/jpeg', 'image/png', 'image/gif', 'image/webp'];
+const upload = multer({
+  storage,
+  limits: { fileSize: 200 * 1024 * 1024 }, // 200MB
+  fileFilter: (req, file, cb) => {
+    if (ALLOWED_MIME.includes(file.mimetype)) cb(null, true);
+    else cb(new Error(`허용되지 않는 파일 형식: ${file.mimetype}`));
+  }
+});
 
 const httpServer = http.createServer(app);
 const io = new Server(httpServer, { cors: { origin: '*' } });
@@ -177,6 +191,20 @@ app.get('/api/devices', async (req, res) => {
   }
 });
 
+// 특정 기기 조회 (player 부팅 시 자신의 groupId 확인용)
+app.get('/api/devices/:id', async (req, res) => {
+  try {
+    const device = await prisma.device.findUnique({
+      where: { id: req.params.id },
+      include: { group: true, store: true }
+    });
+    if (!device) return res.status(404).json({ error: '기기를 찾을 수 없습니다.' });
+    res.json(device);
+  } catch (err) {
+    res.status(500).json({ error: '기기 조회 실패' });
+  }
+});
+
 // 기기 수동 등록 (물리적 주소/ID 기반)
 app.post('/api/devices', async (req, res) => {
   const { id, name, storeId } = req.body; // id = MAC Address or serial
@@ -233,9 +261,18 @@ app.delete('/api/devices/:id', async (req, res) => {
 app.post('/api/media', upload.single('file'), async (req, res) => {
   if (!req.file) return res.status(400).json({ error: '파일이 없습니다.' });
   const { storeId } = req.body;
-  
+
   const type = req.file.mimetype.startsWith('video/') ? 'video' : 'image';
-  
+
+  // SHA-256 해시 계산 (player 캐시 검증용)
+  const hash = await new Promise((resolve, reject) => {
+    const h = crypto.createHash('sha256');
+    fs.createReadStream(req.file.path)
+      .on('data', chunk => h.update(chunk))
+      .on('end', () => resolve(h.digest('hex')))
+      .on('error', reject);
+  });
+
   try {
     const media = await prisma.media.create({
       data: {
@@ -243,6 +280,7 @@ app.post('/api/media', upload.single('file'), async (req, res) => {
         path: `/uploads/${req.file.filename}`,
         type,
         size: req.file.size,
+        hash,
         storeId: storeId || null
       }
     });
@@ -366,7 +404,8 @@ app.post('/api/groups/:groupId/playlist', async (req, res) => {
           order: idx,
           duration: item.duration || 10,
           targetDeviceId: item.targetDeviceId || null,
-          transition: item.transition || 'fade'
+          transition: item.transition || 'fade',
+          transitionTime: item.transitionTime || 1000
         }));
         await tx.playlistMedia.createMany({ data: createData });
       }
@@ -383,67 +422,91 @@ app.post('/api/groups/:groupId/playlist', async (req, res) => {
   }
 });
 
-// --- TCP 소켓 서버 (10080 포트, 레거시 및 하트비트 통신용) ---
+// --- TCP 소켓 서버 (10080 포트, 하트비트 통신용) ---
+
+// socket → deviceId 매핑 (오프라인 감지용)
+const socketDeviceMap = new Map();
+
+async function handleTcpMessage(socket, msg) {
+  // 인증: auth:<deviceId>:<secret>
+  if (msg.startsWith('auth:')) {
+    const [, deviceId, secret] = msg.split(':');
+    if (secret !== DEVICE_SECRET) {
+      socket.write('err:unauthorized\n');
+      socket.destroy();
+      return;
+    }
+    socketDeviceMap.set(socket, deviceId);
+    socket.write('auth:ok\n');
+    console.log(`[TCP] 인증 성공: ${deviceId}`);
+    return;
+  }
+
+  // 하트비트: status:<deviceId>/cpu:<x>/mem:<x>
+  if (msg.startsWith('status:')) {
+    const deviceId = socketDeviceMap.get(socket);
+    if (!deviceId) {
+      socket.write('err:not_authenticated\n');
+      return;
+    }
+
+    const parts = msg.substring(7).split('/');
+    let cpu = null;
+    let mem = null;
+    parts.forEach(p => {
+      if (p.startsWith('cpu:')) cpu = parseFloat(p.substring(4));
+      if (p.startsWith('mem:')) mem = parseFloat(p.substring(4));
+    });
+    // NaN 방어
+    if (!Number.isFinite(cpu)) cpu = null;
+    if (!Number.isFinite(mem)) mem = null;
+
+    try {
+      await prisma.device.upsert({
+        where: { id: deviceId },
+        update: { status: 'online', lastSeen: new Date(), ip: socket.remoteAddress, cpuUsage: cpu, memUsage: mem },
+        create: { id: deviceId, name: `Device-${deviceId}`, status: 'online', lastSeen: new Date(), ip: socket.remoteAddress, cpuUsage: cpu, memUsage: mem }
+      });
+      io.emit('device_status_update', { deviceId, status: 'online', cpu, mem });
+      socket.write('ok:\n');
+    } catch (err) {
+      console.error('[TCP] DB 에러:', err);
+    }
+  }
+}
 
 const tcpServer = net.createServer((socket) => {
   console.log(`[TCP] 보드 접속됨: ${socket.remoteAddress}:${socket.remotePort}`);
+  let buffer = '';
 
-  socket.on('data', async (data) => {
-    const msg = data.toString('utf-8').trim();
-    console.log(`[TCP RX] ${msg}`);
-    
-    // 임시 하트비트/상태 처리 로직
-    // 예: "status:device123/cpu:12/mem:45"
-    if (msg.startsWith('status:')) {
-      const parts = msg.substring(7).split('/');
-      const deviceId = parts[0];
-      
-      let cpu = null;
-      let mem = null;
-      
-      parts.forEach(p => {
-        if (p.startsWith('cpu:')) cpu = parseFloat(p.substring(4));
-        if (p.startsWith('mem:')) mem = parseFloat(p.substring(4));
-      });
-      
+  socket.on('data', (data) => {
+    buffer += data.toString('utf-8');
+    let idx;
+    // \n 단위로 메시지 분리 (TCP 스트림 프레이밍)
+    while ((idx = buffer.indexOf('\n')) !== -1) {
+      const msg = buffer.slice(0, idx).trim();
+      buffer = buffer.slice(idx + 1);
+      if (msg) handleTcpMessage(socket, msg);
+    }
+  });
+
+  socket.on('close', async () => {
+    const deviceId = socketDeviceMap.get(socket);
+    socketDeviceMap.delete(socket);
+    if (deviceId) {
+      console.log(`[TCP] 보드 오프라인: ${deviceId}`);
       try {
-        // DB에 기기가 없으면 생성, 있으면 업데이트
-        await prisma.device.upsert({
+        await prisma.device.update({
           where: { id: deviceId },
-          update: { 
-            status: 'online', 
-            lastSeen: new Date(),
-            ip: socket.remoteAddress,
-            cpuUsage: cpu,
-            memUsage: mem
-          },
-          create: {
-            id: deviceId,
-            name: `Device-${deviceId}`,
-            status: 'online',
-            lastSeen: new Date(),
-            ip: socket.remoteAddress,
-            cpuUsage: cpu,
-            memUsage: mem
-          }
+          data: { status: 'offline' }
         });
-        
-        // 대시보드(웹)로 실시간 상태 브로드캐스트
-        io.emit('device_status_update', { deviceId, status: 'online', cpu, mem });
-        
-        // 보드에 응답 (하트비트 ACK)
-        socket.write('ok:\n');
+        io.emit('device_status_update', { deviceId, status: 'offline' });
       } catch (err) {
-        console.error('[TCP] DB 에러:', err);
+        console.error('[TCP] 오프라인 처리 에러:', err);
       }
     }
   });
 
-  socket.on('close', () => {
-    console.log(`[TCP] 보드 접속 해제: ${socket.remoteAddress}`);
-    // 여기서 해당 소켓에 매핑된 기기의 status를 offline으로 변경하는 로직이 들어갈 수 있습니다.
-  });
-  
   socket.on('error', (err) => {
     console.error(`[TCP] 에러:`, err.message);
   });
