@@ -13,9 +13,6 @@
     <!-- 화면 꺼짐 방지 -->
     <uses-permission android:name="android.permission.WAKE_LOCK" />
 
-    <!-- 포그라운드 서비스 (하트비트 유지용, API 28+) -->
-    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
-
     <application
         android:name=".PlayerApp"
         android:allowBackup="false"
@@ -26,7 +23,7 @@
         android:usesCleartextTraffic="true"
         tools:targetApi="22">
 
-        <!-- 부팅 후 자동 실행 진입점 -->
+        <!-- 부팅 후 자동 실행 진입점 (LAUNCHER만 등록 — HOME은 추후 정식 키오스크 단계에서 추가) -->
         <activity
             android:name=".BootActivity"
             android:exported="true"
@@ -35,8 +32,6 @@
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
-                <category android:name="android.intent.category.HOME" />
-                <category android:name="android.intent.category.DEFAULT" />
             </intent-filter>
         </activity>
 
