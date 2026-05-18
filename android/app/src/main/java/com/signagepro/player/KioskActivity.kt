@@ -6,31 +6,43 @@ import android.view.View
 import android.view.WindowManager
 import androidx.appcompat.app.AppCompatActivity
 import com.signagepro.player.databinding.ActivityKioskBinding
+import com.signagepro.player.engine.PlayerCoordinator
+import com.signagepro.player.render.MediaRenderer
 
 /**
- * 풀스크린 키오스크 화면 — 실제 재생.
- * 현재는 플레이스홀더. 다음 단계에서 PlaylistEngine + ExoPlayer 연결.
+ * 풀스크린 키오스크 — PlayerCoordinator를 통해 실제 재생을 구동.
  */
 class KioskActivity : AppCompatActivity() {
 
     private lateinit var binding: ActivityKioskBinding
+    private lateinit var coordinator: PlayerCoordinator
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         binding = ActivityKioskBinding.inflate(layoutInflater)
         setContentView(binding.root)
 
-        // 화면 꺼짐 방지
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
-
         applyImmersiveMode()
 
-        val config = PlayerApp.instance.config
-        binding.statusText.text = buildString {
-            append("Device: ${config.deviceId}\n")
-            append("Server: ${config.serverUrl}\n")
-            append("\n준비 중 (재생 엔진 연결 예정)")
-        }
+        val renderer = MediaRenderer(this, binding.layerA, binding.layerB)
+        coordinator = PlayerCoordinator(
+            context = applicationContext,
+            config = PlayerApp.instance.config,
+            renderer = renderer,
+            onStatus = { msg ->
+                runOnUiThread {
+                    binding.statusText.text = msg
+                    binding.statusText.visibility = if (msg.isBlank()) View.GONE else View.VISIBLE
+                }
+            }
+        )
+        coordinator.start()
+    }
+
+    override fun onDestroy() {
+        coordinator.stop()
+        super.onDestroy()
     }
 
     override fun onWindowFocusChanged(hasFocus: Boolean) {
@@ -40,7 +52,6 @@ class KioskActivity : AppCompatActivity() {
 
     @Suppress("DEPRECATION")
     private fun applyImmersiveMode() {
-        // Android 5.1.1 호환 — 신/구 API 동시 처리
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
             window.setDecorFitsSystemWindows(false)
             window.insetsController?.let {

@@ -1,13 +1,63 @@
 <?xml version="1.0" encoding="utf-8"?>
 <FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
     android:id="@+id/rootContainer"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
     android:background="@android:color/black"
     android:keepScreenOn="true">
 
-    <!-- 추후 ExoPlayer PlayerView와 ImageView가 들어갈 자리 -->
+    <!-- Layer A -->
+    <FrameLayout
+        android:id="@+id/layerA"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent">
 
+        <androidx.media3.ui.PlayerView
+            android:id="@+id/videoA"
+            android:tag="video"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:visibility="gone"
+            app:resize_mode="fit"
+            app:use_controller="false" />
+
+        <ImageView
+            android:id="@+id/imageA"
+            android:tag="image"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:scaleType="fitCenter"
+            android:visibility="gone"
+            android:contentDescription="@null" />
+    </FrameLayout>
+
+    <!-- Layer B (크로스페이드 대상) -->
+    <FrameLayout
+        android:id="@+id/layerB"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent">
+
+        <androidx.media3.ui.PlayerView
+            android:id="@+id/videoB"
+            android:tag="video"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:visibility="gone"
+            app:resize_mode="fit"
+            app:use_controller="false" />
+
+        <ImageView
+            android:id="@+id/imageB"
+            android:tag="image"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:scaleType="fitCenter"
+            android:visibility="gone"
+            android:contentDescription="@null" />
+    </FrameLayout>
+
+    <!-- 상태 표시 (오류/초기 메시지) -->
     <TextView
         android:id="@+id/statusText"
         android:layout_width="wrap_content"
