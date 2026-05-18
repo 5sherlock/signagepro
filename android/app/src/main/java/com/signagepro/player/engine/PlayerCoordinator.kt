@@ -6,6 +6,8 @@ import com.signagepro.player.api.ApiClient
 import com.signagepro.player.api.PlaylistDto
 import com.signagepro.player.cache.MediaCacheRepo
 import com.signagepro.player.config.ConfigStore
+import com.signagepro.player.net.ControlChannel
+import com.signagepro.player.net.HeartbeatService
 import com.signagepro.player.render.MediaRenderer
 import com.signagepro.player.sync.NtpClient
 import kotlinx.coroutines.CoroutineScope
@@ -15,18 +17,23 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+import java.net.URI
 
 /**
- * 부팅 → NTP → device/playlist fetch → prefetch → 슬롯 기반 재생 루프 오케스트레이션.
+ * player 전체 흐름 오케스트레이션.
  *
- * 흐름:
- *   1. NTP 동기 (best-effort, 실패해도 진행)
- *   2. /api/devices/:id → groupId 확인
- *   3. /api/groups/:gid/playlist 받아 PlaylistStore 저장 (실패 시 캐시 사용)
- *   4. 모든 media prefetch (best-effort)
- *   5. 슬롯 루프 — PlaylistEngine.current() → renderer.show() → 다음 슬롯까지 delay
+ * 부팅:
+ *   1. NTP 동기 (best-effort)
+ *   2. /api/devices/:id → groupId
+ *   3. /api/groups/:gid/playlist → PlaylistStore 저장 (실패 시 캐시)
+ *   4. 미디어 전체 prefetch + LRU trim
+ *   5. 슬롯 루프 시작
+ *   6. HeartbeatService 시작 (TCP 10080)
+ *   7. ControlChannel 시작 (Socket.io)
  *
- * 모든 외부 호출은 best-effort. 실패해도 캐시 + NTP fallback으로 재생을 이어감.
+ * playlist_updated/group_assignment_changed 이벤트 수신 시 [refreshPlaylist] 호출.
  */
 class PlayerCoordinator(
     private val context: Context,
@@ -38,8 +45,13 @@ class PlayerCoordinator(
     private val ntp = NtpClient()
     private val cache = MediaCacheRepo(context)
     private val store = PlaylistStore(context)
+    private val metrics = SystemMetrics(context)
+    private val refreshMutex = Mutex()
+
     private var engine: PlaylistEngine? = null
     private var loopJob: Job? = null
+    private var heartbeat: HeartbeatService? = null
+    private var control: ControlChannel? = null
 
     fun start() {
         scope.launch {
@@ -53,17 +65,12 @@ class PlayerCoordinator(
     }
 
     private suspend fun bootstrap() {
-        val deviceId = config.deviceId ?: run {
-            onStatus("디바이스 ID 미설정")
-            return
-        }
-        val serverUrl = config.serverUrl ?: run {
-            onStatus("서버 URL 미설정")
-            return
-        }
+        val deviceId = config.deviceId ?: return onStatus("디바이스 ID 미설정")
+        val serverUrl = config.serverUrl ?: return onStatus("서버 URL 미설정")
+        val secret = config.deviceSecret ?: return onStatus("디바이스 시크릿 미설정")
 
         onStatus("NTP 동기 중…")
-        ntp.sync()  // 실패해도 fallback으로 진행
+        ntp.sync()
 
         engine = PlaylistEngine(ntp, deviceId)
 
@@ -71,15 +78,17 @@ class PlayerCoordinator(
         val playlist = fetchPlaylistOrCached(serverUrl, deviceId)
         if (playlist == null || playlist.medias.isEmpty()) {
             onStatus("재생 가능한 미디어가 없습니다.")
-            return
+        } else {
+            engine!!.setPlaylist(playlist.medias)
+            onStatus("미디어 다운로드 중…")
+            prefetchAll(serverUrl, playlist)
+            onStatus("")
+            startLoop()
         }
-        engine!!.setPlaylist(playlist.medias)
 
-        onStatus("미디어 다운로드 중…")
-        prefetchAll(serverUrl, playlist)
-
-        onStatus("")
-        startLoop()
+        // 네트워크 모듈은 playlist 결과와 무관하게 시작
+        startHeartbeat(serverUrl, deviceId, secret)
+        startControlChannel(serverUrl, deviceId)
     }
 
     private suspend fun fetchPlaylistOrCached(serverUrl: String, deviceId: String): PlaylistDto? {
@@ -99,8 +108,7 @@ class PlayerCoordinator(
     private suspend fun prefetchAll(serverUrl: String, playlist: PlaylistDto) {
         val activeHashes = mutableSetOf<String>()
         for (item in playlist.medias) {
-            val hash = item.media.hash
-            if (hash != null) activeHashes.add(hash)
+            item.media.hash?.let { activeHashes.add(it) }
             try {
                 cache.ensure(serverUrl, item.media)
             } catch (e: Exception) {
@@ -110,20 +118,34 @@ class PlayerCoordinator(
         cache.trim(activeHashes)
     }
 
+    /** playlist_updated/group_assignment_changed 수신 시 재조회 + 재시작. */
+    private fun refreshPlaylist() {
+        val deviceId = config.deviceId ?: return
+        val serverUrl = config.serverUrl ?: return
+        scope.launch {
+            refreshMutex.withLock {
+                Log.i(TAG, "playlist refresh 시작")
+                val playlist = fetchPlaylistOrCached(serverUrl, deviceId) ?: return@withLock
+                if (playlist.medias.isEmpty()) return@withLock
+                prefetchAll(serverUrl, playlist)
+                engine?.setPlaylist(playlist.medias)
+                if (loopJob == null || loopJob?.isActive != true) startLoop()
+            }
+        }
+    }
+
     private fun startLoop() {
         loopJob?.cancel()
         loopJob = scope.launch {
             while (isActive) {
                 val eng = engine
-                if (eng == null) { delay(1000); continue }
-                val slot = eng.current()
-                if (slot == null) { delay(1000); continue }
+                val slot = eng?.current()
+                if (slot == null) { delay(1_000); continue }
 
                 val file = cache.cachedFile(slot.item.media)
                 if (file != null) {
                     renderer.show(slot.item, file)
                 } else {
-                    // 캐시에 없으면 즉시 다음 슬롯으로 넘김
                     Log.w(TAG, "캐시에 없음: ${slot.item.media.filename}")
                 }
 
@@ -133,10 +155,33 @@ class PlayerCoordinator(
         }
     }
 
+    private fun startHeartbeat(serverUrl: String, deviceId: String, secret: String) {
+        val host = URI(serverUrl).host ?: return
+        heartbeat?.stop()
+        heartbeat = HeartbeatService(
+            serverHost = host,
+            deviceId = deviceId,
+            deviceSecret = secret,
+            metrics = metrics
+        ).also { it.start() }
+    }
+
+    private fun startControlChannel(serverUrl: String, deviceId: String) {
+        control?.stop()
+        control = ControlChannel(
+            serverUrl = serverUrl,
+            selfDeviceId = deviceId,
+            onPlaylistUpdated = { refreshPlaylist() },
+            onAssignmentChanged = { refreshPlaylist() }
+        ).also { it.start() }
+    }
+
     fun stop() {
         loopJob?.cancel()
-        scope.coroutineContext[Job]?.cancel()
+        heartbeat?.stop()
+        control?.stop()
         renderer.release()
+        scope.coroutineContext[Job]?.cancel()
     }
 
     companion object {
