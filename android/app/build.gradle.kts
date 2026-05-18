@@ -10,7 +10,7 @@ android {
     defaultConfig {
         applicationId = "com.signagepro.player"
         minSdk = 22                // Android 5.1.1 (RK3229 U4X+ CM)
-        targetSdk = 22             // 5.1.1과 동일 — 일부 커스텀 ROM 호환성 ↑
+        targetSdk = 34             // 동일 디바이스에서 targetSdk 36도 설치 확인됨
         versionCode = 1
         versionName = "0.1.0"
 
