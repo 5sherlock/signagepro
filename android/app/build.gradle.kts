@@ -13,6 +13,15 @@ android {
         targetSdk = 30             // 스코프 스토리지 회피 + 5.1.1 호환
         versionCode = 1
         versionName = "0.1.0"
+
+        // RK3229 = ARMv7 32bit. 다른 ABI 빌드 생략으로 APK 크기·복잡도 감소
+        ndk {
+            abiFilters += listOf("armeabi-v7a")
+        }
+
+        // 일부 구형 Android 5.x 커스텀 ROM에서 native multidex가 불안정 →
+        // multidex 라이브러리로 우회
+        multiDexEnabled = true
     }
 
     buildTypes {
@@ -47,8 +56,8 @@ android {
 dependencies {
     implementation("androidx.core:core-ktx:1.13.1")
     implementation("androidx.appcompat:appcompat:1.6.1")
-    implementation("com.google.android.material:material:1.12.0")
-    implementation("androidx.constraintlayout:constraintlayout:2.1.4")
+    implementation("androidx.multidex:multidex:2.0.1")
+    // Material Components 제거 — dex 수 감소 (이번 단계 UI에는 불필요)
 
     // 미디어 재생 (Media3 / ExoPlayer)
     val media3 = "1.3.1"
