@@ -1,49 +1,29 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
-    <!-- 네트워크 -->
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
-
-    <!-- 화면 꺼짐 방지 (재생 중 슬립 방지용) -->
     <uses-permission android:name="android.permission.WAKE_LOCK" />
-
-    <!--
-      BootReceiver / RECEIVE_BOOT_COMPLETED는 일부 RK3229 커스텀 ROM이
-      키오스크 가로채기 방지로 차단할 수 있어 자동 부팅 기능은 후속 단계에서 별도 처리.
-    -->
 
     <application
         android:name=".PlayerApp"
         android:allowBackup="false"
-        android:icon="@android:drawable/ic_menu_slideshow"
+        android:icon="@drawable/ic_launcher"
         android:label="@string/app_name"
         android:supportsRtl="true"
         android:theme="@style/Theme.SignageProPlayer">
 
-        <!-- 진입점 -->
         <activity
-            android:name=".BootActivity"
+            android:name=".MainActivity"
             android:exported="true"
             android:launchMode="singleTask"
-            android:screenOrientation="landscape">
+            android:screenOrientation="landscape"
+            android:theme="@style/Theme.SignageProPlayer.Fullscreen">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
-
-        <activity
-            android:name=".SetupActivity"
-            android:exported="false"
-            android:screenOrientation="landscape" />
-
-        <activity
-            android:name=".KioskActivity"
-            android:exported="false"
-            android:launchMode="singleTask"
-            android:screenOrientation="landscape"
-            android:theme="@style/Theme.SignageProPlayer.Fullscreen" />
 
     </application>
 </manifest>
