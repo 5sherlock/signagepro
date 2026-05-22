@@ -384,8 +384,13 @@ function SettingsTab({ onUnauth }) {
     xhr.onload = () => {
       setUploading(false);
       e.target.value = '';
-      if (xhr.status === 200) { refreshStatus(); }
-      else { alert('업로드 실패: ' + xhr.responseText); }
+      if (xhr.status === 200) {
+        try {
+          const data = JSON.parse(xhr.responseText);
+          // POST 응답으로 직접 갱신 (브라우저 GET 캐시 문제 방지)
+          setOtaStatus({ available: true, size: data.size, updatedAt: data.updatedAt });
+        } catch { refreshStatus(); }
+      } else { alert('업로드 실패: ' + xhr.responseText); }
     };
     xhr.onerror = () => { setUploading(false); alert('업로드 중 오류가 발생했습니다.'); };
     xhr.send(form);
