@@ -223,6 +223,8 @@ const ALL_DAYS = '0,1,2,3,4,5,6';
 function ScreenScheduleSection({ onUnauth }) {
   const [schedules, setSchedules] = useState([]);
   const [saving, setSaving] = useState(false);
+  const [pushing, setPushing] = useState(false);
+  const [pushResult, setPushResult] = useState(null);
   const [draft, setDraft] = useState({ deviceId: '', onTime: '09:00', offTime: '22:00', days: '1,2,3,4,5', enabled: true });
   const [editId, setEditId] = useState(null);
 
@@ -273,12 +275,37 @@ function ScreenScheduleSection({ onUnauth }) {
     load();
   };
 
+  const pushToDevices = async () => {
+    setPushing(true);
+    setPushResult(null);
+    try {
+      const data = await apiFetch(`${SOCKET_URL}/api/schedules/push`, { method: 'POST' })
+        .then(check401).then(r => r.json());
+      setPushResult(`✅ ${data.devices}개 기기에 전송 완료`);
+      setTimeout(() => setPushResult(null), 3000);
+    } catch (e) {
+      if (e.message !== '401') setPushResult('❌ 전송 실패');
+    } finally { setPushing(false); }
+  };
+
   const activeDays = draft.days ? draft.days.split(',').map(Number) : [];
   const inputStyle = { padding: '6px 10px', borderRadius: '6px', border: '1px solid var(--border)', background: 'var(--bg-primary)', color: 'var(--text-primary)', fontSize: '0.9rem', colorScheme: 'dark' };
 
   return (
     <div className="glass-card" style={{ maxWidth: '600px', padding: '30px', marginTop: '20px' }}>
-      <h2 style={{ marginBottom: '20px', fontSize: '1.2rem' }}>🕐 화면 스케줄</h2>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '20px' }}>
+        <h2 style={{ margin: 0, fontSize: '1.2rem' }}>🕐 화면 스케줄</h2>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+          {pushResult && <span style={{ fontSize: '0.8rem', color: pushResult.startsWith('✅') ? '#10B981' : '#EF4444' }}>{pushResult}</span>}
+          <button
+            className="btn btn-primary"
+            onClick={pushToDevices}
+            disabled={pushing || schedules.length === 0}
+            style={{ background: '#0EA5E9', fontSize: '0.85rem', padding: '6px 14px' }}>
+            {pushing ? '전송 중…' : '📡 기기 전송'}
+          </button>
+        </div>
+      </div>
 
       {/* 등록된 스케줄 목록 */}
       {schedules.length > 0 && (

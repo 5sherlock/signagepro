@@ -922,6 +922,14 @@ app.delete('/api/schedules/:id', async (req, res) => {
   res.json({ ok: true });
 });
 
+// 스케줄 수동 전송 — 현재 연결된 모든 기기에 재조회 신호 발송
+app.post('/api/schedules/push', requireAuth, (req, res) => {
+  const count = io.sockets.sockets.size;
+  io.emit('screen_schedule');
+  console.log(`[SCHED] 수동 전송 → ${count}개 기기`);
+  res.json({ ok: true, devices: count });
+});
+
 // ── 화면 스케줄 cron 실행 ──────────────────────────────────────────────────
 
 const activeCrons = [];
