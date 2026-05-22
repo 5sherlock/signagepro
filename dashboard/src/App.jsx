@@ -296,7 +296,11 @@ function ScreenScheduleSection({ onUnauth }) {
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '20px' }}>
         <h2 style={{ margin: 0, fontSize: '1.2rem' }}>🕐 화면 스케줄</h2>
         <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-          {pushResult && <span style={{ fontSize: '0.8rem', color: pushResult.startsWith('✅') ? '#10B981' : '#EF4444' }}>{pushResult}</span>}
+          {pushResult && (
+            <span style={{ fontSize: '0.8rem', fontWeight: 600, color: pushResult.startsWith('✅') ? '#10B981' : '#EF4444', whiteSpace: 'nowrap' }}>
+              {pushResult}
+            </span>
+          )}
           <button
             className="btn btn-primary"
             onClick={pushToDevices}
@@ -825,6 +829,7 @@ function App() {
   const [apkAvailable, setApkAvailable] = useState(false);
   const [adbRunning, setAdbRunning] = useState(false);
   const [serverOnline, setServerOnline] = useState(null); // null=확인중, true=연결, false=끊김
+  const [allSchedules, setAllSchedules] = useState([]);
 
   const onUnauth = useCallback(() => {
     localStorage.removeItem('SIGNAGE_TOKEN');
@@ -903,10 +908,18 @@ function App() {
       .finally(() => setAdbRunning(false));
   };
 
+  const fetchSchedules = useCallback(() => {
+    apiFetch(`${SOCKET_URL}/api/schedules`)
+      .then(r => r.json())
+      .then(setAllSchedules)
+      .catch(() => {});
+  }, []);
+
   useEffect(() => {
     fetchDevices();
     fetchGroups();
     fetchStores();
+    fetchSchedules();
 
     const socket = io(SOCKET_URL);
 
@@ -934,6 +947,8 @@ function App() {
       fetchDevices();
       fetchGroups();
     });
+
+    socket.on('screen_schedule', () => fetchSchedules());
 
     return () => socket.disconnect();
   }, []);
@@ -1124,6 +1139,17 @@ function App() {
                             {device.ip}
                           </div>
                         )}
+                        {(() => {
+                          const sched = allSchedules.filter(s => s.enabled && (!s.deviceId || s.deviceId === device.id));
+                          if (!sched.length) return null;
+                          const s = sched[0];
+                          return (
+                            <div style={{ fontSize: '0.68rem', color: '#60a5fa', marginTop: '3px', display: 'flex', gap: '6px' }}>
+                              {s.onTime && <span>☀️ {s.onTime}</span>}
+                              {s.offTime && <span>🌙 {s.offTime}</span>}
+                            </div>
+                          );
+                        })()}
                         {deviceMeta[device.id] && (
                           <div style={{ marginTop: '4px' }}>
                             <div style={{ display: 'flex', alignItems: 'center', gap: '4px', marginBottom: '2px', overflow: 'hidden' }}>
