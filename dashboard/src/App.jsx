@@ -360,9 +360,10 @@ function ScreenScheduleSection({ onUnauth }) {
           ))}
         </div>
 
-        <div style={{ display: 'flex', gap: '8px' }}>
-          <button className="btn btn-primary" onClick={save} disabled={saving}>
-            {saving ? '저장 중…' : editId ? '✏️ 수정 저장' : '+ 스케줄 추가'}
+        <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' }}>
+          <button className="btn btn-primary" onClick={save} disabled={saving}
+            style={{ background: '#10B981', fontWeight: 700 }}>
+            {saving ? '저장 중…' : editId ? '✏️ 수정 저장 및 전송' : '💾 저장 및 기기 전송'}
           </button>
           {editId && (
             <button className="btn" onClick={() => { setEditId(null); setDraft({ deviceId: '', onTime: '09:00', offTime: '22:00', days: '1,2,3,4,5', enabled: true }); }}
@@ -370,6 +371,9 @@ function ScreenScheduleSection({ onUnauth }) {
               취소
             </button>
           )}
+          <span style={{ fontSize: '0.72rem', color: 'var(--text-secondary)' }}>
+            저장하면 기기에 즉시 전송됩니다
+          </span>
         </div>
       </div>
     </div>
