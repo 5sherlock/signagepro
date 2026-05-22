@@ -924,11 +924,11 @@ app.delete('/api/schedules/:id', async (req, res) => {
 });
 
 // 스케줄 수동 전송 — 현재 연결된 모든 기기에 재조회 신호 발송
-app.post('/api/schedules/push', requireAuth, (req, res) => {
-  const count = io.sockets.sockets.size;
+app.post('/api/schedules/push', requireAuth, async (req, res) => {
+  const onlineCount = await prisma.device.count({ where: { status: 'online' } });
   io.emit('screen_schedule');
-  console.log(`[SCHED] 수동 전송 → ${count}개 기기`);
-  res.json({ ok: true, devices: count });
+  console.log(`[SCHED] 수동 전송 → 온라인 기기 ${onlineCount}대`);
+  res.json({ ok: true, devices: onlineCount });
 });
 
 // ── 화면 스케줄 cron 실행 ──────────────────────────────────────────────────
