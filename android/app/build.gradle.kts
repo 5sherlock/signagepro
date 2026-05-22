@@ -24,6 +24,16 @@ android {
         multiDexEnabled = true
     }
 
+    // RK3229 커스텀 ROM(Android 5.1.1)의 구형 zip 파서는 APK Signing Block(v2/v3)을
+    // 못 다뤄 "구문분석 오류"를 낸다. v1(JAR) 전용 서명으로 고전 APK처럼 처리되게 함.
+    signingConfigs {
+        getByName("debug") {
+            enableV1Signing = true
+            enableV2Signing = false
+            enableV3Signing = false
+        }
+    }
+
     buildTypes {
         release {
             isMinifyEnabled = false

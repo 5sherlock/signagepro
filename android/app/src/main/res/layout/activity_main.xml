@@ -70,6 +70,29 @@
             android:textSize="20sp"
             android:gravity="center" />
 
+        <TextView
+            android:id="@+id/debugText"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_gravity="top|start"
+            android:background="#AA000000"
+            android:textColor="#00FF66"
+            android:textSize="13sp"
+            android:fontFamily="monospace"
+            android:padding="6dp"
+            android:visibility="gone" />
+
+        <!--
+            관리자 진입 핫스팟 — 우상단 모서리를 3초 이상 누르면 관리자 메뉴 표시.
+            투명하므로 화면에 보이지 않음. 키오스크 현장 재설정용.
+        -->
+        <View
+            android:id="@+id/adminHotspot"
+            android:layout_width="80dp"
+            android:layout_height="80dp"
+            android:layout_gravity="top|end"
+            android:background="@android:color/transparent" />
+
     </FrameLayout>
 
     <!-- Setup container -->

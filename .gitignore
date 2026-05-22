@@ -40,5 +40,14 @@ out/
 
 # Database and Uploads
 server/prisma/dev.db
+server/dev.db
 server/thumbnails/
 server/uploads/
+
+# APK 배포 파일 (바이너리, 용량 큼)
+server/update/*.apk
+
+# Android 빌드 결과물
+android/app/build/
+android/.gradle/
+android/local.properties

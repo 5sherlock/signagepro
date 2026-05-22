@@ -146,6 +146,41 @@
   flex: 1;
 }
 
+.library-item-del {
+  flex-shrink: 0;
+  background: transparent;
+  color: var(--text-dim);
+  border: none;
+  width: 26px;
+  height: 26px;
+  border-radius: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.2s, background 0.2s, color 0.2s;
+}
+
+.library-item:hover .library-item-del {
+  opacity: 1;
+}
+
+.library-item-del:hover {
+  background: #ef4444;
+  color: #fff;
+}
+
+.icon-btn-danger:hover:not(:disabled) {
+  background: #ef4444;
+  color: #fff;
+}
+
+.icon-btn:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
 /* Timeline Area */
 .mm-timeline-area {
   flex: 1;

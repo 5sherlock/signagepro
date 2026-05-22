@@ -165,7 +165,7 @@ export default function GroupManager({ devices, fetchDevices, stores, fetchStore
   };
 
   return (
-    <div className="group-manager-container" style={{ display: 'flex', gap: '20px', height: 'calc(100vh - 120px)', flexWrap: 'wrap', overflow: 'auto' }}>
+    <div className="group-manager-container" style={{ display: 'flex', gap: '20px', height: '100%', flexWrap: 'wrap', overflow: 'auto' }}>
 
       {/* 1. 왼쪽 사이드바: 사업장 목록 */}
       <div className="glass-card" style={{ width: 'clamp(240px, 25vw, 320px)', flexShrink: 0, display: 'flex', flexDirection: 'column', padding: '20px', minHeight: '300px' }}>

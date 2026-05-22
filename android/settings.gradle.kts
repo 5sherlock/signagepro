@@ -15,3 +15,4 @@ dependencyResolutionManagement {
 
 rootProject.name = "SignageProPlayer"
 include(":app")
+include(":probe")

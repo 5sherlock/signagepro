@@ -36,6 +36,7 @@ model Device {
   macAddress String?   @unique
   status     String    @default("offline") // online, offline
   ip         String?
+  appVersion String?
   cpuUsage   Float?
   memUsage   Float?
   lastSeen   DateTime?
@@ -81,8 +82,9 @@ model PlaylistMedia {
   order          Int
   duration       Int?     // 개별 미디어 재생 시간 오버라이드
   targetDeviceId String?  // 특정 기기 전용 필터링 (null이면 전체)
-  transition     String?  @default("fade") // 전환 효과 (fade, slide, none 등)
+  transition     String?  @default("fade") // 전환 효과 (fade, dissolve, slide, none)
   transitionTime Int?     @default(1000)
+  slideDirection String?  @default("right") // slide 방향: right, left, up, down
   
   playlist       Playlist @relation(fields: [playlistId], references: [id])
   media          Media    @relation(fields: [mediaId], references: [id])

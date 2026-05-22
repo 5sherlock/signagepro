@@ -30,6 +30,7 @@ class HeartbeatService(
     private val deviceId: String,
     private val deviceSecret: String,
     private val metrics: SystemMetrics,
+    private val appVersion: String = "unknown",
     private val intervalMs: Long = 10_000L,
     private val connectTimeoutMs: Int = 5_000
 ) {
@@ -78,7 +79,7 @@ class HeartbeatService(
             while (currentCoroutineContext().isActive) {
                 val cpu = "%.1f".format(metrics.cpuUsage())
                 val mem = "%.1f".format(metrics.memUsage())
-                out.write("status:$deviceId/cpu:$cpu/mem:$mem\n"); out.flush()
+                out.write("status:$deviceId/cpu:$cpu/mem:$mem/ver:$appVersion\n"); out.flush()
                 val ack = input.readLine() ?: throw IOException("EOF on heartbeat")
                 if (!ack.startsWith("ok")) throw IOException("ACK 오류: $ack")
                 delay(intervalMs)

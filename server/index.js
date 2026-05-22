@@ -9,6 +9,7 @@ const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
 const crypto = require('crypto');
+const { execFile } = require('child_process');
 
 const prisma = new PrismaClient();
 const app = express();
@@ -18,6 +19,10 @@ if (DEVICE_SECRET === 'changeme') {
   console.warn('[WARN] DEVICE_SECRET이 기본값입니다. .env에서 변경하세요.');
 }
 app.use(cors());
+app.use((req, res, next) => {
+  console.log(`[REQ] ${new Date().toISOString()} ${req.ip} ${req.method} ${req.url}`);
+  next();
+});
 app.use(express.json());
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 
@@ -291,6 +296,11 @@ app.post('/api/media', upload.single('file'), async (req, res) => {
 });
 
 // 2. 미디어 목록 조회 (사업장별)
+// 단말 시각 동기용 — 5대 보드가 같은 서버 시각을 기준으로 동기 재생
+app.get('/api/time', (req, res) => {
+  res.json({ epochMs: Date.now() });
+});
+
 app.get('/api/media', async (req, res) => {
   const { storeId } = req.query;
   const where = storeId ? { storeId } : {};
@@ -405,7 +415,8 @@ app.post('/api/groups/:groupId/playlist', async (req, res) => {
           duration: item.duration || 10,
           targetDeviceId: item.targetDeviceId || null,
           transition: item.transition || 'fade',
-          transitionTime: item.transitionTime || 1000
+          transitionTime: item.transitionTime || 1000,
+          slideDirection: item.slideDirection || 'right'
         }));
         await tx.playlistMedia.createMany({ data: createData });
       }
@@ -421,6 +432,178 @@ app.post('/api/groups/:groupId/playlist', async (req, res) => {
     res.status(500).json({ error: '재생목록 저장 실패' });
   }
 });
+
+// --- OTA 업데이트 ---
+
+const updateDir = path.join(__dirname, 'update');
+if (!fs.existsSync(updateDir)) fs.mkdirSync(updateDir, { recursive: true });
+
+// APK 파일 서빙 (server/update/app.apk 를 이 경로에 놓으면 됨)
+app.get('/update/apk', (req, res) => {
+  const apkPath = path.join(updateDir, 'app.apk');
+  if (!fs.existsSync(apkPath)) {
+    return res.status(404).json({ error: 'APK 없음. server/update/app.apk 를 배치하세요.' });
+  }
+  res.download(apkPath, 'signagepro-player.apk');
+});
+
+// APK 배포 상태 확인
+app.get('/api/update/status', (req, res) => {
+  const apkPath = path.join(updateDir, 'app.apk');
+  if (!fs.existsSync(apkPath)) {
+    return res.json({ available: false });
+  }
+  const stat = fs.statSync(apkPath);
+  res.json({ available: true, size: stat.size, updatedAt: stat.mtime });
+});
+
+// APK 삭제 (배포 취소)
+app.delete('/api/update/apk', (req, res) => {
+  const apkPath = path.join(updateDir, 'app.apk');
+  if (!fs.existsSync(apkPath)) return res.status(404).json({ error: 'APK 없음' });
+  try {
+    fs.unlinkSync(apkPath);
+    console.log('[OTA] app.apk 삭제됨');
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// 단말에 업데이트 푸시 (deviceId 없으면 전체 배포)
+app.post('/api/update/push', (req, res) => {
+  const apkPath = path.join(updateDir, 'app.apk');
+  if (!fs.existsSync(apkPath)) {
+    return res.status(404).json({ error: 'server/update/app.apk 가 없습니다.' });
+  }
+  const { deviceId } = req.body;
+  const payload = { url: '/update/apk', deviceId: deviceId || '' };
+  io.emit('update_apk', payload);
+  console.log(`[OTA] 업데이트 푸시: ${deviceId ? deviceId : '전체 단말'}`);
+  res.json({ success: true, pushed: deviceId || 'all' });
+});
+
+// ADB over WiFi 직접 설치 (서버 PC에서 adb install 실행 → 확인창 없음)
+// 전제: 단말에서 ADB TCP 모드(5555)가 활성화되어 있어야 함
+app.post('/api/update/adb-install', async (req, res) => {
+  const apkPath = path.join(updateDir, 'app.apk');
+  if (!fs.existsSync(apkPath)) {
+    return res.status(404).json({ error: 'server/update/app.apk 가 없습니다.' });
+  }
+
+  const { deviceId } = req.body;
+  const adbPath = process.env.ADB_PATH || 'adb';
+
+  // deviceId 지정 시 해당 기기만, 없으면 DB에서 ip 있는 모든 기기
+  let devices = [];
+  try {
+    if (deviceId) {
+      const d = await prisma.device.findUnique({ where: { id: deviceId } });
+      if (d?.ip) devices = [d];
+    } else {
+      devices = await prisma.device.findMany({ where: { ip: { not: null } } });
+    }
+  } catch (e) {
+    return res.status(500).json({ error: 'DB 조회 실패' });
+  }
+
+  if (devices.length === 0) {
+    return res.status(404).json({ error: '설치 대상 기기(IP 있는 온라인 기기)가 없습니다.' });
+  }
+
+  adbCancelled = false;
+  const results = [];
+
+  const trackExec = (...args) => new Promise((resolve) => {
+    const proc = execFile(...args, (err, stdout, stderr) => {
+      activeAdbProcs.delete(proc);
+      resolve({ err, stdout, stderr });
+    });
+    activeAdbProcs.add(proc);
+  });
+
+  for (const device of devices) {
+    if (adbCancelled) {
+      results.push({ deviceId: device.id, ip: device.ip, success: false, output: '취소됨' });
+      continue;
+    }
+    const target = `${device.ip}:5555`;
+    try {
+      // 1. adb connect
+      const { stdout: cs } = await trackExec(adbPath, ['connect', target], { timeout: 8000 });
+      console.log(`[ADB] connect ${target}: ${cs?.trim()}`);
+
+      if (adbCancelled) {
+        results.push({ deviceId: device.id, ip: device.ip, success: false, output: '취소됨' });
+        continue;
+      }
+
+      // 2. adb install -r
+      const { err, stdout, stderr } = await trackExec(
+        adbPath, ['-s', target, 'install', '-r', apkPath], { timeout: 60000 }
+      );
+      const out = ((stdout || '') + (stderr || '')).trim();
+      console.log(`[ADB] install ${target}: ${out}`);
+      const installOk = !err && /success/i.test(out);
+
+      // 3. 설치 성공 시 전체화면 안내 팝업 억제 + 앱 자동 실행
+      if (installOk && !adbCancelled) {
+        await trackExec(
+          adbPath, ['-s', target, 'shell', 'settings', 'put', 'secure', 'immersive_mode_confirmations', 'confirmed'],
+          { timeout: 5000 }
+        );
+        await new Promise(r => setTimeout(r, 3000)); // 앱 완전 종료 대기
+        const { stdout: as } = await trackExec(
+          adbPath, ['-s', target, 'shell', 'am', 'start', '-n', 'com.signagepro.player/.MainActivity'],
+          { timeout: 10000 }
+        );
+        console.log(`[ADB] am start ${target}: ${as?.trim()}`);
+      }
+      results.push({ deviceId: device.id, ip: device.ip, success: installOk, output: out });
+    } catch (e) {
+      results.push({ deviceId: device.id, ip: device.ip, success: false, output: e.message });
+    }
+  }
+
+  res.json({ results });
+});
+
+// ADB 설치 취소
+let adbCancelled = false;
+const activeAdbProcs = new Set();
+
+app.post('/api/update/adb-cancel', (req, res) => {
+  adbCancelled = true;
+  activeAdbProcs.forEach(p => { try { p.kill(); } catch (_) {} });
+  activeAdbProcs.clear();
+  console.log('[ADB] 설치 취소 요청');
+  res.json({ ok: true });
+});
+
+// 기기 원격 재부팅 (ADB TCP 필요)
+app.post('/api/devices/:id/reboot', async (req, res) => {
+  const device = await prisma.device.findUnique({ where: { id: req.params.id } });
+  if (!device || !device.ip) return res.status(404).json({ error: '기기 또는 IP 정보 없음' });
+  const target = `${device.ip}:5555`;
+  const adbPath = process.env.ADB_PATH || 'adb';
+  try {
+    await new Promise((resolve) => {
+      execFile(adbPath, ['-s', target, 'shell', 'reboot'], { timeout: 10000 }, () => {
+        resolve(); // reboot은 연결 끊김이 정상 — 오류 무시
+      });
+    });
+    console.log(`[ADB] 재부팅 명령 전송: ${device.id} (${target})`);
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// IPv4-mapped IPv6 주소(::ffff:x.x.x.x) → 순수 IPv4 변환
+function normalizeIp(ip) {
+  if (!ip) return ip;
+  return ip.replace(/^::ffff:/i, '');
+}
 
 // --- TCP 소켓 서버 (10080 포트, 하트비트 통신용) ---
 
@@ -453,9 +636,11 @@ async function handleTcpMessage(socket, msg) {
     const parts = msg.substring(7).split('/');
     let cpu = null;
     let mem = null;
+    let ver = null;
     parts.forEach(p => {
       if (p.startsWith('cpu:')) cpu = parseFloat(p.substring(4));
       if (p.startsWith('mem:')) mem = parseFloat(p.substring(4));
+      if (p.startsWith('ver:')) ver = p.substring(4).trim() || null;
     });
     // NaN 방어
     if (!Number.isFinite(cpu)) cpu = null;
@@ -464,10 +649,10 @@ async function handleTcpMessage(socket, msg) {
     try {
       await prisma.device.upsert({
         where: { id: deviceId },
-        update: { status: 'online', lastSeen: new Date(), ip: socket.remoteAddress, cpuUsage: cpu, memUsage: mem },
-        create: { id: deviceId, name: `Device-${deviceId}`, status: 'online', lastSeen: new Date(), ip: socket.remoteAddress, cpuUsage: cpu, memUsage: mem }
+        update: { status: 'online', lastSeen: new Date(), ip: normalizeIp(socket.remoteAddress), cpuUsage: cpu, memUsage: mem, ...(ver && { appVersion: ver }) },
+        create: { id: deviceId, name: `Device-${deviceId}`, status: 'online', lastSeen: new Date(), ip: normalizeIp(socket.remoteAddress), cpuUsage: cpu, memUsage: mem, appVersion: ver }
       });
-      io.emit('device_status_update', { deviceId, status: 'online', cpu, mem });
+      io.emit('device_status_update', { deviceId, status: 'online', cpu, mem, ip: normalizeIp(socket.remoteAddress), appVersion: ver });
       socket.write('ok:\n');
     } catch (err) {
       console.error('[TCP] DB 에러:', err);
@@ -475,9 +660,18 @@ async function handleTcpMessage(socket, msg) {
   }
 }
 
+const HEARTBEAT_TIMEOUT_MS = 35000; // 하트비트 10초 간격 × 3 + 여유
+
 const tcpServer = net.createServer((socket) => {
   console.log(`[TCP] 보드 접속됨: ${socket.remoteAddress}:${socket.remotePort}`);
   let buffer = '';
+
+  // 무응답(전원 차단 등) 감지 — HEARTBEAT_TIMEOUT_MS 동안 데이터 없으면 연결 정리
+  socket.setTimeout(HEARTBEAT_TIMEOUT_MS);
+  socket.on('timeout', () => {
+    console.log(`[TCP] 하트비트 타임아웃: ${socketDeviceMap.get(socket) || socket.remoteAddress}`);
+    socket.destroy(); // → 'close' 이벤트 → offline 처리
+  });
 
   socket.on('data', (data) => {
     buffer += data.toString('utf-8');
@@ -523,3 +717,21 @@ httpServer.listen(HTTP_PORT, () => {
 tcpServer.listen(TCP_PORT, () => {
   console.log(`[TCP] 사이니지 보드용 소켓 서버가 포트 ${TCP_PORT}에서 대기 중입니다.`);
 });
+
+// 하트비트 lastSeen 주기 스윕 — 소켓 close를 못 받는 경우(전원 차단 등)와
+// 서버 재시작 후 잔존 online 상태까지 DB 기준으로 정리.
+setInterval(async () => {
+  const threshold = new Date(Date.now() - HEARTBEAT_TIMEOUT_MS);
+  try {
+    const stale = await prisma.device.findMany({
+      where: { status: 'online', OR: [{ lastSeen: { lt: threshold } }, { lastSeen: null }] }
+    });
+    for (const d of stale) {
+      await prisma.device.update({ where: { id: d.id }, data: { status: 'offline' } });
+      io.emit('device_status_update', { deviceId: d.id, status: 'offline' });
+      console.log(`[Sweep] 오프라인 처리: ${d.id} (lastSeen=${d.lastSeen})`);
+    }
+  } catch (err) {
+    console.error('[Sweep] 에러:', err);
+  }
+}, 10000);

@@ -135,11 +135,19 @@ const PlaylistPreviewModal = ({ items, deviceName, onClose }) => {
   const nextItem = items[(index + 1) % items.length];
   const transTime = Number(item.transitionTime || 1000);
   const itemDurMs = Number(item.duration || 10) * 1000;
-  
+
   // 전환 진행률 계산 (0 ~ 1)
   const remainingTime = itemDurMs - (currentTime - accumulated);
   const isTransitioning = remainingTime < transTime && items.length > 1;
   const transProgress = isTransitioning ? Math.min(1, Math.max(0, (transTime - remainingTime) / transTime)) : 0;
+
+  // 슬라이드 방향 계산
+  const slideDir = item.slideDirection?.toLowerCase() || 'right';
+  const slideAxis = (slideDir === 'up' || slideDir === 'down') ? 'Y' : 'X';
+  const slideSign = (slideDir === 'right' || slideDir === 'up') ? -1 : 1;
+  const isSlide = isTransitioning && item.transition?.toLowerCase() === 'slide';
+  const outgoingTransform = isSlide ? `translate${slideAxis}(${slideSign * transProgress * 100}%)` : 'none';
+  const incomingTransform = isSlide ? `translate${slideAxis}(${-slideSign * (1 - transProgress) * 100}%)` : 'none';
 
   return (
     <div className="preview-modal-overlay">
@@ -163,9 +171,7 @@ const PlaylistPreviewModal = ({ items, deviceName, onClose }) => {
                   opacity: (isTransitioning && item.transition?.toLowerCase() === 'fade') 
                     ? Math.max(0, 1 - (transProgress * 2)) 
                     : 1,
-                  transform: (isTransitioning && item.transition?.toLowerCase() === 'slide')
-                    ? `translateX(${-transProgress * 100}%)`
-                    : 'none'
+                  transform: outgoingTransform
                 }}
               >
                 <MediaThumb path={item.media?.path || item.path} style={{ width: '100%', height: '100%', objectFit: 'fill' }} />
@@ -183,7 +189,7 @@ const PlaylistPreviewModal = ({ items, deviceName, onClose }) => {
                           : transProgress // DISSOLVE: 교차 페이드
                       )
                     : 0,
-                  transform: (isTransitioning && item.transition?.toLowerCase() === 'slide') ? `translateX(${(1 - transProgress) * 100}%)` : 'none',
+                  transform: incomingTransform,
                   zIndex: isTransitioning ? 10 : -1,
                   visibility: isTransitioning ? 'visible' : 'hidden',
                   pointerEvents: 'none',
@@ -630,7 +636,6 @@ const MediaManager = ({ stores = [], groups = [], devices = [], selectedStoreId,
   const [selectedGroupId, setSelectedGroupId] = useState('');
   const [lanes, setLanes] = useState({});
   const [savedState, setSavedState] = useState({});
-  const [syncMode, setSyncMode] = useState(false);
   const [saving, setSaving] = useState(false);
   const [previewData, setPreviewData] = useState(null);
   const [transPreview, setTransPreview] = useState(null);
@@ -690,8 +695,7 @@ const MediaManager = ({ stores = [], groups = [], devices = [], selectedStoreId,
     const newItem = { mediaId: media.id, media, duration: 10, transition: 'fade', transitionTime: 1000, slideDirection: 'right', _key: `${media.id}-${Date.now()}` };
     setLanes(prev => {
       const updated = { ...prev };
-      if (syncMode) groupDevices.forEach(d => updated[d.id] = [...(updated[d.id] || []), { ...newItem, _key: `${newItem._key}-${d.id}` }]);
-      else updated[deviceId] = [...(updated[deviceId] || []), newItem];
+      updated[deviceId] = [...(updated[deviceId] || []), newItem];
       return updated;
     });
   };
@@ -699,8 +703,7 @@ const MediaManager = ({ stores = [], groups = [], devices = [], selectedStoreId,
   const handleRemoveItem = (deviceId, idx) => {
     setLanes(prev => {
       const updated = { ...prev };
-      if (syncMode) groupDevices.forEach(d => { const l = [...(updated[d.id] || [])]; l.splice(idx, 1); updated[d.id] = l; });
-      else { const l = [...(updated[deviceId] || [])]; l.splice(idx, 1); updated[deviceId] = l; }
+      const l = [...(updated[deviceId] || [])]; l.splice(idx, 1); updated[deviceId] = l;
       return updated;
     });
   };
@@ -708,8 +711,7 @@ const MediaManager = ({ stores = [], groups = [], devices = [], selectedStoreId,
   const handleChangeItem = (deviceId, idx, updates) => {
     setLanes(prev => {
       const updated = { ...prev };
-      if (syncMode) groupDevices.forEach(d => { const l = [...(updated[d.id] || [])]; if (l[idx]) l[idx] = { ...l[idx], ...updates }; updated[d.id] = l; });
-      else { const l = [...(updated[deviceId] || [])]; if (l[idx]) l[idx] = { ...l[idx], ...updates }; updated[deviceId] = l; }
+      const l = [...(updated[deviceId] || [])]; if (l[idx]) l[idx] = { ...l[idx], ...updates }; updated[deviceId] = l;
       return updated;
     });
   };
@@ -731,7 +733,7 @@ const MediaManager = ({ stores = [], groups = [], devices = [], selectedStoreId,
       groupDevices.forEach(device => {
         (lanes[device.id] || []).forEach(item => {
           const key = `${item.mediaId}-${device.id}`;
-          if (!seen.has(key)) { seen.add(key); allItems.push({ mediaId: item.mediaId, duration: item.duration, transition: item.transition, transitionTime: item.transitionTime, targetDeviceId: device.id }); }
+          if (!seen.has(key)) { seen.add(key); allItems.push({ mediaId: item.mediaId, duration: item.duration, transition: item.transition, transitionTime: item.transitionTime, slideDirection: item.slideDirection, targetDeviceId: device.id }); }
         });
       });
       await fetch(`${API}/api/groups/${selectedGroupId}/playlist`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ items: allItems }), });
@@ -752,6 +754,19 @@ const MediaManager = ({ stores = [], groups = [], devices = [], selectedStoreId,
     e.target.value = '';
   };
 
+  const handleDeleteMedia = async (id, filename) => {
+    if (!window.confirm(`'${filename}'을(를) 삭제하시겠습니까?\n타임라인에 배치된 경우 함께 제거됩니다.`)) return;
+    await fetch(`${API}/api/media/${id}`, { method: 'DELETE' });
+    fetchMedia();
+  };
+
+  const handleDeleteAllMedia = async () => {
+    if (mediaList.length === 0) return;
+    if (!window.confirm(`에셋 라이브러리의 미디어 ${mediaList.length}개를 모두 삭제하시겠습니까?\n타임라인 배치도 함께 제거되며 되돌릴 수 없습니다.`)) return;
+    await fetch(`${API}/api/media?storeId=${selectedStoreId}`, { method: 'DELETE' });
+    fetchMedia();
+  };
+
   const isDirty = JSON.stringify(lanes) !== JSON.stringify(savedState);
 
   return (
@@ -769,10 +784,6 @@ const MediaManager = ({ stores = [], groups = [], devices = [], selectedStoreId,
           </select>
         </div>
         <div style={{ display: 'flex', gap: 20, alignItems: 'center' }}>
-          <label className="sync-toggle">
-            <input type="checkbox" checked={syncMode} onChange={e => setSyncMode(e.target.checked)} />
-            <span>재생 시간 동기화 (Sync)</span>
-          </label>
           <button className={`btn-deploy ${isDirty ? '' : 'inactive'}`} onClick={handleSave} disabled={saving || !isDirty}>
             <Save size={18} style={{ marginRight: 8 }} /> {saving ? '저장 중...' : '변경사항 저장 및 배포'}
           </button>
@@ -783,7 +794,10 @@ const MediaManager = ({ stores = [], groups = [], devices = [], selectedStoreId,
         <div className="mm-library">
           <div className="mm-library-header">
             <span className="mm-library-title">에셋 라이브러리</span>
-            <button className="icon-btn" onClick={() => fileRef.current?.click()}><Upload size={14} /></button>
+            <div style={{ display: 'flex', gap: 6 }}>
+              <button className="icon-btn" onClick={() => fileRef.current?.click()} title="업로드"><Upload size={14} /></button>
+              <button className="icon-btn icon-btn-danger" onClick={handleDeleteAllMedia} disabled={mediaList.length === 0} title="전체 삭제"><Trash2 size={14} /></button>
+            </div>
             <input ref={fileRef} type="file" multiple accept="image/*,video/*" style={{ display: 'none' }} onChange={handleUpload} />
           </div>
           <div className="mm-library-list">
@@ -791,6 +805,14 @@ const MediaManager = ({ stores = [], groups = [], devices = [], selectedStoreId,
               <div key={media.id} className="library-item" draggable onDragStart={e => e.dataTransfer.setData('application/json', JSON.stringify(media))}>
                 <div className="library-item-thumb"><MediaThumb path={media.path} style={{ width: '100%', height: '100%' }} /></div>
                 <span className="library-item-name">{media.filename}</span>
+                <button
+                  className="library-item-del"
+                  draggable={false}
+                  onClick={() => handleDeleteMedia(media.id, media.filename)}
+                  title="삭제"
+                >
+                  <Trash2 size={13} />
+                </button>
               </div>
             ))}
           </div>
@@ -799,7 +821,6 @@ const MediaManager = ({ stores = [], groups = [], devices = [], selectedStoreId,
         <div className="mm-timeline-area">
           <div className="mm-timeline-header">
             <span className="mm-timeline-title">재생목록 타임라인</span>
-            <button className="btn-primary-sm" style={{ background: 'var(--primary-blue)', color: '#fff', border: 'none', padding: '6px 12px', borderRadius: 6, cursor: 'pointer' }}>+ 기기 추가</button>
           </div>
 
           <div className="mm-lanes">

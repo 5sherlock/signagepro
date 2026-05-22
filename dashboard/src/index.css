@@ -559,52 +559,33 @@ h6 {
   to { opacity: 1; }
 }
 
-@keyframes slide-transition {
-  from {
-    transform: translateX(100%);
-    opacity: 0;
-  }
-  to {
-    transform: translateX(0);
-    opacity: 1;
-  }
-}
-
 @keyframes fade-out-transition {
   from { opacity: 1; }
   to { opacity: 0; }
 }
 
-@keyframes slide-out-transition {
-  from {
-    transform: translateX(0);
-  }
-  to {
-    transform: translateX(-100%);
-  }
-}
+/* Slide — 4방향 in/out */
+@keyframes slide-in-right  { from { transform: translateX(100%); }  to { transform: translateX(0); } }
+@keyframes slide-out-right { from { transform: translateX(0); }     to { transform: translateX(-100%); } }
+@keyframes slide-in-left   { from { transform: translateX(-100%); } to { transform: translateX(0); } }
+@keyframes slide-out-left  { from { transform: translateX(0); }     to { transform: translateX(100%); } }
+@keyframes slide-in-up     { from { transform: translateY(100%); }  to { transform: translateY(0); } }
+@keyframes slide-out-up    { from { transform: translateY(0); }     to { transform: translateY(-100%); } }
+@keyframes slide-in-down   { from { transform: translateY(-100%); } to { transform: translateY(0); } }
+@keyframes slide-out-down  { from { transform: translateY(0); }     to { transform: translateY(100%); } }
 
-.preview-fade {
-  animation: fade-to-black-in var(--trans-time, 1s) ease-in-out forwards;
-}
+.preview-fade     { animation: fade-to-black-in  var(--trans-time, 1s) ease-in-out forwards; }
+.preview-fade-out { animation: fade-to-black-out var(--trans-time, 1s) ease-in-out forwards; }
 
-.preview-fade-out {
-  animation: fade-to-black-out var(--trans-time, 1s) ease-in-out forwards;
-}
+.preview-dissolve     { animation: dissolve-transition  var(--trans-time, 1s) ease-in-out forwards; }
+.preview-dissolve-out { animation: fade-out-transition  var(--trans-time, 1s) ease-in-out forwards; }
 
-.preview-dissolve {
-  animation: dissolve-transition var(--trans-time, 1s) ease-in-out forwards;
-}
-
-.preview-dissolve-out {
-  animation: fade-out-transition var(--trans-time, 1s) ease-in-out forwards;
-}
-
-.preview-slide-out {
-  animation: slide-out-transition var(--trans-time, 0.8s) cubic-bezier(0.4, 0, 0.2, 1) forwards;
-}
-
-.preview-slide {
-  animation: slide-transition var(--trans-time, 0.8s) cubic-bezier(0.4, 0, 0.2, 1) forwards;
-}
+.preview-slide-in-right  { animation: slide-in-right  var(--trans-time, 0.8s) cubic-bezier(0.4,0,0.2,1) forwards; }
+.preview-slide-out-right { animation: slide-out-right var(--trans-time, 0.8s) cubic-bezier(0.4,0,0.2,1) forwards; }
+.preview-slide-in-left   { animation: slide-in-left   var(--trans-time, 0.8s) cubic-bezier(0.4,0,0.2,1) forwards; }
+.preview-slide-out-left  { animation: slide-out-left  var(--trans-time, 0.8s) cubic-bezier(0.4,0,0.2,1) forwards; }
+.preview-slide-in-up     { animation: slide-in-up     var(--trans-time, 0.8s) cubic-bezier(0.4,0,0.2,1) forwards; }
+.preview-slide-out-up    { animation: slide-out-up    var(--trans-time, 0.8s) cubic-bezier(0.4,0,0.2,1) forwards; }
+.preview-slide-in-down   { animation: slide-in-down   var(--trans-time, 0.8s) cubic-bezier(0.4,0,0.2,1) forwards; }
+.preview-slide-out-down  { animation: slide-out-down  var(--trans-time, 0.8s) cubic-bezier(0.4,0,0.2,1) forwards; }
 
