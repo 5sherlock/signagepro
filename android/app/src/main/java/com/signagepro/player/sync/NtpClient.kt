@@ -1,8 +1,11 @@
 package com.signagepro.player.sync
 
 import android.os.SystemClock
+import com.signagepro.player.api.ApiClient
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import okhttp3.Request
+import org.json.JSONObject
 import java.net.DatagramPacket
 import java.net.DatagramSocket
 import java.net.InetAddress
@@ -22,20 +25,59 @@ class NtpClient(
 ) {
     @Volatile private var lastSyncedEpochMs: Long = 0L
     @Volatile private var lastSyncedElapsed: Long = 0L
+    @Volatile var source: Source = Source.NONE
+        private set
+
+    enum class Source { NONE, NTP, SERVER }
 
     /** 동기화된 적이 있는지 */
     val isSynced: Boolean get() = lastSyncedEpochMs > 0L
 
+    /** 디버그 오버레이용 라벨 */
+    val sourceLabel: String
+        get() = when (source) {
+            Source.NTP -> "SYNCED(NTP)"
+            Source.SERVER -> "SYNCED(SVR)"
+            Source.NONE -> "LOCAL(미동기)"
+        }
+
     /**
-     * NTP 서버에서 시각을 받아 보정 anchor를 갱신.
-     * 네트워크 실패 시 false 반환 (예외 던지지 않음 — 호출자는 fallback 처리 가능).
+     * 시각 동기. 외부 NTP 우선, 실패 시 서버 시각으로 fallback.
+     * 둘 다 실패하면 false (now()는 로컬 시각 사용).
+     *
+     * 5대 보드가 같은 NTP 또는 같은 서버 시각을 받으면 동일 슬롯 인덱스를 계산해 동기 재생.
      */
-    suspend fun sync(): Boolean = withContext(Dispatchers.IO) {
-        try {
+    suspend fun sync(serverUrl: String? = null): Boolean = withContext(Dispatchers.IO) {
+        if (syncFromNtp()) return@withContext true
+        if (serverUrl != null && syncFromServer(serverUrl)) return@withContext true
+        false
+    }
+
+    private fun syncFromNtp(): Boolean {
+        return try {
             val epochMs = requestTime(host, timeoutMs)
             lastSyncedEpochMs = epochMs
             lastSyncedElapsed = SystemClock.elapsedRealtime()
+            source = Source.NTP
             true
+        } catch (e: Exception) {
+            false
+        }
+    }
+
+    private fun syncFromServer(serverUrl: String): Boolean {
+        return try {
+            val url = serverUrl.trimEnd('/') + "/api/time"
+            val req = Request.Builder().url(url).build()
+            ApiClient.http().newCall(req).execute().use { resp ->
+                if (!resp.isSuccessful) return false
+                val body = resp.body?.string() ?: return false
+                val epochMs = JSONObject(body).getLong("epochMs")
+                lastSyncedEpochMs = epochMs
+                lastSyncedElapsed = SystemClock.elapsedRealtime()
+                source = Source.SERVER
+                true
+            }
         } catch (e: Exception) {
             false
         }

@@ -78,7 +78,8 @@ if (Test-Path $envFile) {
     Write-Host "  서버 설정을 입력하세요:" -ForegroundColor White
     $dbPath = Read-Host "  DB 경로 (엔터=기본값: ./prisma/signage.db)"
     if ([string]::IsNullOrWhiteSpace($dbPath)) { $dbPath = "./prisma/signage.db" }
-    $envContent = "DATABASE_URL=`"file:$dbPath`"`n"
+    $adminPw = Read-Host "  대시보드 관리자 비밀번호 (엔터=인증 없음)"
+    $envContent = "DATABASE_URL=`"file:$dbPath`"`nADMIN_PASSWORD=`"$adminPw`"`n"
     Set-Content -Path $envFile -Value $envContent -Encoding UTF8
     Write-Ok ".env 파일 생성 완료"
 }

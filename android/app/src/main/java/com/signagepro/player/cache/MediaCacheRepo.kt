@@ -4,10 +4,13 @@ import android.content.Context
 import com.signagepro.player.api.ApiClient
 import com.signagepro.player.api.MediaDto
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import okhttp3.Request
 import java.io.File
 import java.security.MessageDigest
+import java.util.concurrent.ConcurrentHashMap
 
 /**
  * 미디어 파일 다운로드 + SHA-256 검증 + LRU 정리.
@@ -28,6 +31,9 @@ class MediaCacheRepo(
         File(context.filesDir, "media_cache").also { it.mkdirs() }
     }
 
+    // hash별 다운로드 직렬화 — 같은 파일을 동시에 받아 .part가 손상되는 race 방지
+    private val downloadLocks = ConcurrentHashMap<String, Mutex>()
+
     /**
      * 캐시된 파일 경로 반환. hash가 없거나 검증 실패 시 null.
      */
@@ -46,32 +52,41 @@ class MediaCacheRepo(
 
         val hash = media.hash
             ?: throw DownloadException("Media ${media.id} has no hash — 서버 업그레이드 필요")
-        val target = File(baseDir, fileNameFor(media, hash))
-        val tmp = File(baseDir, target.name + ".part")
 
-        val url = serverUrl.trimEnd('/') + media.path
-        val request = Request.Builder().url(url).build()
-        ApiClient.http().newCall(request).execute().use { resp ->
-            if (!resp.isSuccessful) {
-                throw DownloadException("HTTP ${resp.code} for $url")
+        val lock = downloadLocks.getOrPut(hash) { Mutex() }
+        lock.withLock {
+            // 락 획득 후 재확인 — 다른 코루틴이 이미 받았으면 재다운로드 불필요
+            cachedFile(media)?.let { return@withLock it }
+
+            val target = File(baseDir, fileNameFor(media, hash))
+            // .part 파일명에 고유 suffix — 동일 hash가 아니어도 충돌 없게
+            val tmp = File(baseDir, "${target.name}.${System.nanoTime()}.part")
+
+            val url = serverUrl.trimEnd('/') + media.path
+            val request = Request.Builder().url(url).build()
+            try {
+                ApiClient.http().newCall(request).execute().use { resp ->
+                    if (!resp.isSuccessful) {
+                        throw DownloadException("HTTP ${resp.code} for $url")
+                    }
+                    val body = resp.body ?: throw DownloadException("Empty body for $url")
+                    tmp.outputStream().use { out ->
+                        body.byteStream().copyTo(out)
+                    }
+                }
+
+                val actualHash = sha256(tmp)
+                if (!actualHash.equals(hash, ignoreCase = true)) {
+                    throw DownloadException("Hash mismatch for ${media.filename}: expected=$hash actual=$actualHash")
+                }
+                if (!tmp.renameTo(target)) {
+                    throw DownloadException("Failed to finalize cache file for ${media.filename}")
+                }
+                target
+            } finally {
+                if (tmp.exists()) tmp.delete()
             }
-            val body = resp.body ?: throw DownloadException("Empty body for $url")
-            tmp.outputStream().use { out ->
-                body.byteStream().copyTo(out)
-            }
         }
-
-        val actualHash = sha256(tmp)
-        if (!actualHash.equals(hash, ignoreCase = true)) {
-            tmp.delete()
-            throw DownloadException("Hash mismatch for ${media.filename}: expected=$hash actual=$actualHash")
-        }
-
-        if (!tmp.renameTo(target)) {
-            tmp.delete()
-            throw DownloadException("Failed to finalize cache file for ${media.filename}")
-        }
-        target
     }
 
     /**

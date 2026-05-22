@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { Monitor, Plus, FolderTree, Building, HardDrive, Trash2, GripVertical } from 'lucide-react';
-import { SOCKET_URL } from '../config';
+import { SOCKET_URL, apiFetch } from '../config';
 
 export default function GroupManager({ devices, fetchDevices, stores, fetchStores, groups, fetchGroups, selectedStoreId, setSelectedStoreId }) {
   const [newStoreName, setNewStoreName] = useState('');
@@ -17,7 +17,7 @@ export default function GroupManager({ devices, fetchDevices, stores, fetchStore
 
   const handleCreateStore = () => {
     if (!newStoreName.trim()) return;
-    fetch(`${SOCKET_URL}/api/stores`, {
+    apiFetch(`${SOCKET_URL}/api/stores`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ name: newStoreName })
@@ -37,7 +37,7 @@ export default function GroupManager({ devices, fetchDevices, stores, fetchStore
     const storeName = stores.find(s => s.id === targetId)?.name;
     if (!window.confirm(`사업장 [${storeName}]을(를) 삭제하시겠습니까? \n모든 관련 구역, 재생목록, 미디어가 함께 삭제됩니다.`)) return;
 
-    fetch(`${SOCKET_URL}/api/stores/${targetId}`, {
+    apiFetch(`${SOCKET_URL}/api/stores/${targetId}`, {
       method: 'DELETE'
     }).then(res => res.json())
       .then(data => {
@@ -52,7 +52,7 @@ export default function GroupManager({ devices, fetchDevices, stores, fetchStore
 
   const handleCreateGroup = () => {
     if (!newGroupName.trim() || !selectedStoreId) return;
-    fetch(`${SOCKET_URL}/api/groups`, {
+    apiFetch(`${SOCKET_URL}/api/groups`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ name: newGroupName, storeId: selectedStoreId })
@@ -64,7 +64,7 @@ export default function GroupManager({ devices, fetchDevices, stores, fetchStore
 
   const handleRegisterDevice = () => {
     if (!newDeviceId.trim() || !newDeviceName.trim() || !selectedStoreId) return;
-    fetch(`${SOCKET_URL}/api/devices`, {
+    apiFetch(`${SOCKET_URL}/api/devices`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ id: newDeviceId.trim(), name: newDeviceName.trim(), storeId: selectedStoreId })
@@ -84,7 +84,7 @@ export default function GroupManager({ devices, fetchDevices, stores, fetchStore
     const deviceId = e.dataTransfer.getData('deviceId');
     if (!deviceId) return;
 
-    fetch(`${SOCKET_URL}/api/devices/${deviceId}/group`, {
+    apiFetch(`${SOCKET_URL}/api/devices/${deviceId}/group`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ groupId: groupId || null, storeId: storeId })
@@ -152,7 +152,7 @@ export default function GroupManager({ devices, fetchDevices, stores, fetchStore
     const storeIds = newStores.map(s => s.id);
     
     // 즉시 서버 전송
-    fetch(`${SOCKET_URL}/api/stores/reorder`, {
+    apiFetch(`${SOCKET_URL}/api/stores/reorder`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ storeIds })

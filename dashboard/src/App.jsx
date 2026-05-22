@@ -2,7 +2,7 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 import { Activity, Monitor, Film, Settings, LayoutGrid, Plus } from 'lucide-react';
 import { io } from 'socket.io-client';
 import GroupManager from './components/GroupManager';
-import { SOCKET_URL } from './config';
+import { SOCKET_URL, apiFetch, getToken } from './config';
 import MediaManager from './components/MediaManager';
 
 // ─────────────────────────────────────────────
@@ -217,30 +217,34 @@ function DevicePreview({ groupId, deviceId, onUpdate }) {
 // SettingsTab — 서버 설정 + OTA 업데이트 배포
 // ─────────────────────────────────────────────
 
-function SettingsTab() {
+function SettingsTab({ onUnauth }) {
   const [otaStatus, setOtaStatus] = useState(null);
   const [pushing, setPushing] = useState(false);
   const [adbRunning, setAdbRunning] = useState(false);
   const adbControllerRef = useRef(null);
 
+  const check401 = (res) => { if (res.status === 401) { onUnauth?.(); throw new Error('401'); } return res; };
+
   useEffect(() => {
-    fetch(`${SOCKET_URL}/api/update/status`)
+    apiFetch(`${SOCKET_URL}/api/update/status`)
+      .then(check401)
       .then(r => r.json())
       .then(setOtaStatus)
-      .catch(() => setOtaStatus({ available: false }));
+      .catch(e => { if (e.message !== '401') setOtaStatus({ available: false }); });
   }, []);
 
   const pushUpdate = (deviceId = '') => {
     if (!window.confirm(deviceId ? `${deviceId} 에 업데이트를 배포할까요?` : '전체 단말에 업데이트를 배포할까요?')) return;
     setPushing(true);
-    fetch(`${SOCKET_URL}/api/update/push`, {
+    apiFetch(`${SOCKET_URL}/api/update/push`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ deviceId })
     })
+      .then(check401)
       .then(r => r.json())
       .then(d => alert(d.success ? `배포 완료 → ${d.pushed}` : `실패: ${d.error}`))
-      .catch(e => alert('오류: ' + e.message))
+      .catch(e => { if (e.message !== '401') alert('오류: ' + e.message); })
       .finally(() => setPushing(false));
   };
 
@@ -249,12 +253,13 @@ function SettingsTab() {
     adbControllerRef.current = new AbortController();
     setPushing(true);
     setAdbRunning(true);
-    fetch(`${SOCKET_URL}/api/update/adb-install`, {
+    apiFetch(`${SOCKET_URL}/api/update/adb-install`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ deviceId }),
       signal: adbControllerRef.current.signal
     })
+      .then(check401)
       .then(r => r.json())
       .then(d => {
         if (d.results && d.results.length > 0) {
@@ -263,13 +268,13 @@ function SettingsTab() {
           alert(d.error || '결과 없음');
         }
       })
-      .catch(e => { if (e.name !== 'AbortError') alert('오류: ' + e.message); })
+      .catch(e => { if (e.name !== 'AbortError' && e.message !== '401') alert('오류: ' + e.message); })
       .finally(() => { setPushing(false); setAdbRunning(false); });
   };
 
   const cancelAdbInstall = () => {
     adbControllerRef.current?.abort();
-    fetch(`${SOCKET_URL}/api/update/adb-cancel`, { method: 'POST' }).catch(() => {});
+    apiFetch(`${SOCKET_URL}/api/update/adb-cancel`, { method: 'POST' }).catch(() => {});
     setPushing(false);
     setAdbRunning(false);
   };
@@ -335,7 +340,7 @@ function SettingsTab() {
                 style={{ flexShrink: 0, padding: '4px 10px', fontSize: '0.78rem', background: '#EF4444', color: '#fff', border: 'none', borderRadius: '6px', cursor: 'pointer' }}
                 onClick={() => {
                   if (!window.confirm('배포용 APK를 삭제할까요?')) return;
-                  fetch(`${SOCKET_URL}/api/update/apk`, { method: 'DELETE' })
+                  apiFetch(`${SOCKET_URL}/api/update/apk`, { method: 'DELETE' })
                     .then(r => r.json())
                     .then(d => { if (d.ok) setOtaStatus({ available: false }); else alert(d.error); })
                     .catch(e => alert('오류: ' + e.message));
@@ -386,7 +391,223 @@ function SettingsTab() {
   );
 }
 
+// ─────────────────────────────────────────────
+// RemoteControlModal — 기기 원격 제어
+// ─────────────────────────────────────────────
+
+function RemoteControlModal({ device, onClose }) {
+  const [screenshot, setScreenshot] = useState(null);
+  const [screenshotLoading, setScreenshotLoading] = useState(false);
+  const [volume, setVolume] = useState(8);
+  const [busy, setBusy] = useState(false);
+  const [log, setLog] = useState('');
+  const prevUrlRef = useRef(null);
+
+  const addLog = (msg) => setLog(msg);
+
+  const takeScreenshot = async () => {
+    setScreenshotLoading(true);
+    addLog('스크린샷 캡처 중…');
+    try {
+      const r = await apiFetch(`${SOCKET_URL}/api/devices/${device.id}/screenshot`, { method: 'POST' });
+      if (!r.ok) { addLog('스크린샷 실패'); return; }
+      const blob = await r.blob();
+      if (prevUrlRef.current) URL.revokeObjectURL(prevUrlRef.current);
+      const url = URL.createObjectURL(blob);
+      prevUrlRef.current = url;
+      setScreenshot(url);
+      addLog('스크린샷 완료');
+    } catch { addLog('ADB 연결 실패'); }
+    finally { setScreenshotLoading(false); }
+  };
+
+  const sendCommand = async (endpoint, body = {}, label = '') => {
+    setBusy(true);
+    addLog(`${label} 전송 중…`);
+    try {
+      const r = await apiFetch(`${SOCKET_URL}/api/devices/${device.id}/${endpoint}`, {
+        method: 'POST',
+        body: JSON.stringify(body),
+      });
+      const d = await r.json();
+      addLog(d.ok ? `${label} 완료` : `오류: ${d.error}`);
+    } catch { addLog('명령 전송 실패'); }
+    finally { setBusy(false); }
+  };
+
+  useEffect(() => {
+    takeScreenshot();
+    return () => { if (prevUrlRef.current) URL.revokeObjectURL(prevUrlRef.current); };
+  }, []);
+
+  const btnStyle = (color = 'rgba(255,255,255,0.05)') => ({
+    padding: '10px 6px', borderRadius: '8px',
+    background: color, border: '1px solid var(--border)',
+    color: 'var(--text-primary)', cursor: busy ? 'not-allowed' : 'pointer',
+    fontSize: '0.82rem', opacity: busy ? 0.6 : 1,
+  });
+
+  return (
+    <div
+      onClick={e => { if (e.target === e.currentTarget) onClose(); }}
+      style={{ position:'fixed', inset:0, background:'rgba(0,0,0,0.75)', zIndex:1000, display:'flex', alignItems:'center', justifyContent:'center' }}
+    >
+      <div style={{ background:'var(--bg-secondary)', border:'1px solid var(--border)', borderRadius:'16px', width:'580px', maxWidth:'92vw', padding:'24px', display:'flex', flexDirection:'column', gap:'14px' }}>
+
+        {/* 헤더 */}
+        <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center' }}>
+          <h2 style={{ margin:0, fontSize:'1.05rem', fontWeight:700 }}>🎮 원격 제어 — {device.name}</h2>
+          <button onClick={onClose} style={{ background:'transparent', border:'none', color:'var(--text-secondary)', cursor:'pointer', fontSize:'1.3rem', lineHeight:1 }}>✕</button>
+        </div>
+
+        {/* 스크린샷 */}
+        <div style={{ background:'#000', borderRadius:'10px', overflow:'hidden', aspectRatio:'16/9', position:'relative', display:'flex', alignItems:'center', justifyContent:'center' }}>
+          {screenshot
+            ? <img src={screenshot} alt="screenshot" style={{ width:'100%', height:'100%', objectFit:'contain' }} />
+            : <span style={{ color:'#555', fontSize:'0.85rem' }}>{screenshotLoading ? '캡처 중…' : '스크린샷 없음'}</span>
+          }
+          {screenshotLoading && (
+            <div style={{ position:'absolute', inset:0, background:'rgba(0,0,0,0.55)', display:'flex', alignItems:'center', justifyContent:'center', color:'#fff', fontSize:'0.85rem' }}>
+              📸 캡처 중…
+            </div>
+          )}
+        </div>
+
+        {/* 스크린샷 버튼 */}
+        <button onClick={takeScreenshot} disabled={screenshotLoading}
+          style={{ padding:'8px', borderRadius:'8px', background:'#3B82F6', color:'#fff', border:'none', cursor:'pointer', fontSize:'0.85rem', opacity: screenshotLoading ? 0.6 : 1 }}>
+          📸 스크린샷 새로고침
+        </button>
+
+        {/* 제어 버튼 */}
+        <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr 1fr', gap:'8px' }}>
+          <button disabled={busy} style={btnStyle()} onClick={() => sendCommand('restart-app', {}, '앱 재시작')}>🔄 앱 재시작</button>
+          <button disabled={busy} style={btnStyle()} onClick={() => sendCommand('screen', { on: true }, '화면 켜기')}>☀️ 화면 켜기</button>
+          <button disabled={busy} style={btnStyle()} onClick={() => sendCommand('screen', { on: false }, '화면 끄기')}>🌙 화면 끄기</button>
+        </div>
+
+        {/* 볼륨 */}
+        <div style={{ display:'flex', alignItems:'center', gap:'10px', background:'rgba(255,255,255,0.04)', padding:'10px 14px', borderRadius:'8px', border:'1px solid var(--border)' }}>
+          <span style={{ fontSize:'0.85rem', color:'var(--text-secondary)', whiteSpace:'nowrap' }}>🔊 볼륨</span>
+          <input type="range" min={0} max={15} value={volume}
+            onChange={e => setVolume(+e.target.value)}
+            style={{ flex:1, accentColor:'#3B82F6' }} />
+          <span style={{ fontSize:'0.85rem', fontFamily:'monospace', width:'20px', textAlign:'center', color:'var(--text-primary)' }}>{volume}</span>
+          <button disabled={busy} onClick={() => sendCommand('volume', { level: volume }, `볼륨 ${volume} 적용`)}
+            style={{ padding:'5px 12px', borderRadius:'6px', background:'#3B82F6', color:'#fff', border:'none', cursor:'pointer', fontSize:'0.8rem', opacity: busy ? 0.6 : 1 }}>
+            적용
+          </button>
+        </div>
+
+        {/* 상태 로그 */}
+        {log && <p style={{ margin:0, fontSize:'0.78rem', color:'#94a3b8', fontFamily:'monospace' }}>▶ {log}</p>}
+      </div>
+    </div>
+  );
+}
+
+function LoginScreen({ onLogin }) {
+  const [mode, setMode] = useState('login'); // 'login' | 'change'
+  const [pw, setPw] = useState('');
+  const [currentPw, setCurrentPw] = useState('');
+  const [newPw, setNewPw] = useState('');
+  const [confirmPw, setConfirmPw] = useState('');
+  const [error, setError] = useState('');
+  const [success, setSuccess] = useState('');
+  const [loading, setLoading] = useState(false);
+
+  const submitLogin = async (e) => {
+    e.preventDefault();
+    setLoading(true); setError('');
+    try {
+      const r = await fetch(`${SOCKET_URL}/api/auth/login`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ password: pw }),
+      });
+      const d = await r.json();
+      if (!r.ok) { setError(d.error || '로그인 실패'); return; }
+      localStorage.setItem('SIGNAGE_TOKEN', d.token);
+      onLogin();
+    } catch { setError('서버에 연결할 수 없습니다.'); }
+    finally { setLoading(false); }
+  };
+
+  const submitChange = async (e) => {
+    e.preventDefault();
+    setError(''); setSuccess('');
+    if (newPw !== confirmPw) { setError('새 비밀번호가 일치하지 않습니다.'); return; }
+    if (newPw.length < 4) { setError('새 비밀번호는 4자 이상이어야 합니다.'); return; }
+    setLoading(true);
+    try {
+      const r = await fetch(`${SOCKET_URL}/api/auth/change-password`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ current: currentPw, newPassword: newPw }),
+      });
+      const d = await r.json();
+      if (!r.ok) { setError(d.error || '변경 실패'); return; }
+      setSuccess('비밀번호가 변경되었습니다. 새 비밀번호로 로그인하세요.');
+      setCurrentPw(''); setNewPw(''); setConfirmPw('');
+      setTimeout(() => { setMode('login'); setSuccess(''); }, 2000);
+    } catch { setError('서버에 연결할 수 없습니다.'); }
+    finally { setLoading(false); }
+  };
+
+  const inputStyle = { padding:'10px 12px', borderRadius:'8px', border:'1px solid var(--border)', background:'var(--bg-primary)', color:'var(--text-primary)', fontSize:'1rem', outline:'none' };
+
+  return (
+    <div style={{ display:'flex', alignItems:'center', justifyContent:'center', height:'100vh', background:'var(--bg-primary)' }}>
+      <form onSubmit={mode === 'login' ? submitLogin : submitChange}
+        style={{ background:'var(--bg-secondary)', border:'1px solid var(--border)', borderRadius:'12px', padding:'40px', width:'320px', display:'flex', flexDirection:'column', gap:'16px' }}>
+        <div style={{ display:'flex', alignItems:'center', gap:'10px', marginBottom:'4px' }}>
+          <Activity size={28} color="#3B82F6" />
+          <span style={{ fontSize:'1.3rem', fontWeight:700, color:'var(--text-primary)' }}>SignagePro</span>
+        </div>
+
+        {mode === 'login' ? (
+          <>
+            <p style={{ color:'var(--text-secondary)', fontSize:'0.85rem', margin:0 }}>관리자 비밀번호를 입력하세요.</p>
+            <input type="password" value={pw} onChange={e => setPw(e.target.value)}
+              placeholder="비밀번호" autoFocus style={inputStyle} />
+            {error && <p style={{ color:'#EF4444', fontSize:'0.8rem', margin:0 }}>{error}</p>}
+            <button type="submit" disabled={loading}
+              style={{ padding:'10px', borderRadius:'8px', background:'#3B82F6', color:'#fff', border:'none', fontWeight:600, fontSize:'1rem', cursor:'pointer' }}>
+              {loading ? '확인 중…' : '로그인'}
+            </button>
+            <button type="button" onClick={() => { setMode('change'); setError(''); }}
+              style={{ padding:'6px', background:'transparent', border:'none', color:'var(--text-secondary)', fontSize:'0.8rem', cursor:'pointer', textDecoration:'underline' }}>
+              비밀번호 변경
+            </button>
+          </>
+        ) : (
+          <>
+            <p style={{ color:'var(--text-secondary)', fontSize:'0.85rem', margin:0 }}>비밀번호를 변경합니다.</p>
+            <input type="password" value={currentPw} onChange={e => setCurrentPw(e.target.value)}
+              placeholder="현재 비밀번호" autoFocus style={inputStyle} />
+            <input type="password" value={newPw} onChange={e => setNewPw(e.target.value)}
+              placeholder="새 비밀번호" style={inputStyle} />
+            <input type="password" value={confirmPw} onChange={e => setConfirmPw(e.target.value)}
+              placeholder="새 비밀번호 확인" style={inputStyle} />
+            {error && <p style={{ color:'#EF4444', fontSize:'0.8rem', margin:0 }}>{error}</p>}
+            {success && <p style={{ color:'#10B981', fontSize:'0.8rem', margin:0 }}>{success}</p>}
+            <button type="submit" disabled={loading}
+              style={{ padding:'10px', borderRadius:'8px', background:'#10B981', color:'#fff', border:'none', fontWeight:600, fontSize:'1rem', cursor:'pointer' }}>
+              {loading ? '변경 중…' : '비밀번호 변경'}
+            </button>
+            <button type="button" onClick={() => { setMode('login'); setError(''); }}
+              style={{ padding:'6px', background:'transparent', border:'none', color:'var(--text-secondary)', fontSize:'0.8rem', cursor:'pointer', textDecoration:'underline' }}>
+              로그인으로 돌아가기
+            </button>
+          </>
+        )}
+      </form>
+    </div>
+  );
+}
+
 function App() {
+  const [authed, setAuthed] = useState(!!getToken());
   const [activeTab, setActiveTab] = useState('dashboard');
   const [devices, setDevices] = useState([]);
   const [groups, setGroups] = useState([]);
@@ -398,11 +619,18 @@ function App() {
   const [apkAvailable, setApkAvailable] = useState(false);
   const [adbRunning, setAdbRunning] = useState(false);
   const [serverOnline, setServerOnline] = useState(null); // null=확인중, true=연결, false=끊김
+  const [remoteDevice, setRemoteDevice] = useState(null);
+
+  const onUnauth = useCallback(() => {
+    localStorage.removeItem('SIGNAGE_TOKEN');
+    setAuthed(false);
+  }, []);
 
   const fetchDevices = useCallback(() => {
-    fetch(`${SOCKET_URL}/api/devices`, { cache: 'no-store' })
-      .then(res => res.json())
+    apiFetch(`${SOCKET_URL}/api/devices`, { cache: 'no-store' })
+      .then(res => { if (res.status === 401) { onUnauth(); return null; } return res.json(); })
       .then(data => {
+        if (!data) return;
         const mappedDevices = data.map(d => ({
           ...d,
           groupName: d.group?.name || '미배정 기기',
@@ -411,24 +639,25 @@ function App() {
         setDevices(mappedDevices);
       })
       .catch(err => console.error('기기 목록 불러오기 실패:', err));
-  }, []);
+  }, [onUnauth]);
 
   const fetchGroups = useCallback(() => {
-    fetch(`${SOCKET_URL}/api/groups`)
-      .then(res => res.json())
-      .then(setGroups)
+    apiFetch(`${SOCKET_URL}/api/groups`)
+      .then(res => { if (res.status === 401) { onUnauth(); return null; } return res.json(); })
+      .then(data => { if (data) setGroups(data); })
       .catch(err => console.error('그룹 목록 불러오기 실패:', err));
-  }, []);
+  }, [onUnauth]);
 
   const fetchStores = useCallback(() => {
-    fetch(`${SOCKET_URL}/api/stores`)
-      .then(res => res.json())
+    apiFetch(`${SOCKET_URL}/api/stores`)
+      .then(res => { if (res.status === 401) { onUnauth(); return null; } return res.json(); })
       .then(data => {
+        if (!data) return;
         setStores(data);
         setSelectedStoreId(prev => prev || (data.length > 0 ? data[0].id : prev));
       })
       .catch(err => console.error('사업장 목록 불러오기 실패:', err));
-  }, []);
+  }, [onUnauth]);
 
   useEffect(() => {
     const checkServer = () =>
@@ -438,7 +667,7 @@ function App() {
         .catch(() => setServerOnline(false));
 
     const checkApk = () =>
-      fetch(`${SOCKET_URL}/api/update/status`)
+      apiFetch(`${SOCKET_URL}/api/update/status`)
         .then(r => r.json())
         .then(d => setApkAvailable(!!d.available))
         .catch(() => setApkAvailable(false));
@@ -453,7 +682,7 @@ function App() {
     const label = deviceId || '전체 단말';
     if (!window.confirm(`${label}에 APK를 설치할까요?`)) return;
     setAdbRunning(true);
-    fetch(`${SOCKET_URL}/api/update/adb-install`, {
+    apiFetch(`${SOCKET_URL}/api/update/adb-install`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ deviceId }),
@@ -511,8 +740,11 @@ function App() {
     return d.storeId === selectedStoreId;
   });
 
+  if (!authed) return <LoginScreen onLogin={() => setAuthed(true)} />;
+
   return (
     <div className="app-container">
+      {remoteDevice && <RemoteControlModal device={remoteDevice} onClose={() => setRemoteDevice(null)} />}
       {/* Sidebar */}
       <aside className="sidebar">
         <div className="logo-container">
@@ -552,6 +784,17 @@ function App() {
             <span>환경설정</span>
           </a>
         </nav>
+        <div style={{ padding: '16px', marginTop: 'auto' }}>
+          <button
+            onClick={() => {
+              apiFetch(`${SOCKET_URL}/api/auth/logout`, { method: 'POST' }).catch(() => {});
+              onUnauth();
+            }}
+            style={{ width: '100%', padding: '8px', borderRadius: '8px', background: 'transparent', border: '1px solid rgba(255,255,255,0.15)', color: 'var(--text-secondary)', fontSize: '0.8rem', cursor: 'pointer' }}
+          >
+            로그아웃
+          </button>
+        </div>
       </aside>
 
       {/* Main Content */}
@@ -743,7 +986,13 @@ function App() {
                         </div>
                       </div>
                     )}
-                    <div style={{ marginTop: '8px', display: 'flex', justifyContent: 'flex-end', gap: '6px' }}>
+                    <div style={{ marginTop: '8px', display: 'flex', justifyContent: 'flex-end', gap: '6px', flexWrap: 'wrap' }}>
+                      <button
+                        style={{ fontSize: '0.7rem', padding: '3px 10px', background: 'transparent', border: '1px solid #6366f1', borderRadius: '4px', color: '#6366f1', cursor: 'pointer' }}
+                        onClick={() => setRemoteDevice(device)}
+                      >
+                        🎮 원격 제어
+                      </button>
                       {apkAvailable && (device.appVersion !== standardVersion) && (
                         <button
                           disabled={adbRunning}
@@ -767,7 +1016,7 @@ function App() {
                         }}
                         onClick={() => {
                           if (!window.confirm(`${device.name || device.id} 기기를 재부팅할까요?`)) return;
-                          fetch(`${SOCKET_URL}/api/devices/${device.id}/reboot`, { method: 'POST' })
+                          apiFetch(`${SOCKET_URL}/api/devices/${device.id}/reboot`, { method: 'POST' })
                             .then(r => r.json())
                             .then(r => alert(r.ok ? '재부팅 명령을 전송했습니다.' : `오류: ${r.error}`))
                             .catch(() => alert('요청 실패'));
@@ -812,7 +1061,7 @@ function App() {
           </div>
         )}
         {activeTab === 'settings' && (
-          <SettingsTab />
+          <SettingsTab onUnauth={onUnauth} />
         )}
       </main>
     </div>

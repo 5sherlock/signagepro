@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { SOCKET_URL } from '../config';
+import { SOCKET_URL, apiFetch } from '../config';
 import {
   Plus,
   Trash2,
@@ -657,7 +657,7 @@ const MediaManager = ({ stores = [], groups = [], devices = [], selectedStoreId,
   const fetchMedia = useCallback(async () => {
     if (!selectedStoreId) return;
     try {
-      const res = await fetch(`${API}/api/media?storeId=${selectedStoreId}`);
+      const res = await apiFetch(`${API}/api/media?storeId=${selectedStoreId}`);
       setMediaList(await res.json());
     } catch (e) { console.error(e); }
   }, [selectedStoreId]);
@@ -665,7 +665,7 @@ const MediaManager = ({ stores = [], groups = [], devices = [], selectedStoreId,
   const fetchPlaylist = useCallback(async () => {
     if (!selectedGroupId || groupDevices.length === 0) return;
     try {
-      const res = await fetch(`${API}/api/groups/${selectedGroupId}/playlist`);
+      const res = await apiFetch(`${API}/api/groups/${selectedGroupId}/playlist`);
       const data = await res.json();
       const medias = data.medias || [];
       const newLanes = {};
@@ -719,7 +719,7 @@ const MediaManager = ({ stores = [], groups = [], devices = [], selectedStoreId,
   const handleDeleteDevice = async (deviceId, deviceName) => {
     if (!window.confirm(`'${deviceName}' 기기를 그룹에서 해제하시겠습니까?`)) return;
     try {
-      await fetch(`${API}/api/devices/${deviceId}/group`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ groupId: null }) });
+      await apiFetch(`${API}/api/devices/${deviceId}/group`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ groupId: null }) });
       fetchDevices?.();
     } catch (e) { alert('해제 실패'); }
   };
@@ -736,7 +736,7 @@ const MediaManager = ({ stores = [], groups = [], devices = [], selectedStoreId,
           if (!seen.has(key)) { seen.add(key); allItems.push({ mediaId: item.mediaId, duration: item.duration, transition: item.transition, transitionTime: item.transitionTime, slideDirection: item.slideDirection, targetDeviceId: device.id }); }
         });
       });
-      await fetch(`${API}/api/groups/${selectedGroupId}/playlist`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ items: allItems }), });
+      await apiFetch(`${API}/api/groups/${selectedGroupId}/playlist`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ items: allItems }), });
       setSavedState(JSON.parse(JSON.stringify(lanes)));
       alert('배포 완료!');
     } catch (e) { alert('저장 실패'); }
@@ -748,7 +748,7 @@ const MediaManager = ({ stores = [], groups = [], devices = [], selectedStoreId,
       const form = new FormData();
       form.append('file', file);
       form.append('storeId', selectedStoreId);
-      await fetch(`${API}/api/media`, { method: 'POST', body: form });
+      await apiFetch(`${API}/api/media`, { method: 'POST', body: form });
     }
     fetchMedia();
     e.target.value = '';
@@ -756,14 +756,14 @@ const MediaManager = ({ stores = [], groups = [], devices = [], selectedStoreId,
 
   const handleDeleteMedia = async (id, filename) => {
     if (!window.confirm(`'${filename}'을(를) 삭제하시겠습니까?\n타임라인에 배치된 경우 함께 제거됩니다.`)) return;
-    await fetch(`${API}/api/media/${id}`, { method: 'DELETE' });
+    await apiFetch(`${API}/api/media/${id}`, { method: 'DELETE' });
     fetchMedia();
   };
 
   const handleDeleteAllMedia = async () => {
     if (mediaList.length === 0) return;
     if (!window.confirm(`에셋 라이브러리의 미디어 ${mediaList.length}개를 모두 삭제하시겠습니까?\n타임라인 배치도 함께 제거되며 되돌릴 수 없습니다.`)) return;
-    await fetch(`${API}/api/media?storeId=${selectedStoreId}`, { method: 'DELETE' });
+    await apiFetch(`${API}/api/media?storeId=${selectedStoreId}`, { method: 'DELETE' });
     fetchMedia();
   };
 

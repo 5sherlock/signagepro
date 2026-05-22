@@ -3,6 +3,7 @@ package com.signagepro.player.render
 import android.content.Context
 import android.graphics.BitmapFactory
 import android.view.View
+import android.view.animation.DecelerateInterpolator
 import android.widget.FrameLayout
 import android.widget.ImageView
 import androidx.media3.common.MediaItem
@@ -32,6 +33,7 @@ class MediaRenderer(
     private var active: FrameLayout = layerA
     private var standby: FrameLayout = layerB
     private var currentItemId: String? = null
+    private var currentItem: PlaylistItemDto? = null  // 현재 표시 중(전환의 출발) 슬라이드
 
     init {
         // 초기에는 양쪽 레이어 모두 숨김
@@ -48,7 +50,11 @@ class MediaRenderer(
      */
     fun show(item: PlaylistItemDto, file: File) {
         if (item.id == currentItemId) return
+
+        val isFirst = currentItem == null
+        val prevItem = currentItem  // 나가는 슬라이드 — 대시보드와 동일하게 outgoing 기준으로 전환 효과 결정
         currentItemId = item.id
+        currentItem = item
 
         // 1. standby 레이어에 새 미디어 로드
         when (item.media.type.lowercase()) {
@@ -57,13 +63,18 @@ class MediaRenderer(
             else -> return
         }
 
-        val transitionMs = (item.transitionTime ?: 1000).coerceAtLeast(0).toLong()
-        val type = item.transition?.lowercase() ?: "fade"
-
-        // 2. 크로스페이드
-        when (type) {
-            "fade" -> crossfade(transitionMs)
-            else -> instantSwap()  // "none" 등은 하드컷
+        // 2. 전환 효과 — 나가는 슬라이드 기준 (최초 슬라이드는 전환 없이 즉시 표시)
+        if (isFirst) {
+            instantSwap()
+        } else {
+            val transitionMs = (prevItem?.transitionTime ?: 1000).coerceAtLeast(0).toLong()
+            val dir = prevItem?.slideDirection?.lowercase() ?: "right"
+            when (prevItem?.transition?.lowercase() ?: "fade") {
+                "fade"    -> fadeToBlack(transitionMs)
+                "dissolve"-> crossfade(transitionMs)
+                "slide"   -> slideTransition(transitionMs, dir)
+                else      -> instantSwap()
+            }
         }
 
         // 3. 역할 스왑
@@ -104,20 +115,94 @@ class MediaRenderer(
         imageView.setImageBitmap(bmp)
     }
 
+    /**
+     * DISSOLVE — 두 레이어를 동시에 크로스페이드.
+     */
     private fun crossfade(durationMs: Long) {
+        val prevActive = active
+        standby.translationX = 0f
+        standby.translationY = 0f
         standby.alpha = 0f
         standby.animate().alpha(1f).setDuration(durationMs).start()
-        active.animate().alpha(0f).setDuration(durationMs).withEndAction {
-            // 이전 active 정리 — 메모리 절약
-            val playerView = videoOf(active)
-            if (playerView.player != null) {
-                // 새 player가 standby로 옮겨졌으므로 여긴 이미 detach 상태일 것
-            }
-            imageOf(active).setImageBitmap(null)
+        prevActive.animate().alpha(0f).setDuration(durationMs).withEndAction {
+            imageOf(prevActive).setImageBitmap(null)
         }.start()
     }
 
+    /**
+     * FADE — 검정으로 사라졌다 새 슬라이드가 나타남 (2단계 순차 페이드).
+     * durationMs 절반: 페이드아웃 / 나머지 절반: 페이드인
+     */
+    private fun fadeToBlack(durationMs: Long) {
+        val prevActive = active
+        val halfMs = (durationMs / 2).coerceAtLeast(100L)
+
+        standby.translationX = 0f
+        standby.translationY = 0f
+        standby.alpha = 0f
+
+        // 1단계: 현재 → 검정
+        prevActive.animate()
+            .alpha(0f)
+            .setDuration(halfMs)
+            .withEndAction {
+                // 2단계: 검정 → 새 슬라이드
+                standby.animate()
+                    .alpha(1f)
+                    .setDuration(halfMs)
+                    .withEndAction { imageOf(prevActive).setImageBitmap(null) }
+                    .start()
+            }
+            .start()
+    }
+
+    /**
+     * SLIDE — 방향에 따라 새 슬라이드가 밀고 들어오고 이전 슬라이드는 반대 방향으로 빠져나감.
+     * dir: "right"(기본) | "left" | "up" | "down"
+     *   right → 다음이 오른쪽에서 진입, 이전은 왼쪽으로 퇴장
+     *   left  → 다음이 왼쪽에서 진입, 이전은 오른쪽으로 퇴장
+     *   up    → 다음이 아래에서 진입, 이전은 위로 퇴장
+     *   down  → 다음이 위에서 진입, 이전은 아래로 퇴장
+     */
+    private fun slideTransition(durationMs: Long, dir: String) {
+        val dm = context.resources.displayMetrics
+        val screenW = dm.widthPixels.toFloat()
+        val screenH = dm.heightPixels.toFloat()
+        val prevActive = active
+        val interp = DecelerateInterpolator()
+
+        // 진입 시작 위치 (standby) / 퇴장 끝 위치 (prevActive)
+        val (inX, inY, outX, outY) = when (dir) {
+            "left"  -> arrayOf( -screenW, 0f,  screenW, 0f)
+            "up"    -> arrayOf( 0f,  screenH, 0f, -screenH)
+            "down"  -> arrayOf( 0f, -screenH, 0f,  screenH)
+            else    -> arrayOf(  screenW, 0f, -screenW, 0f)  // "right" 기본
+        }
+
+        standby.alpha = 1f
+        standby.translationX = inX
+        standby.translationY = inY
+        standby.animate()
+            .translationX(0f).translationY(0f)
+            .setDuration(durationMs)
+            .setInterpolator(interp)
+            .start()
+
+        prevActive.animate()
+            .translationX(outX).translationY(outY)
+            .setDuration(durationMs)
+            .setInterpolator(interp)
+            .withEndAction {
+                imageOf(prevActive).setImageBitmap(null)
+                prevActive.translationX = 0f
+                prevActive.translationY = 0f
+            }
+            .start()
+    }
+
     private fun instantSwap() {
+        standby.translationX = 0f
+        standby.translationY = 0f
         standby.alpha = 1f
         active.alpha = 0f
         imageOf(active).setImageBitmap(null)

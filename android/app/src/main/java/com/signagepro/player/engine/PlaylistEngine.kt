@@ -61,6 +61,8 @@ class PlaylistEngine(
         val nextSlotEpochMs = (nowSec + remaining) * 1000L
         return SlotState(
             item = list[idx],
+            index = idx,
+            total = list.size,
             elapsedSec = elapsedInSlide,
             remainingSec = remaining,
             nextSlotEpochMs = nextSlotEpochMs
@@ -69,6 +71,8 @@ class PlaylistEngine(
 
     data class SlotState(
         val item: PlaylistItemDto,
+        val index: Int,
+        val total: Int,
         val elapsedSec: Int,
         val remainingSec: Int,
         val nextSlotEpochMs: Long

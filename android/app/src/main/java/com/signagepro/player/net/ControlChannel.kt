@@ -19,9 +19,16 @@ class ControlChannel(
     private val serverUrl: String,
     private val selfDeviceId: String,
     private val onPlaylistUpdated: (groupId: String) -> Unit,
-    private val onAssignmentChanged: () -> Unit
+    private val onAssignmentChanged: () -> Unit,
+    private val onUpdateApk: (apkUrl: String) -> Unit = {},
+    /**
+     * 서버 재연결 시 호출 — 서버 다운 중 콘텐츠가 바뀌었을 수 있으므로
+     * 재연결되면 최신 playlist를 즉시 재조회한다.
+     */
+    private val onReconnected: () -> Unit = {}
 ) {
     private var socket: Socket? = null
+    @Volatile private var wasConnected = false
 
     fun start() {
         val opts = IO.Options().apply {
@@ -32,7 +39,14 @@ class ControlChannel(
         }
         socket = IO.socket(serverUrl, opts).apply {
             on(Socket.EVENT_CONNECT) {
-                Log.i(TAG, "Socket.io 연결됨")
+                if (wasConnected) {
+                    // 재연결 — 다운 중 변경된 콘텐츠 반영
+                    Log.i(TAG, "Socket.io 재연결됨 → playlist 재조회")
+                    onReconnected()
+                } else {
+                    Log.i(TAG, "Socket.io 최초 연결됨")
+                }
+                wasConnected = true
             }
             on(Socket.EVENT_DISCONNECT) {
                 Log.w(TAG, "Socket.io 끊김")
@@ -51,10 +65,21 @@ class ControlChannel(
             on("group_assignment_changed") { args ->
                 val data = args.firstOrNull() as? JSONObject
                 val changedId = data?.optString("deviceId", "")
-                // 자기 기기 변경이거나 broadcast(데이터 없음)이면 재조회
                 if (changedId.isNullOrBlank() || changedId == selfDeviceId) {
                     Log.i(TAG, "group_assignment_changed")
                     onAssignmentChanged()
+                }
+            }
+            on("update_apk") { args ->
+                val data = args.firstOrNull() as? JSONObject ?: return@on
+                // targetDeviceId 없으면 전체 배포, 있으면 해당 기기만
+                val target = data.optString("deviceId", "")
+                if (target.isBlank() || target == selfDeviceId) {
+                    val apkUrl = data.optString("url", "")
+                    if (apkUrl.isNotBlank()) {
+                        Log.i(TAG, "OTA 업데이트 수신: $apkUrl")
+                        onUpdateApk(apkUrl)
+                    }
                 }
             }
             connect()

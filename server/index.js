@@ -10,6 +10,7 @@ const path = require('path');
 const fs = require('fs');
 const crypto = require('crypto');
 const { execFile } = require('child_process');
+const os = require('os');
 
 const prisma = new PrismaClient();
 const app = express();
@@ -18,12 +19,95 @@ const DEVICE_SECRET = process.env.DEVICE_SECRET || 'changeme';
 if (DEVICE_SECRET === 'changeme') {
   console.warn('[WARN] DEVICE_SECRET이 기본값입니다. .env에서 변경하세요.');
 }
+
+let adminPassword = process.env.adminPassword || '';
+if (!adminPassword) {
+  console.warn('[WARN] adminPassword 미설정 — 대시보드 인증이 비활성화됩니다. .env에서 설정하세요.');
+}
+
+const envPath = path.join(__dirname, '.env');
+function saveAdminPassword(newPw) {
+  adminPassword = newPw;
+  try {
+    let content = fs.existsSync(envPath) ? fs.readFileSync(envPath, 'utf8') : '';
+    if (/^adminPassword=/m.test(content)) {
+      content = content.replace(/^adminPassword=.*/m, `adminPassword="${newPw}"`);
+    } else {
+      content += `\nadminPassword="${newPw}"`;
+    }
+    fs.writeFileSync(envPath, content, 'utf8');
+  } catch (e) {
+    console.error('[ERROR] .env 저장 실패:', e.message);
+  }
+}
+
+// 세션 토큰 저장소 (메모리, 24시간 유효)
+const sessions = new Map();
+setInterval(() => {
+  const now = Date.now();
+  for (const [token, expiry] of sessions) if (expiry < now) sessions.delete(token);
+}, 60 * 60 * 1000);
+
 app.use(cors());
 app.use((req, res, next) => {
   console.log(`[REQ] ${new Date().toISOString()} ${req.ip} ${req.method} ${req.url}`);
   next();
 });
 app.use(express.json());
+
+// ── 인증 ─────────────────────────────────────────────────────────────────────
+
+app.post('/api/auth/login', (req, res) => {
+  if (!adminPassword) return res.json({ token: 'dev-mode' }); // 개발 모드
+  if (req.body.password !== adminPassword)
+    return res.status(401).json({ error: '비밀번호가 틀렸습니다.' });
+  const token = crypto.randomBytes(32).toString('hex');
+  sessions.set(token, Date.now() + 24 * 60 * 60 * 1000);
+  res.json({ token });
+});
+
+app.post('/api/auth/change-password', (req, res) => {
+  const { current, newPassword } = req.body;
+  if (adminPassword && current !== adminPassword)
+    return res.status(401).json({ error: '현재 비밀번호가 틀렸습니다.' });
+  if (!newPassword || newPassword.length < 4)
+    return res.status(400).json({ error: '새 비밀번호는 4자 이상이어야 합니다.' });
+  saveAdminPassword(newPassword);
+  sessions.clear(); // 기존 세션 모두 무효화
+  res.json({ ok: true });
+});
+
+app.post('/api/auth/logout', (req, res) => {
+  sessions.delete(req.headers.authorization?.slice(7));
+  res.json({ ok: true });
+});
+
+const requireAuth = (req, res, next) => {
+  if (!adminPassword) return next(); // adminPassword 미설정 시 개방
+  const token = req.headers.authorization?.slice(7);
+  if (token === 'dev-mode') return next();
+  const expiry = sessions.get(token);
+  if (!expiry || expiry < Date.now()) {
+    sessions.delete(token);
+    return res.status(401).json({ error: '인증이 필요합니다.' });
+  }
+  next();
+};
+
+// 기기 전용 GET API는 인증 제외 (Android 앱이 직접 호출)
+const DEVICE_OPEN = [
+  '/api/time',
+  /^\/api\/devices\/[^/]+$/,
+  /^\/api\/groups\/[^/]+\/playlist$/,
+];
+app.use('/api', (req, res, next) => {
+  if (req.path.startsWith('/auth/')) return next();
+  const open = DEVICE_OPEN.some(p =>
+    typeof p === 'string' ? req.path === p : p.test(req.path)
+  );
+  if (open && req.method === 'GET') return next();
+  requireAuth(req, res, next);
+});
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 
 // Ensure uploads folder exists
@@ -593,6 +677,79 @@ app.post('/api/devices/:id/reboot', async (req, res) => {
       });
     });
     console.log(`[ADB] 재부팅 명령 전송: ${device.id} (${target})`);
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ── 원격 제어 공통 헬퍼 ──────────────────────────────────────────────────────
+function adbExec(adbPath, args, opts = {}) {
+  return new Promise((resolve, reject) => {
+    execFile(adbPath, args, { timeout: 15000, ...opts }, (err, stdout, stderr) => {
+      if (err) return reject(err);
+      resolve({ stdout, stderr });
+    });
+  });
+}
+
+async function getDeviceTarget(id) {
+  const device = await prisma.device.findUnique({ where: { id } });
+  if (!device || !device.ip) throw new Error('기기 또는 IP 정보 없음');
+  return { device, target: `${device.ip}:5555` };
+}
+
+// 원격 스크린샷 (screencap → pull → PNG 반환)
+app.post('/api/devices/:id/screenshot', async (req, res) => {
+  const adbPath = process.env.ADB_PATH || 'adb';
+  try {
+    const { target } = await getDeviceTarget(req.params.id);
+    const tmpFile = path.join(os.tmpdir(), `snap_${req.params.id}.png`);
+    await adbExec(adbPath, ['-s', target, 'shell', 'screencap', '-p', '/sdcard/snap_signage.png']);
+    await adbExec(adbPath, ['-s', target, 'pull', '/sdcard/snap_signage.png', tmpFile]);
+    const data = fs.readFileSync(tmpFile);
+    fs.unlink(tmpFile, () => {});
+    res.set('Content-Type', 'image/png');
+    res.send(data);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// 앱 재시작
+app.post('/api/devices/:id/restart-app', async (req, res) => {
+  const adbPath = process.env.ADB_PATH || 'adb';
+  try {
+    const { target } = await getDeviceTarget(req.params.id);
+    await adbExec(adbPath, ['-s', target, 'shell', 'am', 'force-stop', 'com.signagepro.player']);
+    await new Promise(r => setTimeout(r, 1500));
+    await adbExec(adbPath, ['-s', target, 'shell', 'am', 'start', '-n', 'com.signagepro.player/.MainActivity']);
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// 화면 켜기/끄기 (KEYCODE_WAKEUP=224 / KEYCODE_SLEEP=223)
+app.post('/api/devices/:id/screen', async (req, res) => {
+  const adbPath = process.env.ADB_PATH || 'adb';
+  try {
+    const { target } = await getDeviceTarget(req.params.id);
+    const keycode = req.body.on ? '224' : '223';
+    await adbExec(adbPath, ['-s', target, 'shell', 'input', 'keyevent', keycode]);
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// 볼륨 조절 (0-15, STREAM_MUSIC)
+app.post('/api/devices/:id/volume', async (req, res) => {
+  const adbPath = process.env.ADB_PATH || 'adb';
+  try {
+    const { target } = await getDeviceTarget(req.params.id);
+    const level = Math.min(15, Math.max(0, parseInt(req.body.level) || 0));
+    await adbExec(adbPath, ['-s', target, 'shell', 'media', 'volume', '--stream', '3', '--set', String(level)]);
     res.json({ ok: true });
   } catch (e) {
     res.status(500).json({ error: e.message });

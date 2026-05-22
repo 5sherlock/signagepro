@@ -37,6 +37,7 @@ data class PlaylistItemDto(
     val targetDeviceId: String?,
     val transition: String?,
     val transitionTime: Int?,
+    val slideDirection: String?,   // "right" | "left" | "up" | "down"
     val media: MediaDto
 )
 
