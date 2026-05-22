@@ -891,7 +891,8 @@ const tcpServer = net.createServer((socket) => {
 
 app.get('/api/schedules', async (req, res) => {
   const schedules = await prisma.screenSchedule.findMany({ orderBy: { createdAt: 'asc' } });
-  res.json(schedules);
+  // SQLite는 boolean을 0/1로 저장하므로 명시적으로 변환
+  res.json(schedules.map(s => ({ ...s, enabled: !!s.enabled })));
 });
 
 app.post('/api/schedules', async (req, res) => {

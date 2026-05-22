@@ -911,8 +911,8 @@ function App() {
   const fetchSchedules = useCallback(() => {
     apiFetch(`${SOCKET_URL}/api/schedules`)
       .then(r => r.json())
-      .then(setAllSchedules)
-      .catch(() => {});
+      .then(data => { console.log('[schedules]', data); setAllSchedules(Array.isArray(data) ? data : []); })
+      .catch(err => console.error('[schedules] fetch 실패:', err));
   }, []);
 
   useEffect(() => {
@@ -1144,9 +1144,9 @@ function App() {
                           if (!sched.length) return null;
                           const s = sched[0];
                           return (
-                            <div style={{ fontSize: '0.68rem', color: '#60a5fa', marginTop: '3px', display: 'flex', gap: '6px' }}>
-                              {s.onTime && <span>☀️ {s.onTime}</span>}
-                              {s.offTime && <span>🌙 {s.offTime}</span>}
+                            <div style={{ fontSize: '0.72rem', color: '#38bdf8', marginTop: '4px', display: 'flex', gap: '8px', flexWrap: 'wrap', overflow: 'visible' }}>
+                              {s.onTime ? <span>☀️ {s.onTime}</span> : null}
+                              {s.offTime ? <span>🌙 {s.offTime}</span> : null}
                             </div>
                           );
                         })()}
