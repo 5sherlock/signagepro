@@ -223,7 +223,6 @@ const ALL_DAYS = '0,1,2,3,4,5,6';
 function ScreenScheduleSection({ onUnauth }) {
   const [schedules, setSchedules] = useState([]);
   const [saving, setSaving] = useState(false);
-  const [pushing, setPushing] = useState(false);
   const [toast, setToast] = useState(null); // { msg, ok }
   const [draft, setDraft] = useState({ deviceId: '', onTime: '09:00', offTime: '22:00', days: '1,2,3,4,5', enabled: true });
   const [editId, setEditId] = useState(null);
@@ -281,32 +280,13 @@ function ScreenScheduleSection({ onUnauth }) {
     load();
   };
 
-  const pushToDevices = async () => {
-    setPushing(true);
-    try {
-      const data = await apiFetch(`${SOCKET_URL}/api/schedules/push`, { method: 'POST' })
-        .then(check401).then(r => r.json());
-      showToast(`✅ ${data.devices}개 기기에 전송 완료`);
-    } catch (e) {
-      if (e.message !== '401') showToast('❌ 전송 실패', false);
-    } finally { setPushing(false); }
-  };
 
   const activeDays = draft.days ? draft.days.split(',').map(Number) : [];
   const inputStyle = { padding: '6px 10px', borderRadius: '6px', border: '1px solid var(--border)', background: 'var(--bg-primary)', color: 'var(--text-primary)', fontSize: '0.9rem', colorScheme: 'dark' };
 
   return (
     <div className="glass-card" style={{ maxWidth: '600px', padding: '30px', marginTop: '20px' }}>
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: toast ? '10px' : '20px' }}>
-        <h2 style={{ margin: 0, fontSize: '1.2rem' }}>🕐 화면 스케줄</h2>
-        <button
-          className="btn btn-primary"
-          onClick={pushToDevices}
-          disabled={pushing}
-          style={{ background: '#0EA5E9', fontSize: '0.85rem', padding: '6px 14px' }}>
-          {pushing ? '전송 중…' : '📡 기기 전송'}
-        </button>
-      </div>
+      <h2 style={{ margin: 0, marginBottom: toast ? '10px' : '20px', fontSize: '1.2rem' }}>🕐 화면 스케줄</h2>
       {toast && (
         <div style={{ marginBottom: '16px', padding: '8px 14px', borderRadius: '8px', background: toast.ok ? 'rgba(16,185,129,0.15)' : 'rgba(239,68,68,0.15)', border: `1px solid ${toast.ok ? '#10B981' : '#EF4444'}`, fontSize: '0.85rem', fontWeight: 600, color: toast.ok ? '#10B981' : '#EF4444' }}>
           {toast.msg}
