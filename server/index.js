@@ -132,6 +132,20 @@ const upload = multer({
   }
 });
 
+// APK 업로드용 multer (update 폴더에 app.apk로 저장)
+const apkStorage = multer.diskStorage({
+  destination: (req, file, cb) => cb(null, updateDir),
+  filename: (req, file, cb) => cb(null, 'app.apk'),
+});
+const uploadApk = multer({
+  storage: apkStorage,
+  limits: { fileSize: 500 * 1024 * 1024 }, // 500MB
+  fileFilter: (req, file, cb) => {
+    const ok = file.originalname.endsWith('.apk') || file.mimetype === 'application/vnd.android.package-archive' || file.mimetype === 'application/octet-stream';
+    ok ? cb(null, true) : cb(new Error('APK 파일만 업로드 가능합니다.'));
+  },
+});
+
 const httpServer = http.createServer(app);
 const io = new Server(httpServer, { cors: { origin: '*' } });
 
@@ -532,6 +546,14 @@ app.get('/update/apk', (req, res) => {
 });
 
 // APK 배포 상태 확인
+// APK 업로드 (대시보드에서 직접 업로드)
+app.post('/api/update/apk', uploadApk.single('apk'), (req, res) => {
+  if (!req.file) return res.status(400).json({ error: '파일이 없습니다.' });
+  const stat = fs.statSync(req.file.path);
+  console.log(`[OTA] APK 업로드 완료: ${(stat.size / 1024 / 1024).toFixed(1)} MB`);
+  res.json({ ok: true, size: stat.size, updatedAt: stat.mtime });
+});
+
 app.get('/api/update/status', (req, res) => {
   const apkPath = path.join(updateDir, 'app.apk');
   if (!fs.existsSync(apkPath)) {
@@ -598,8 +620,8 @@ app.post('/api/update/adb-install', async (req, res) => {
   adbCancelled = false;
   const results = [];
 
-  const trackExec = (...args) => new Promise((resolve) => {
-    const proc = execFile(...args, (err, stdout, stderr) => {
+  const trackExec = (cmd, cmdArgs, opts = {}) => new Promise((resolve) => {
+    const proc = execFile(cmd, cmdArgs, { windowsHide: true, ...opts }, (err, stdout, stderr) => {
       activeAdbProcs.delete(proc);
       resolve({ err, stdout, stderr });
     });
@@ -671,11 +693,8 @@ app.post('/api/devices/:id/reboot', async (req, res) => {
   const target = `${device.ip}:5555`;
   const adbPath = process.env.ADB_PATH || 'adb';
   try {
-    await new Promise((resolve) => {
-      execFile(adbPath, ['-s', target, 'shell', 'reboot'], { timeout: 10000 }, () => {
-        resolve(); // reboot은 연결 끊김이 정상 — 오류 무시
-      });
-    });
+    await adbExec(adbPath, ['connect', target], { timeout: 8000 });
+    execFile(adbPath, ['-s', target, 'shell', 'reboot'], { timeout: 10000, windowsHide: true }, () => {}); // 연결 끊김이 정상
     console.log(`[ADB] 재부팅 명령 전송: ${device.id} (${target})`);
     res.json({ ok: true });
   } catch (e) {
@@ -686,7 +705,7 @@ app.post('/api/devices/:id/reboot', async (req, res) => {
 // ── 원격 제어 공통 헬퍼 ──────────────────────────────────────────────────────
 function adbExec(adbPath, args, opts = {}) {
   return new Promise((resolve, reject) => {
-    execFile(adbPath, args, { timeout: 15000, ...opts }, (err, stdout, stderr) => {
+    execFile(adbPath, args, { timeout: 15000, windowsHide: true, ...opts }, (err, stdout, stderr) => {
       if (err) return reject(err);
       resolve({ stdout, stderr });
     });

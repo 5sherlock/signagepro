@@ -221,17 +221,49 @@ function SettingsTab({ onUnauth }) {
   const [otaStatus, setOtaStatus] = useState(null);
   const [pushing, setPushing] = useState(false);
   const [adbRunning, setAdbRunning] = useState(false);
+  const [uploading, setUploading] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState(0);
   const adbControllerRef = useRef(null);
+  const apkInputRef = useRef(null);
 
   const check401 = (res) => { if (res.status === 401) { onUnauth?.(); throw new Error('401'); } return res; };
 
-  useEffect(() => {
+  const refreshStatus = () =>
     apiFetch(`${SOCKET_URL}/api/update/status`)
       .then(check401)
       .then(r => r.json())
       .then(setOtaStatus)
       .catch(e => { if (e.message !== '401') setOtaStatus({ available: false }); });
-  }, []);
+
+  useEffect(() => { refreshStatus(); }, []);
+
+  const handleApkUpload = (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    if (!file.name.endsWith('.apk')) { alert('APK 파일만 업로드 가능합니다.'); return; }
+    if (!window.confirm(`${file.name} (${(file.size / 1024 / 1024).toFixed(1)} MB) 을 업로드할까요?`)) return;
+
+    setUploading(true);
+    setUploadProgress(0);
+    const form = new FormData();
+    form.append('apk', file);
+
+    const xhr = new XMLHttpRequest();
+    xhr.open('POST', `${SOCKET_URL}/api/update/apk`);
+    const token = localStorage.getItem('SIGNAGE_TOKEN');
+    if (token) xhr.setRequestHeader('Authorization', `Bearer ${token}`);
+    xhr.upload.onprogress = (ev) => {
+      if (ev.lengthComputable) setUploadProgress(Math.round(ev.loaded / ev.total * 100));
+    };
+    xhr.onload = () => {
+      setUploading(false);
+      e.target.value = '';
+      if (xhr.status === 200) { refreshStatus(); }
+      else { alert('업로드 실패: ' + xhr.responseText); }
+    };
+    xhr.onerror = () => { setUploading(false); alert('업로드 중 오류가 발생했습니다.'); };
+    xhr.send(form);
+  };
 
   const pushUpdate = (deviceId = '') => {
     if (!window.confirm(deviceId ? `${deviceId} 에 업데이트를 배포할까요?` : '전체 단말에 업데이트를 배포할까요?')) return;
@@ -318,13 +350,27 @@ function SettingsTab({ onUnauth }) {
       {/* OTA 업데이트 */}
       <div className="glass-card" style={{ maxWidth: '600px', padding: '30px', marginTop: '20px' }}>
         <h2 style={{ marginBottom: '8px', fontSize: '1.2rem' }}>📦 단말 APK 원격 배포 (OTA)</h2>
-        <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: '20px' }}>
-          <code style={{ background: 'rgba(255,255,255,0.08)', padding: '2px 6px', borderRadius: '4px' }}>
-            server/update/app.apk
-          </code>
-          &nbsp;에 새 APK를 넣은 후 배포 버튼을 누르세요.<br />
-          단말이 자동으로 다운로드 후 설치 화면을 표시합니다.
+        <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: '16px' }}>
+          APK를 업로드한 후 배포 버튼을 누르세요. 단말이 자동으로 다운로드 후 설치합니다.
         </p>
+
+        {/* APK 업로드 */}
+        <div style={{ marginBottom: '16px' }}>
+          <input ref={apkInputRef} type="file" accept=".apk" style={{ display: 'none' }} onChange={handleApkUpload} />
+          <button
+            className="btn btn-primary"
+            style={{ background: '#8B5CF6' }}
+            disabled={uploading}
+            onClick={() => apkInputRef.current?.click()}
+          >
+            {uploading ? `업로드 중… ${uploadProgress}%` : '📤 APK 파일 업로드'}
+          </button>
+          {uploading && (
+            <div style={{ marginTop: '8px', height: '6px', borderRadius: '3px', background: 'rgba(255,255,255,0.1)', overflow: 'hidden' }}>
+              <div style={{ height: '100%', width: `${uploadProgress}%`, background: '#8B5CF6', transition: 'width 0.2s' }} />
+            </div>
+          )}
+        </div>
 
         {/* APK 상태 */}
         <div style={{ marginBottom: '20px', padding: '12px', borderRadius: '8px', background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.08)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px' }}>
@@ -619,7 +665,6 @@ function App() {
   const [apkAvailable, setApkAvailable] = useState(false);
   const [adbRunning, setAdbRunning] = useState(false);
   const [serverOnline, setServerOnline] = useState(null); // null=확인중, true=연결, false=끊김
-  const [remoteDevice, setRemoteDevice] = useState(null);
 
   const onUnauth = useCallback(() => {
     localStorage.removeItem('SIGNAGE_TOKEN');
@@ -744,7 +789,6 @@ function App() {
 
   return (
     <div className="app-container">
-      {remoteDevice && <RemoteControlModal device={remoteDevice} onClose={() => setRemoteDevice(null)} />}
       {/* Sidebar */}
       <aside className="sidebar">
         <div className="logo-container">
@@ -987,12 +1031,6 @@ function App() {
                       </div>
                     )}
                     <div style={{ marginTop: '8px', display: 'flex', justifyContent: 'flex-end', gap: '6px', flexWrap: 'wrap' }}>
-                      <button
-                        style={{ fontSize: '0.7rem', padding: '3px 10px', background: 'transparent', border: '1px solid #6366f1', borderRadius: '4px', color: '#6366f1', cursor: 'pointer' }}
-                        onClick={() => setRemoteDevice(device)}
-                      >
-                        🎮 원격 제어
-                      </button>
                       {apkAvailable && (device.appVersion !== standardVersion) && (
                         <button
                           disabled={adbRunning}
