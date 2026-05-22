@@ -62,6 +62,7 @@ class PlayerCoordinator(
     private var loopJob: Job? = null
     private var heartbeat: HeartbeatService? = null
     private var control: ControlChannel? = null
+    private val scheduleManager = ScreenScheduleManager(context)
 
     fun start() {
         scope.launch {
@@ -99,6 +100,7 @@ class PlayerCoordinator(
         startHeartbeat(serverUrl, deviceId, secret)
         startControlChannel(serverUrl, deviceId)
         startTimeSyncLoop(serverUrl)
+        scheduleManager.start(scope)
         if (DEBUG_OVERLAY) startDebugLoop(deviceId)
     }
 
@@ -141,6 +143,8 @@ class PlayerCoordinator(
         return try {
             val api = ApiClient.get(serverUrl)
             val device = api.getDevice(deviceId)
+            // 스케줄 업데이트 (서버에서 내려온 enabled 스케줄만 포함됨)
+            scheduleManager.update(device.schedules)
             val groupId = device.groupId ?: error("기기가 그룹에 배정되지 않았습니다")
             val playlist = api.getPlaylist(groupId)
             store.save(playlist)
@@ -311,8 +315,10 @@ class PlayerCoordinator(
             onPlaylistUpdated = { refreshPlaylist() },
             onAssignmentChanged = { refreshPlaylist() },
             onUpdateApk = { apkUrl -> downloadAndInstallApk(apkUrl) },
-            // 서버 재연결 시 최신 playlist 재조회 (다운 중 변경된 콘텐츠 반영)
-            onReconnected = { refreshPlaylist() }
+            // 서버 재연결 시 최신 playlist + 스케줄 재조회
+            onReconnected = { refreshPlaylist() },
+            // 스케줄 변경 시 기기 정보 재조회 → scheduleManager.update() 호출
+            onScheduleChanged = { refreshPlaylist() }
         ).also { it.start() }
     }
 
@@ -320,6 +326,7 @@ class PlayerCoordinator(
         loopJob?.cancel()
         heartbeat?.stop()
         control?.stop()
+        scheduleManager.stop()
         renderer.release()
         scope.coroutineContext[Job]?.cancel()
     }

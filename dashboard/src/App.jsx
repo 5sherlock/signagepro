@@ -217,6 +217,132 @@ function DevicePreview({ groupId, deviceId, onUpdate }) {
 // SettingsTab — 서버 설정 + OTA 업데이트 배포
 // ─────────────────────────────────────────────
 
+const DAY_LABELS = ['일', '월', '화', '수', '목', '금', '토'];
+const ALL_DAYS = '0,1,2,3,4,5,6';
+
+function ScreenScheduleSection({ onUnauth }) {
+  const [schedules, setSchedules] = useState([]);
+  const [saving, setSaving] = useState(false);
+  const [draft, setDraft] = useState({ deviceId: '', onTime: '09:00', offTime: '22:00', days: '1,2,3,4,5', enabled: true });
+  const [editId, setEditId] = useState(null);
+
+  const check401 = (res) => { if (res.status === 401) { onUnauth?.(); throw new Error('401'); } return res; };
+
+  const load = () =>
+    apiFetch(`${SOCKET_URL}/api/schedules`)
+      .then(check401).then(r => r.json()).then(setSchedules)
+      .catch(e => { if (e.message !== '401') console.error(e); });
+
+  useEffect(() => { load(); }, []);
+
+  const toggleDay = (day) => {
+    const cur = draft.days ? draft.days.split(',').map(Number) : [];
+    const next = cur.includes(day) ? cur.filter(d => d !== day) : [...cur, day].sort((a, b) => a - b);
+    setDraft(p => ({ ...p, days: next.join(',') }));
+  };
+
+  const save = async () => {
+    setSaving(true);
+    try {
+      const body = { ...draft, id: editId || undefined };
+      await apiFetch(`${SOCKET_URL}/api/schedules`, { method: 'POST', body: JSON.stringify(body) })
+        .then(check401);
+      setEditId(null);
+      setDraft({ deviceId: '', onTime: '09:00', offTime: '22:00', days: '1,2,3,4,5', enabled: true });
+      load();
+    } catch (e) { if (e.message !== '401') alert('저장 실패'); }
+    finally { setSaving(false); }
+  };
+
+  const remove = async (id) => {
+    if (!window.confirm('스케줄을 삭제할까요?')) return;
+    await apiFetch(`${SOCKET_URL}/api/schedules/${id}`, { method: 'DELETE' }).then(check401);
+    load();
+  };
+
+  const startEdit = (s) => {
+    setEditId(s.id);
+    setDraft({ deviceId: s.deviceId || '', onTime: s.onTime || '', offTime: s.offTime || '', days: s.days, enabled: s.enabled });
+  };
+
+  const toggleEnabled = async (s) => {
+    await apiFetch(`${SOCKET_URL}/api/schedules`, {
+      method: 'POST',
+      body: JSON.stringify({ id: s.id, deviceId: s.deviceId, onTime: s.onTime, offTime: s.offTime, days: s.days, enabled: !s.enabled }),
+    }).then(check401);
+    load();
+  };
+
+  const activeDays = draft.days ? draft.days.split(',').map(Number) : [];
+  const inputStyle = { padding: '6px 10px', borderRadius: '6px', border: '1px solid var(--border)', background: 'var(--bg-primary)', color: 'var(--text-primary)', fontSize: '0.9rem', colorScheme: 'dark' };
+
+  return (
+    <div className="glass-card" style={{ maxWidth: '600px', padding: '30px', marginTop: '20px' }}>
+      <h2 style={{ marginBottom: '20px', fontSize: '1.2rem' }}>🕐 화면 스케줄</h2>
+
+      {/* 등록된 스케줄 목록 */}
+      {schedules.length > 0 && (
+        <div style={{ marginBottom: '20px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
+          {schedules.map(s => (
+            <div key={s.id} style={{ padding: '12px 14px', borderRadius: '8px', background: 'rgba(255,255,255,0.04)', border: '1px solid var(--border)', display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
+              <span style={{ flex: 1, fontSize: '0.85rem', color: s.enabled ? 'var(--text-primary)' : '#666' }}>
+                {s.deviceId || '전체 기기'} &nbsp;|&nbsp;
+                {s.onTime && `☀️ ${s.onTime}`} {s.offTime && `🌙 ${s.offTime}`} &nbsp;|&nbsp;
+                {s.days.split(',').map(Number).map(d => DAY_LABELS[d]).join(' ')}
+              </span>
+              <button onClick={() => toggleEnabled(s)} style={{ fontSize: '0.75rem', padding: '3px 8px', borderRadius: '4px', border: '1px solid var(--border)', background: 'transparent', color: s.enabled ? '#10B981' : '#666', cursor: 'pointer' }}>
+                {s.enabled ? '활성' : '비활성'}
+              </button>
+              <button onClick={() => startEdit(s)} style={{ fontSize: '0.75rem', padding: '3px 8px', borderRadius: '4px', border: '1px solid var(--border)', background: 'transparent', color: 'var(--text-secondary)', cursor: 'pointer' }}>수정</button>
+              <button onClick={() => remove(s.id)} style={{ fontSize: '0.75rem', padding: '3px 8px', borderRadius: '4px', border: '1px solid #EF4444', background: 'transparent', color: '#EF4444', cursor: 'pointer' }}>삭제</button>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* 스케줄 추가/수정 폼 */}
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+        <div style={{ display: 'flex', gap: '10px', alignItems: 'center', flexWrap: 'wrap' }}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+            <label style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>켜는 시간</label>
+            <input type="time" value={draft.onTime} onChange={e => setDraft(p => ({ ...p, onTime: e.target.value }))} style={inputStyle} />
+          </div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+            <label style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>끄는 시간</label>
+            <input type="time" value={draft.offTime} onChange={e => setDraft(p => ({ ...p, offTime: e.target.value }))} style={inputStyle} />
+          </div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+            <label style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>기기 ID (비우면 전체)</label>
+            <input type="text" value={draft.deviceId} onChange={e => setDraft(p => ({ ...p, deviceId: e.target.value }))} placeholder="예: dev-101" style={{ ...inputStyle, width: '120px' }} />
+          </div>
+        </div>
+
+        {/* 요일 선택 */}
+        <div style={{ display: 'flex', gap: '6px' }}>
+          {DAY_LABELS.map((label, day) => (
+            <button key={day} onClick={() => toggleDay(day)}
+              style={{ width: '36px', height: '36px', borderRadius: '50%', border: '1px solid var(--border)', background: activeDays.includes(day) ? '#3B82F6' : 'transparent', color: activeDays.includes(day) ? '#fff' : 'var(--text-secondary)', fontSize: '0.8rem', cursor: 'pointer', fontWeight: activeDays.includes(day) ? 700 : 400 }}>
+              {label}
+            </button>
+          ))}
+        </div>
+
+        <div style={{ display: 'flex', gap: '8px' }}>
+          <button className="btn btn-primary" onClick={save} disabled={saving}>
+            {saving ? '저장 중…' : editId ? '✏️ 수정 저장' : '+ 스케줄 추가'}
+          </button>
+          {editId && (
+            <button className="btn" onClick={() => { setEditId(null); setDraft({ deviceId: '', onTime: '09:00', offTime: '22:00', days: '1,2,3,4,5', enabled: true }); }}
+              style={{ background: 'transparent', border: '1px solid var(--border)', color: 'var(--text-secondary)' }}>
+              취소
+            </button>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function SettingsTab({ onUnauth }) {
   const [otaStatus, setOtaStatus] = useState(null);
   const [pushing, setPushing] = useState(false);
@@ -312,7 +438,7 @@ function SettingsTab({ onUnauth }) {
   };
 
   return (
-    <div className="content-area">
+    <div className="content-area" style={{ overflowY: 'auto' }}>
       <header className="header">
         <h1 className="header-title">환경설정</h1>
       </header>
@@ -433,6 +559,8 @@ function SettingsTab({ onUnauth }) {
           USB에 signagepro.json <code>{"{ \"type\": \"enable_adb_tcp\" }"}</code> 액션으로 1회 활성화 가능.
         </p>
       </div>
+
+      <ScreenScheduleSection onUnauth={onUnauth} />
     </div>
   );
 }

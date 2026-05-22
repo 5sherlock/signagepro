@@ -11,6 +11,7 @@ const fs = require('fs');
 const crypto = require('crypto');
 const { execFile } = require('child_process');
 const os = require('os');
+const cron = require('node-cron');
 
 const prisma = new PrismaClient();
 const app = express();
@@ -294,7 +295,7 @@ app.get('/api/devices', async (req, res) => {
   }
 });
 
-// 특정 기기 조회 (player 부팅 시 자신의 groupId 확인용)
+// 특정 기기 조회 (player 부팅 시 자신의 groupId + 스케줄 확인용)
 app.get('/api/devices/:id', async (req, res) => {
   try {
     const device = await prisma.device.findUnique({
@@ -302,7 +303,11 @@ app.get('/api/devices/:id', async (req, res) => {
       include: { group: true, store: true }
     });
     if (!device) return res.status(404).json({ error: '기기를 찾을 수 없습니다.' });
-    res.json(device);
+    // 이 기기에 적용되는 스케줄 (전체 대상 null + 기기 전용)
+    const schedules = await prisma.screenSchedule.findMany({
+      where: { enabled: true, OR: [{ deviceId: null }, { deviceId: req.params.id }] }
+    });
+    res.json({ ...device, schedules });
   } catch (err) {
     res.status(500).json({ error: '기기 조회 실패' });
   }
@@ -881,6 +886,90 @@ const tcpServer = net.createServer((socket) => {
     console.error(`[TCP] 에러:`, err.message);
   });
 });
+
+// ── 화면 스케줄 API ────────────────────────────────────────────────────────
+
+app.get('/api/schedules', async (req, res) => {
+  const schedules = await prisma.screenSchedule.findMany({ orderBy: { createdAt: 'asc' } });
+  res.json(schedules);
+});
+
+app.post('/api/schedules', async (req, res) => {
+  const { id, deviceId, onTime, offTime, days, enabled } = req.body;
+  try {
+    const data = {
+      deviceId: deviceId || null,
+      onTime: onTime || null,
+      offTime: offTime || null,
+      days: days || '1,2,3,4,5,6,0',
+      enabled: enabled !== false,
+    };
+    const schedule = id
+      ? await prisma.screenSchedule.update({ where: { id }, data })
+      : await prisma.screenSchedule.create({ data });
+    reloadCrons();
+    io.emit('screen_schedule'); // 앱이 기기 정보 재조회하여 스케줄 갱신
+    res.json(schedule);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.delete('/api/schedules/:id', async (req, res) => {
+  await prisma.screenSchedule.delete({ where: { id: req.params.id } });
+  reloadCrons();
+  io.emit('screen_schedule');
+  res.json({ ok: true });
+});
+
+// ── 화면 스케줄 cron 실행 ──────────────────────────────────────────────────
+
+const activeCrons = [];
+
+async function runScreenCommand(deviceId, on) {
+  const adbPath = process.env.ADB_PATH || 'adb';
+  const keycode = on ? '224' : '223';
+  const devices = deviceId
+    ? await prisma.device.findMany({ where: { id: deviceId, ip: { not: null } } })
+    : await prisma.device.findMany({ where: { ip: { not: null } } });
+
+  for (const device of devices) {
+    const target = `${device.ip}:5555`;
+    try {
+      await adbExec(adbPath, ['connect', target], { timeout: 8000 });
+      await adbExec(adbPath, ['-s', target, 'shell', 'input', 'keyevent', keycode]);
+      console.log(`[SCHED] 화면 ${on ? 'ON' : 'OFF'} → ${device.id} (${target})`);
+    } catch (e) {
+      console.warn(`[SCHED] ${device.id} 명령 실패: ${e.message}`);
+    }
+  }
+}
+
+async function reloadCrons() {
+  activeCrons.forEach(c => c.stop());
+  activeCrons.length = 0;
+
+  const schedules = await prisma.screenSchedule.findMany({ where: { enabled: true } });
+  for (const s of schedules) {
+    const dayList = s.days.split(',').map(Number);
+    const cronDays = dayList.join(',');
+
+    if (s.onTime) {
+      const [h, m] = s.onTime.split(':');
+      const job = cron.schedule(`${m} ${h} * * ${cronDays}`, () => runScreenCommand(s.deviceId, true), { timezone: 'Asia/Seoul' });
+      activeCrons.push(job);
+    }
+    if (s.offTime) {
+      const [h, m] = s.offTime.split(':');
+      const job = cron.schedule(`${m} ${h} * * ${cronDays}`, () => runScreenCommand(s.deviceId, false), { timezone: 'Asia/Seoul' });
+      activeCrons.push(job);
+    }
+  }
+  console.log(`[SCHED] ${activeCrons.length}개 cron 등록됨`);
+}
+
+// 서버 시작 시 스케줄 로드
+reloadCrons();
 
 // 서버 실행
 const HTTP_PORT = 3000;

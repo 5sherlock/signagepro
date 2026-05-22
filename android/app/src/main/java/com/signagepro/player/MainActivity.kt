@@ -1,6 +1,9 @@
 package com.signagepro.player
 
 import android.app.AlertDialog
+import android.app.admin.DevicePolicyManager
+import android.content.ComponentName
+import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.os.Build
@@ -293,10 +296,24 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    private fun requestDeviceAdminIfNeeded() {
+        val dpm = getSystemService(Context.DEVICE_POLICY_SERVICE) as DevicePolicyManager
+        val adminComponent = ComponentName(this, SignageDeviceAdmin::class.java)
+        if (!dpm.isAdminActive(adminComponent)) {
+            val intent = Intent(DevicePolicyManager.ACTION_ADD_DEVICE_ADMIN).apply {
+                putExtra(DevicePolicyManager.EXTRA_DEVICE_ADMIN, adminComponent)
+                putExtra(DevicePolicyManager.EXTRA_ADD_EXPLANATION,
+                    "화면 자동 켜기/끄기 스케줄 기능을 사용하려면 기기 관리자 권한이 필요합니다.")
+            }
+            startActivity(intent)
+        }
+    }
+
     private fun startKiosk() {
         binding.setupContainer.visibility = View.GONE
         binding.kioskContainer.visibility = View.VISIBLE
         applyImmersiveMode()
+        requestDeviceAdminIfNeeded()
 
         val renderer = MediaRenderer(this, binding.layerA, binding.layerB)
         coordinator = PlayerCoordinator(

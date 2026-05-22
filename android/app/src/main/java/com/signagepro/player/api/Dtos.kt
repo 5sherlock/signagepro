@@ -11,7 +11,18 @@ data class DeviceDto(
     val groupId: String?,
     val storeId: String?,
     val group: GroupDto?,
-    val store: StoreDto?
+    val store: StoreDto?,
+    val schedules: List<ScheduleDto> = emptyList()
+)
+
+@JsonClass(generateAdapter = true)
+data class ScheduleDto(
+    val id: String,
+    val deviceId: String?,
+    val onTime: String?,   // "09:00"
+    val offTime: String?,  // "22:00"
+    val days: String,      // "1,2,3,4,5,6,0" — 0=일,1=월...6=토
+    val enabled: Boolean
 )
 
 @JsonClass(generateAdapter = true)

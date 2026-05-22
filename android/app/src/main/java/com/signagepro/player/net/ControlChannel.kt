@@ -25,7 +25,9 @@ class ControlChannel(
      * 서버 재연결 시 호출 — 서버 다운 중 콘텐츠가 바뀌었을 수 있으므로
      * 재연결되면 최신 playlist를 즉시 재조회한다.
      */
-    private val onReconnected: () -> Unit = {}
+    private val onReconnected: () -> Unit = {},
+    /** 스케줄 변경 알림 — 기기 정보 재조회하여 최신 스케줄 적용 */
+    private val onScheduleChanged: () -> Unit = {}
 ) {
     private var socket: Socket? = null
     @Volatile private var wasConnected = false
@@ -81,6 +83,10 @@ class ControlChannel(
                         onUpdateApk(apkUrl)
                     }
                 }
+            }
+            on("screen_schedule") { _ ->
+                Log.i(TAG, "screen_schedule 이벤트 수신 → 스케줄 재조회")
+                onScheduleChanged()
             }
             connect()
         }
