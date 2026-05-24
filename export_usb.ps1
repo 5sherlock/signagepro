@@ -21,9 +21,10 @@ if ($status) {
         $Message = Read-Host "커밋 메시지"
         if (-not $Message) { $Message = "작업 저장 $(Get-Date -Format 'yyyy-MM-dd HH:mm')" }
     }
+    $branch = git rev-parse --abbrev-ref HEAD
     git commit -m $Message
-    git push
-    Write-Host "  [OK] Git push 완료" -ForegroundColor Green
+    git push origin $branch
+    Write-Host "  [OK] Git push 완료 (branch: $branch)" -ForegroundColor Green
 } else {
     Write-Host "  [--] 변경사항 없음, push 건너뜀" -ForegroundColor Yellow
 }
@@ -84,6 +85,9 @@ if (Test-Path "$ROOT\server\uploads") {
 Copy-Safe "$ROOT\android\app\signagepro.keystore"                          "$DEST\android\signagepro.keystore"
 Copy-Safe "$ROOT\android\app\build\outputs\apk\debug\app-debug.apk"       "$DEST\android\app-debug.apk"
 Copy-Safe "$ROOT\server\update\app.apk"                                    "$DEST\server\update\app.apk"
+
+# 새 PC 구축 스크립트 (signagepro_backup 폴더에 함께 복사)
+Copy-Safe "$ROOT\setup_from_usb.ps1" "$DEST\setup_from_usb.ps1"
 
 # SETUP.md
 $secret = ""
