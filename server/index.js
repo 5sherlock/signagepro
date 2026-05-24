@@ -150,6 +150,34 @@ const uploadApk = multer({
 const httpServer = http.createServer(app);
 const io = new Server(httpServer, { cors: { origin: '*' } });
 
+// --- Socket.io 웹 플레이어 연결 처리 ---
+io.on('connection', (socket) => {
+  socket.on('web_player_heartbeat', async (data) => {
+    const deviceId = typeof data === 'string' ? data : (data?.deviceId || '');
+    const name = typeof data === 'object' ? data?.name : null;
+    if (!deviceId) return;
+    socket.deviceId = deviceId;
+    try {
+      await prisma.device.upsert({
+        where: { id: deviceId },
+        update: { status: 'online', lastSeen: new Date(), ip: socket.handshake.address },
+        create: { id: deviceId, name: name || `Web-${deviceId}`, status: 'online', lastSeen: new Date(), ip: socket.handshake.address }
+      });
+      io.emit('device_status_update', { deviceId, status: 'online' });
+    } catch (e) {
+      console.error('[Socket] heartbeat DB 에러:', e);
+    }
+  });
+
+  socket.on('disconnect', () => {
+    if (socket.deviceId) {
+      prisma.device.update({ where: { id: socket.deviceId }, data: { status: 'offline' } })
+        .then(() => io.emit('device_status_update', { deviceId: socket.deviceId, status: 'offline' }))
+        .catch(() => {});
+    }
+  });
+});
+
 // --- REST API (대시보드 통신용) ---
 
 // 모든 사업장 조회
@@ -796,6 +824,7 @@ async function handleTcpMessage(socket, msg) {
   if (msg.startsWith('auth:')) {
     const [, deviceId, secret] = msg.split(':');
     if (secret !== DEVICE_SECRET) {
+      console.log(`[TCP] 인증 실패: deviceId="${deviceId}" secret="${secret}" expected="${DEVICE_SECRET}"`);
       socket.write('err:unauthorized\n');
       socket.destroy();
       return;

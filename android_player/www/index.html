@@ -1,0 +1,103 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <title>Signage Player</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div id="container">
+    <div id="loader" class="screen-center">
+      <h2>SignagePro Android Player</h2>
+      <p id="status-text">서버 연결 대기 중...</p>
+      <p>기기 고유 ID: <span id="device-id" style="color: #60a5fa; font-weight: bold;"></span></p>
+      <p>기기 이름: <span id="device-name-display" style="color: #10b981; font-weight: bold;">미지정</span></p>
+      <p style="font-size: 0.8rem; color: #888; margin-top: 20px;">
+        대시보드의 '미배정 기기' 목록에서 위 ID를 확인 후 구역에 할당해 주세요.
+      </p>
+    </div>
+    
+    <div id="media-layer-1" class="media-layer" style="z-index: 1;"></div>
+    <div id="media-layer-2" class="media-layer" style="z-index: 2;"></div>
+
+    <button id="settings-btn" style="position: absolute; bottom: 20px; right: 20px; z-index: 100; background: rgba(0,0,0,0.5); color: #fff; border: 1px solid #fff; padding: 10px; border-radius: 5px; cursor: pointer; font-size: 16px;">
+      ⚙️ 설정
+    </button>
+
+    <div id="settings-modal" style="display: none; position: absolute; top: 0; left: 0; right: 0; bottom: 0; z-index: 200; background: rgba(0,0,0,0.85); flex-direction: column; justify-content: center; align-items: center;">
+      <div style="background: #1a1a2e; border: 1px solid #334155; padding: 36px; border-radius: 14px; width: 460px; text-align: center; box-shadow: 0 20px 60px rgba(0,0,0,0.8);">
+        <h3 style="margin-top: 0; font-size: 1.3rem; color: #fff; margin-bottom: 24px;">⚙️ 기기 설정</h3>
+
+        <p style="font-size: 0.85rem; color: #94a3b8; margin-bottom: 6px; text-align: left;">📡 서버 IP 주소</p>
+        <input type="text" id="ip-input" style="width: 100%; box-sizing: border-box; padding: 12px; font-size: 15px; margin-bottom: 18px; text-align: left; border: 1px solid #334155; border-radius: 8px; background: #0f172a; color: #fff; outline: none;" placeholder="예: http://192.168.0.10:3000">
+
+        <p style="font-size: 0.85rem; color: #94a3b8; margin-bottom: 6px; text-align: left;">🏷️ 기기 고유 ID <span style="color: #f59e0b; font-size: 0.75rem;">(변경 시 새 기기로 등록됨)</span></p>
+        <input type="text" id="id-input" style="width: 100%; box-sizing: border-box; padding: 12px; font-size: 15px; margin-bottom: 18px; text-align: left; border: 1px solid #334155; border-radius: 8px; background: #0f172a; color: #60a5fa; outline: none; font-family: monospace;" placeholder="예: STORE-A-LOBBY-01">
+
+        <p style="font-size: 0.85rem; color: #94a3b8; margin-bottom: 6px; text-align: left;">📺 기기 이름</p>
+        <input type="text" id="name-input" style="width: 100%; box-sizing: border-box; padding: 12px; font-size: 15px; margin-bottom: 24px; text-align: left; border: 1px solid #334155; border-radius: 8px; background: #0f172a; color: #10b981; outline: none;" placeholder="예: 제주 로비 스크린">
+
+        <div style="display: flex; gap: 12px; justify-content: center;">
+          <button id="save-btn" style="flex: 1; padding: 12px; background: #3b82f6; color: #fff; border: none; border-radius: 8px; cursor: pointer; font-size: 15px; font-weight: 700;">저장 후 재시작</button>
+          <button id="cancel-btn" style="flex: 1; padding: 12px; background: #334155; color: #fff; border: none; border-radius: 8px; cursor: pointer; font-size: 15px;">취소</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    document.addEventListener('DOMContentLoaded', () => {
+      const settingsBtn = document.getElementById('settings-btn');
+      const settingsModal = document.getElementById('settings-modal');
+      const ipInput = document.getElementById('ip-input');
+      const idInput = document.getElementById('id-input');
+      const nameInput = document.getElementById('name-input');
+      const saveBtn = document.getElementById('save-btn');
+      const cancelBtn = document.getElementById('cancel-btn');
+
+      settingsBtn.addEventListener('click', () => {
+        // 현재 저장된 값 불러오기
+        ipInput.value = localStorage.getItem('server_url') || '';
+        idInput.value = localStorage.getItem('device_id') || '';
+        nameInput.value = localStorage.getItem('device_name') || '';
+        settingsModal.style.display = 'flex';
+        nameInput.focus();
+      });
+
+      cancelBtn.addEventListener('click', () => {
+        settingsModal.style.display = 'none';
+      });
+
+      saveBtn.addEventListener('click', () => {
+        // 서버 IP 저장
+        let input = ipInput.value.trim();
+        if (input) {
+          input = input.replace(/^https?:\/\//i, '');
+          if (!input.includes(':')) input = input + ':3000';
+          localStorage.setItem('server_url', 'http://' + input);
+        }
+
+        // 기기 고유 ID 저장 (값이 있을 때만)
+        const idVal = idInput.value.trim().toUpperCase().replace(/\s+/g, '-');
+        if (idVal) {
+          localStorage.setItem('device_id', idVal);
+        }
+
+        // 기기 이름 저장
+        const nameVal = nameInput.value.trim();
+        if (nameVal) {
+          localStorage.setItem('device_name', nameVal);
+        }
+
+        window.location.reload();
+      });
+    });
+  </script>
+
+  
+  <script src="lib/socket.io.js"></script>
+  <script src="lib/axios.min.js"></script>
+  <script src="renderer.js"></script>
+</body>
+</html>

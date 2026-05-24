@@ -366,6 +366,10 @@ function SettingsTab({ onUnauth }) {
   const [adbRunning, setAdbRunning] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState(0);
+  const [pushResults, setPushResults] = useState(null); // { deviceId, success, label }[]
+  // 기기 목록 + 선택
+  const [allDevices, setAllDevices] = useState([]);
+  const [selectedIds, setSelectedIds] = useState(new Set());
   const adbControllerRef = useRef(null);
   const apkInputRef = useRef(null);
 
@@ -378,7 +382,25 @@ function SettingsTab({ onUnauth }) {
       .then(setOtaStatus)
       .catch(e => { if (e.message !== '401') setOtaStatus({ available: false }); });
 
-  useEffect(() => { refreshStatus(); }, []);
+  const refreshDevices = () =>
+    apiFetch(`${SOCKET_URL}/api/devices`)
+      .then(r => r.json())
+      .then(devs => {
+        setAllDevices(devs);
+        // 처음 로드 시 온라인 기기만 자동 선택
+        setSelectedIds(prev => {
+          if (prev.size === 0) return new Set(devs.filter(d => d.status === 'online').map(d => d.id));
+          return prev;
+        });
+      })
+      .catch(() => {});
+
+  useEffect(() => {
+    refreshStatus();
+    refreshDevices();
+    const t = setInterval(refreshDevices, 10000);
+    return () => clearInterval(t);
+  }, []);
 
   const handleApkUpload = (e) => {
     const file = e.target.files?.[0];
@@ -413,43 +435,86 @@ function SettingsTab({ onUnauth }) {
     xhr.send(form);
   };
 
-  const pushUpdate = (deviceId = '') => {
-    if (!window.confirm(deviceId ? `${deviceId} 에 업데이트를 배포할까요?` : '전체 단말에 업데이트를 배포할까요?')) return;
+  // 선택된 기기 이름 목록
+  const selectedDevices = allDevices.filter(d => selectedIds.has(d.id));
+  const selectedLabel = selectedDevices.length === 0
+    ? '선택된 기기 없음'
+    : selectedDevices.length === allDevices.length
+      ? `전체 ${allDevices.length}대`
+      : `${selectedDevices.map(d => d.name).join(', ')} (${selectedDevices.length}대)`;
+
+  const toggleDevice = (id) =>
+    setSelectedIds(prev => { const s = new Set(prev); s.has(id) ? s.delete(id) : s.add(id); return s; });
+
+  const toggleAll = () =>
+    setSelectedIds(prev =>
+      prev.size === allDevices.length ? new Set() : new Set(allDevices.map(d => d.id))
+    );
+
+  const pushUpdate = async () => {
+    if (selectedIds.size === 0) { alert('배포할 기기를 선택하세요.'); return; }
+    if (!window.confirm(`${selectedLabel}에 OTA 업데이트를 배포할까요?`)) return;
     setPushing(true);
-    apiFetch(`${SOCKET_URL}/api/update/push`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ deviceId })
-    })
-      .then(check401)
-      .then(r => r.json())
-      .then(d => alert(d.success ? `배포 완료 → ${d.pushed}` : `실패: ${d.error}`))
-      .catch(e => { if (e.message !== '401') alert('오류: ' + e.message); })
-      .finally(() => setPushing(false));
+    setPushResults(null);
+    try {
+      const results = await Promise.all(
+        [...selectedIds].map(async (id) => {
+          const dev = allDevices.find(d => d.id === id);
+          try {
+            const r = await apiFetch(`${SOCKET_URL}/api/update/push`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ deviceId: id })
+            }).then(check401).then(r => r.json());
+            return { id, name: dev?.name || id, success: r.success };
+          } catch (e) {
+            if (e.message === '401') throw e;
+            return { id, name: dev?.name || id, success: false, error: e.message };
+          }
+        })
+      );
+      setPushResults(results);
+    } catch (e) {
+      if (e.message !== '401') alert('오류: ' + e.message);
+    } finally {
+      setPushing(false);
+    }
   };
 
-  const adbInstall = (deviceId = '') => {
-    if (!window.confirm(deviceId ? `${deviceId}에 ADB 직접 설치할까요?` : '전체 단말에 ADB 직접 설치할까요?')) return;
+  const adbInstall = async () => {
+    if (selectedIds.size === 0) { alert('설치할 기기를 선택하세요.'); return; }
+    if (!window.confirm(`${selectedLabel}에 ADB 직접 설치할까요?`)) return;
     adbControllerRef.current = new AbortController();
     setPushing(true);
     setAdbRunning(true);
-    apiFetch(`${SOCKET_URL}/api/update/adb-install`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ deviceId }),
-      signal: adbControllerRef.current.signal
-    })
-      .then(check401)
-      .then(r => r.json())
-      .then(d => {
-        if (d.results && d.results.length > 0) {
-          alert(d.results.map(r => `[${r.deviceId}] ${r.success ? '✅ 성공' : '❌ 실패'}\n${r.output || r.error || ''}`).join('\n\n'));
-        } else {
-          alert(d.error || '결과 없음');
-        }
-      })
-      .catch(e => { if (e.name !== 'AbortError' && e.message !== '401') alert('오류: ' + e.message); })
-      .finally(() => { setPushing(false); setAdbRunning(false); });
+    setPushResults(null);
+    try {
+      const results = await Promise.all(
+        [...selectedIds].map(async (id) => {
+          const dev = allDevices.find(d => d.id === id);
+          try {
+            const d = await apiFetch(`${SOCKET_URL}/api/update/adb-install`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ deviceId: id }),
+              signal: adbControllerRef.current.signal
+            }).then(check401).then(r => r.json());
+            const res = d.results?.[0];
+            return { id, name: dev?.name || id, success: res?.success ?? false, output: res?.output || res?.error || d.error };
+          } catch (e) {
+            if (e.name === 'AbortError') return null;
+            if (e.message === '401') throw e;
+            return { id, name: dev?.name || id, success: false, error: e.message };
+          }
+        })
+      );
+      setPushResults(results.filter(Boolean));
+    } catch (e) {
+      if (e.message !== '401') alert('오류: ' + e.message);
+    } finally {
+      setPushing(false);
+      setAdbRunning(false);
+    }
   };
 
   const cancelAdbInstall = () => {
@@ -457,6 +522,7 @@ function SettingsTab({ onUnauth }) {
     apiFetch(`${SOCKET_URL}/api/update/adb-cancel`, { method: 'POST' }).catch(() => {});
     setPushing(false);
     setAdbRunning(false);
+    setPushResults(null);
   };
 
   return (
@@ -550,21 +616,82 @@ function SettingsTab({ onUnauth }) {
           )}
         </div>
 
-        <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap' }}>
+        {/* 기기 선택 */}
+        <div style={{ marginBottom: '16px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '10px' }}>
+            <span style={{ fontSize: '0.9rem', fontWeight: 600 }}>📱 배포 대상 기기</span>
+            <button
+              style={{ fontSize: '0.78rem', padding: '3px 10px', background: 'rgba(255,255,255,0.07)', border: '1px solid rgba(255,255,255,0.12)', borderRadius: '6px', color: '#e2e8f0', cursor: 'pointer' }}
+              onClick={toggleAll}
+            >
+              {selectedIds.size === allDevices.length ? '전체 해제' : '전체 선택'}
+            </button>
+          </div>
+          {allDevices.length === 0 ? (
+            <p style={{ fontSize: '0.82rem', color: '#64748b', padding: '10px 0' }}>기기 없음</p>
+          ) : (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+              {allDevices.map(dev => {
+                const isOnline = dev.status === 'online';
+                const checked = selectedIds.has(dev.id);
+                const result = pushResults?.find(r => r.id === dev.id);
+                return (
+                  <label
+                    key={dev.id}
+                    style={{
+                      display: 'flex', alignItems: 'center', gap: '10px',
+                      padding: '9px 12px', borderRadius: '8px', cursor: 'pointer',
+                      background: checked ? 'rgba(249,115,22,0.08)' : 'rgba(255,255,255,0.03)',
+                      border: `1px solid ${checked ? 'rgba(249,115,22,0.35)' : 'rgba(255,255,255,0.07)'}`,
+                      transition: 'all 0.15s'
+                    }}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={checked}
+                      onChange={() => toggleDevice(dev.id)}
+                      style={{ width: '15px', height: '15px', accentColor: '#F97316', cursor: 'pointer' }}
+                    />
+                    <span style={{ width: '8px', height: '8px', borderRadius: '50%', background: isOnline ? '#10B981' : '#475569', flexShrink: 0 }} />
+                    <span style={{ flex: 1, fontSize: '0.88rem', color: isOnline ? '#e2e8f0' : '#94a3b8' }}>
+                      {dev.name}
+                    </span>
+                    {dev.appVersion && (
+                      <span style={{ fontSize: '0.75rem', color: '#64748b', fontFamily: 'monospace' }}>
+                        v{dev.appVersion}
+                      </span>
+                    )}
+                    <span style={{ fontSize: '0.75rem', color: isOnline ? '#10B981' : '#475569' }}>
+                      {isOnline ? '온라인' : '오프라인'}
+                    </span>
+                    {result && (
+                      <span style={{ fontSize: '0.75rem', color: result.success ? '#10B981' : '#EF4444', fontWeight: 600 }}>
+                        {result.success ? '✅ 전송됨' : '❌ 실패'}
+                      </span>
+                    )}
+                  </label>
+                );
+              })}
+            </div>
+          )}
+        </div>
+
+        {/* 배포 버튼 */}
+        <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap', alignItems: 'center' }}>
           <button
             className="btn btn-primary"
-            disabled={pushing || !otaStatus?.available}
-            onClick={() => pushUpdate('')}
+            disabled={pushing || !otaStatus?.available || selectedIds.size === 0}
+            onClick={pushUpdate}
           >
-            {pushing && !adbRunning ? '배포 중…' : '🚀 OTA 푸시 (확인 필요할 수 있음)'}
+            {pushing && !adbRunning ? '배포 중…' : `🚀 OTA 푸시 (${selectedIds.size}대)`}
           </button>
           <button
             className="btn btn-primary"
             style={{ background: '#10B981' }}
-            disabled={pushing || !otaStatus?.available}
-            onClick={() => adbInstall('')}
+            disabled={pushing || !otaStatus?.available || selectedIds.size === 0}
+            onClick={adbInstall}
           >
-            {adbRunning ? '설치 중…' : '⚡ ADB 직접 설치 (확인 없음)'}
+            {adbRunning ? '설치 중…' : `⚡ ADB 설치 (${selectedIds.size}대)`}
           </button>
           {adbRunning && (
             <button
@@ -816,6 +943,17 @@ function App() {
   const [adbRunning, setAdbRunning] = useState(false);
   const [serverOnline, setServerOnline] = useState(null); // null=확인중, true=연결, false=끊김
   const [allSchedules, setAllSchedules] = useState([]);
+  // 기기 표시 순서 (그룹별 device id 배열, localStorage 영속)
+  const [deviceOrder, setDeviceOrderState] = useState(() => {
+    try { return JSON.parse(localStorage.getItem('SIGNAGE_DEVICE_ORDER') || '{}'); } catch { return {}; }
+  });
+  const setDeviceOrder = (updater) => {
+    setDeviceOrderState(prev => {
+      const next = typeof updater === 'function' ? updater(prev) : updater;
+      localStorage.setItem('SIGNAGE_DEVICE_ORDER', JSON.stringify(next));
+      return next;
+    });
+  };
 
   const onUnauth = useCallback(() => {
     localStorage.removeItem('SIGNAGE_TOKEN');
@@ -939,12 +1077,22 @@ function App() {
     return () => socket.disconnect();
   }, []);
 
-  const filteredDevices = devices.filter(d => {
-    if (!d.groupId) return false;
-    if (selectedStoreId === 'all') return true;
-    if (selectedStoreId === 'unassigned') return !d.storeId;
-    return d.storeId === selectedStoreId;
-  });
+  const filteredDevices = (() => {
+    const base = devices.filter(d => {
+      if (!d.groupId) return false;
+      if (selectedStoreId === 'all') return true;
+      if (selectedStoreId === 'unassigned') return !d.storeId;
+      return d.storeId === selectedStoreId;
+    });
+    // 그룹별 저장된 순서 적용
+    const orderMap = deviceOrder; // { [groupId]: [id, id, ...] }
+    const orderedIds = Object.values(orderMap).flat();
+    if (orderedIds.length === 0) return base;
+    return [
+      ...orderedIds.map(id => base.find(d => d.id === id)).filter(Boolean),
+      ...base.filter(d => !orderedIds.includes(d.id)),
+    ];
+  })();
 
   if (!authed) return <LoginScreen onLogin={() => setAuthed(true)} />;
 
@@ -1267,6 +1415,8 @@ function App() {
               fetchGroups={fetchGroups}
               selectedStoreId={selectedStoreId}
               setSelectedStoreId={setSelectedStoreId}
+              deviceOrder={deviceOrder}
+              onDeviceOrderChange={setDeviceOrder}
             />
           </div>
         )}

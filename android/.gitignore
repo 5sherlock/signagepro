@@ -10,3 +10,7 @@
 local.properties
 **/build/
 **/.gradle/
+
+# 서명 키 — 서버에만 보관, git에 올리지 않음
+*.keystore
+*.jks

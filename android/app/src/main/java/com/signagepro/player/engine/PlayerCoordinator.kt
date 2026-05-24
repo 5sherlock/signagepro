@@ -179,6 +179,7 @@ class PlayerCoordinator(
                 prefetchAll(serverUrl, playlist)
                 engine?.setPlaylist(playlist.medias)
                 if (loopJob == null || loopJob?.isActive != true) startLoop()
+                onStatus("")   // 재생 시작 → 상태 문구 제거
             }
         }
     }

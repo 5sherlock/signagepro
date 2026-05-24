@@ -1,0 +1,115 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>Signage Player</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div id="container">
+    <div id="loader" class="screen-center">
+      <h2>SignagePro Player</h2>
+      <p id="status-text">서버 연결 대기 중...</p>
+      <p>기기 고유 ID: <span id="device-id" style="color: #60a5fa; font-weight: bold;"></span></p>
+      <p>기기 이름: <span id="device-name-display" style="color: #10b981; font-weight: bold;">미지정</span></p>
+      <p style="font-size: 0.8rem; color: #888; margin-top: 20px;">
+        대시보드의 '미배정 기기' 목록에서 위 ID를 확인 후 구역에 할당해 주세요.
+      </p>
+    </div>
+    
+    <!-- 미디어 플레이어 레이어 (Crossfade 효과를 위한 2중 레이어) -->
+    <div id="media-layer-1" class="media-layer" style="z-index: 1;"></div>
+    <div id="media-layer-2" class="media-layer" style="z-index: 2;"></div>
+
+    <!-- 설정 버튼 -->
+    <button id="settings-btn" style="position: absolute; bottom: 20px; right: 20px; z-index: 100; background: rgba(0,0,0,0.5); color: #fff; border: 1px solid #fff; padding: 10px; border-radius: 5px; cursor: pointer; font-size: 16px;">
+      ⚙️ 설정
+    </button>
+
+    <!-- 설정 모달 -->
+    <div id="settings-modal" style="display: none; position: absolute; top: 0; left: 0; right: 0; bottom: 0; z-index: 200; background: rgba(0,0,0,0.8); flex-direction: column; justify-content: center; align-items: center;">
+      <div style="background: #222; padding: 30px; border-radius: 10px; width: 400px; text-align: center;">
+        <h3 style="margin-top: 0;">서버 연결 설정</h3>
+        <p style="font-size: 0.9rem; color: #aaa; margin-bottom: 8px;">대시보드 서버의 IP 주소를 입력하세요.</p>
+        <input type="text" id="ip-input" style="width: 80%; padding: 10px; font-size: 16px; margin-bottom: 20px; text-align: center; border: 1px solid #555; background: #000; color: #fff;" placeholder="예: 192.168.0.10">
+        
+        <p style="font-size: 0.9rem; color: #aaa; margin-bottom: 8px; margin-top: 10px;">기기 이름 (예: 제주 로비 스크린)</p>
+        <input type="text" id="name-input" style="width: 80%; padding: 10px; font-size: 16px; margin-bottom: 20px; text-align: center; border: 1px solid #555; background: #000; color: #fff;" placeholder="예: Lobby Screen">
+        
+        <div style="display: flex; gap: 10px; justify-content: center;">
+          <button id="save-btn" style="padding: 10px 20px; background: #3b82f6; color: #fff; border: none; border-radius: 5px; cursor: pointer;">저장 후 재시작</button>
+          <button id="cancel-btn" style="padding: 10px 20px; background: #555; color: #fff; border: none; border-radius: 5px; cursor: pointer;">취소</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    // ⚙️ 설정 모달 이벤트 리스너는 메인 스크립트 에러와 상관없이 언제나 작동하도록 인라인으로 즉시 등록합니다.
+    document.addEventListener('DOMContentLoaded', () => {
+      const settingsBtn = document.getElementById('settings-btn');
+      const settingsModal = document.getElementById('settings-modal');
+      const ipInput = document.getElementById('ip-input');
+      const nameInput = document.getElementById('name-input');
+      const saveBtn = document.getElementById('save-btn');
+      const cancelBtn = document.getElementById('cancel-btn');
+
+      let savedIp = '127.0.0.1';
+      let savedName = '';
+      try {
+        if (typeof require !== 'undefined') {
+          const { ipcRenderer } = require('electron');
+          ipcRenderer.invoke('get-server-host').then(ip => {
+            savedIp = ip;
+            ipInput.value = ip;
+          }).catch(() => {});
+          ipcRenderer.invoke('get-device-name').then(name => {
+            savedName = name;
+            nameInput.value = name;
+          }).catch(() => {});
+        } else {
+          savedIp = localStorage.getItem('server_url') || '127.0.0.1';
+          savedName = localStorage.getItem('device_name') || '';
+        }
+      } catch (e) {
+        savedIp = localStorage.getItem('server_url') || '127.0.0.1';
+        savedName = localStorage.getItem('device_name') || '';
+      }
+
+      settingsBtn.addEventListener('click', () => {
+        ipInput.value = savedIp;
+        nameInput.value = savedName;
+        settingsModal.style.display = 'flex';
+        ipInput.focus();
+      });
+
+      cancelBtn.addEventListener('click', () => {
+        settingsModal.style.display = 'none';
+      });
+
+      saveBtn.addEventListener('click', async () => {
+        const newIp = ipInput.value.trim();
+        const newName = nameInput.value.trim();
+        if (newIp) {
+          try {
+            if (typeof require !== 'undefined') {
+              const { ipcRenderer } = require('electron');
+              await ipcRenderer.invoke('save-device-config', newIp, newName);
+            } else {
+              localStorage.setItem('server_url', newIp);
+              localStorage.setItem('device_name', newName);
+              window.location.reload();
+            }
+          } catch (e) {
+            localStorage.setItem('server_url', newIp);
+            localStorage.setItem('device_name', newName);
+            window.location.reload();
+          }
+        }
+      });
+    });
+  </script>
+  
+  <script src="renderer.js"></script>
+</body>
+</html>

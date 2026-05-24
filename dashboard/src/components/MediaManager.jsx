@@ -1,6 +1,21 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { SOCKET_URL, apiFetch } from '../config';
 import {
+  DndContext,
+  closestCenter,
+  PointerSensor,
+  useSensor,
+  useSensors,
+  DragOverlay,
+} from '@dnd-kit/core';
+import {
+  SortableContext,
+  verticalListSortingStrategy,
+  useSortable,
+  arrayMove,
+} from '@dnd-kit/sortable';
+import { CSS } from '@dnd-kit/utilities';
+import {
   Plus,
   Trash2,
   Upload,
@@ -17,7 +32,8 @@ import {
   ArrowLeft,
   ArrowRight,
   ArrowUp,
-  ArrowDown
+  ArrowDown,
+  GripVertical
 } from 'lucide-react';
 import './PreviewModal.css';
 import './MediaManager.css';
@@ -517,6 +533,9 @@ const MediaItemV4 = ({ item, onRemove, onChange }) => {
   const { media, duration = 10 } = item;
   return (
     <div className="media-card-v4">
+      <div className="media-card-grip" title="드래그하여 순서 변경">
+        <GripVertical size={14} color="#475569" />
+      </div>
       <div className="media-card-thumb">
         <MediaThumb path={media?.path} style={{ width: '100%', height: '100%' }} />
         <button className="media-card-del" onClick={onRemove} title="삭제">
@@ -568,24 +587,47 @@ const TransitionBridgeV4 = ({ item, isLoop, onChange, onPreview }) => {
   );
 };
 
-// ── [V4] 기기 고정형 행 ──────────────────────────────────────
-const DeviceRowV4 = ({ device, items, isDirty, onDrop, onRemoveItem, onChangeItem, onDeleteDevice, onPreview, onTransitionPreview }) => {
+// ── [V4] 기기 고정형 행 (dnd-kit sortable) ───────────────────
+const DeviceRowV4 = ({ device, items, isDirty, onDrop, onRemoveItem, onChangeItem, onDeleteDevice, onPreview, onTransitionPreview, onReorder }) => {
   const [dragOver, setDragOver] = useState(false);
+  const [reorderDragIdx, setReorderDragIdx] = useState(null);
+  const [reorderOverIdx, setReorderOverIdx] = useState(null);
+
+  const isReorderDrag = (e) => e.dataTransfer.types.includes('timeline-index');
+
+  const {
+    attributes,
+    listeners,
+    setNodeRef,
+    transform,
+    transition,
+    isDragging,
+  } = useSortable({ id: device.id });
+
+  const style = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+    opacity: isDragging ? 0.4 : 1,
+  };
+
   return (
-    <div className="device-row-v4">
+    <div ref={setNodeRef} style={style} className="device-row-v4">
       <div className={`device-card-v4 ${items.length > 0 ? 'has-media' : ''}`}>
-        <Trash2 
-          size={14} 
+        <Trash2
+          size={14}
           className="device-card-del-icon"
           onClick={() => onDeleteDevice(device.id, device.name)}
         />
+        {/* 드래그 핸들 — 좌상단 고정 */}
+        <div className="row-drag-handle" {...attributes} {...listeners} title="드래그하여 순서 변경">
+          <GripVertical size={15} />
+        </div>
         <div className="device-card-header">
           <span className={`device-dot ${device.status === 'online' ? 'online' : 'offline'}`} />
           <span className="device-name">{device.name}</span>
         </div>
         {isDirty && <div className="device-card-pending">(배포 대기)</div>}
-        
-        {/* 중간 여백을 채워 버튼을 아래로 밀어냄 */}
+
         <div style={{ flex: 1, minHeight: '20px' }}></div>
 
         {items.length > 0 && (
@@ -598,22 +640,73 @@ const DeviceRowV4 = ({ device, items, isDirty, onDrop, onRemoveItem, onChangeIte
 
       <div
         className={`device-timeline-v4 ${dragOver ? 'drag-over' : ''}`}
-        onDragOver={e => { e.preventDefault(); setDragOver(true); }}
+        onDragOver={e => {
+          // 행 재정렬 드래그는 여기서 수락하지 않음 → 부모 wrapper가 처리
+          if (e.dataTransfer.types.includes('device-row-id')) return;
+          e.preventDefault();
+          if (!isReorderDrag(e)) setDragOver(true);
+        }}
         onDragLeave={() => setDragOver(false)}
         onDrop={e => {
+          if (e.dataTransfer.types.includes('device-row-id')) return;
           e.preventDefault();
           setDragOver(false);
-          const mediaJson = e.dataTransfer.getData('application/json');
-          if (mediaJson) onDrop(JSON.parse(mediaJson));
+          if (!isReorderDrag(e)) {
+            const mediaJson = e.dataTransfer.getData('application/json');
+            if (mediaJson) onDrop(JSON.parse(mediaJson));
+          }
+          setReorderDragIdx(null);
+          setReorderOverIdx(null);
         }}
       >
         {items.length === 0 && <div className="timeline-empty">미디어를 드래그하여 추가하세요</div>}
         {items.map((item, idx) => {
           const isLast = idx === items.length - 1;
           const nextItem = items.length > 1 ? items[(idx + 1) % items.length] : null;
+          const isDraggedOver = reorderOverIdx === idx && reorderDragIdx !== idx;
+          const isDragging = reorderDragIdx === idx;
+
           return (
             <React.Fragment key={item._key || idx}>
-              <MediaItemV4 item={item} onRemove={() => onRemoveItem(idx)} onChange={upd => onChangeItem(idx, upd)} />
+              <div
+                draggable
+                className={`reorder-item-wrapper${isDragging ? ' reorder-dragging' : ''}${isDraggedOver ? ' reorder-over' : ''}`}
+                onDragStart={e => {
+                  e.dataTransfer.setData('timeline-index', String(idx));
+                  e.dataTransfer.effectAllowed = 'move';
+                  setReorderDragIdx(idx);
+                }}
+                onDragEnd={() => {
+                  setReorderDragIdx(null);
+                  setReorderOverIdx(null);
+                }}
+                onDragOver={e => {
+                  // 행 재정렬 드래그는 무시 → 부모 wrapper가 처리
+                  if (e.dataTransfer.types.includes('device-row-id')) return;
+                  e.preventDefault();
+                  e.stopPropagation();
+                  if (isReorderDrag(e) && reorderDragIdx !== idx) {
+                    setReorderOverIdx(idx);
+                    setDragOver(false);
+                  }
+                }}
+                onDragLeave={e => {
+                  e.stopPropagation();
+                  if (reorderOverIdx === idx) setReorderOverIdx(null);
+                }}
+                onDrop={e => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  const fromIdx = Number(e.dataTransfer.getData('timeline-index'));
+                  if (!isNaN(fromIdx) && fromIdx !== idx) {
+                    onReorder(fromIdx, idx);
+                  }
+                  setReorderDragIdx(null);
+                  setReorderOverIdx(null);
+                }}
+              >
+                <MediaItemV4 item={item} onRemove={() => onRemoveItem(idx)} onChange={upd => onChangeItem(idx, upd)} />
+              </div>
               {(nextItem || (isLast && items.length > 0)) && (
                 <TransitionBridgeV4
                   item={item}
@@ -631,7 +724,7 @@ const DeviceRowV4 = ({ device, items, isDirty, onDrop, onRemoveItem, onChangeIte
 };
 
 // ── 메인 MediaManager ─────────────────────────────────────
-const MediaManager = ({ stores = [], groups = [], devices = [], selectedStoreId, setSelectedStoreId, fetchDevices }) => {
+const MediaManager = ({ stores = [], groups = [], devices = [], selectedStoreId, setSelectedStoreId, fetchDevices, deviceOrder = {}, onDeviceOrderChange }) => {
   const [mediaList, setMediaList] = useState([]);
   const [selectedGroupId, setSelectedGroupId] = useState('');
   const [lanes, setLanes] = useState({});
@@ -642,7 +735,16 @@ const MediaManager = ({ stores = [], groups = [], devices = [], selectedStoreId,
   const fileRef = useRef();
 
   const storeGroups = groups.filter(g => g.storeId === selectedStoreId);
-  const groupDevices = devices.filter(d => d.groupId === selectedGroupId);
+  const rawGroupDevices = devices.filter(d => d.groupId === selectedGroupId);
+
+  // 그룹별 저장된 순서 적용
+  const groupOrder = deviceOrder[selectedGroupId] || [];
+  const groupDevices = groupOrder.length > 0
+    ? [
+        ...groupOrder.map(id => rawGroupDevices.find(d => d.id === id)).filter(Boolean),
+        ...rawGroupDevices.filter(d => !groupOrder.includes(d.id)),
+      ]
+    : rawGroupDevices;
 
   useEffect(() => {
     setSelectedGroupId('');
@@ -712,6 +814,18 @@ const MediaManager = ({ stores = [], groups = [], devices = [], selectedStoreId,
     setLanes(prev => {
       const updated = { ...prev };
       const l = [...(updated[deviceId] || [])]; if (l[idx]) l[idx] = { ...l[idx], ...updates }; updated[deviceId] = l;
+      return updated;
+    });
+  };
+
+  const handleReorder = (deviceId, fromIdx, toIdx) => {
+    if (fromIdx === toIdx) return;
+    setLanes(prev => {
+      const updated = { ...prev };
+      const l = [...(updated[deviceId] || [])];
+      const [removed] = l.splice(fromIdx, 1);
+      l.splice(toIdx, 0, removed);
+      updated[deviceId] = l;
       return updated;
     });
   };
@@ -823,27 +937,43 @@ const MediaManager = ({ stores = [], groups = [], devices = [], selectedStoreId,
             <span className="mm-timeline-title">재생목록 타임라인</span>
           </div>
 
-          <div className="mm-lanes">
-            {groupDevices.map(device => (
-              <DeviceRowV4
-                key={device.id}
-                device={device}
-                items={lanes[device.id] || []}
-                isDirty={JSON.stringify(lanes[device.id] || []) !== JSON.stringify(savedState[device.id] || [])}
-                onDrop={media => handleDrop(device.id, media)}
-                onRemoveItem={idx => handleRemoveItem(device.id, idx)}
-                onChangeItem={(idx, upd) => handleChangeItem(device.id, idx, upd)}
-                onDeleteDevice={handleDeleteDevice}
-                onPreview={() => setPreviewData({ items: lanes[device.id] || [], deviceName: device.name })}
-                onTransitionPreview={(item, next, idx) => setTransPreview({ 
-                  currentItem: item, 
-                  nextItem: next, 
-                  laneIdx: device.id, 
-                  itemIdx: idx 
-                })}
-              />
-            ))}
-          </div>
+          <DndContext
+            sensors={useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 8 } }))}
+            collisionDetection={closestCenter}
+            onDragEnd={({ active, over }) => {
+              if (!over || active.id === over.id) return;
+              const oldOrder = groupDevices.map(d => d.id);
+              const oldIdx = oldOrder.indexOf(active.id);
+              const newIdx = oldOrder.indexOf(over.id);
+              const newOrder = arrayMove(oldOrder, oldIdx, newIdx);
+              onDeviceOrderChange?.(prev => ({ ...prev, [selectedGroupId]: newOrder }));
+            }}
+          >
+            <SortableContext items={groupDevices.map(d => d.id)} strategy={verticalListSortingStrategy}>
+              <div className="mm-lanes">
+                {groupDevices.map(device => (
+                  <DeviceRowV4
+                    key={device.id}
+                    device={device}
+                    items={lanes[device.id] || []}
+                    isDirty={JSON.stringify(lanes[device.id] || []) !== JSON.stringify(savedState[device.id] || [])}
+                    onDrop={media => handleDrop(device.id, media)}
+                    onRemoveItem={idx => handleRemoveItem(device.id, idx)}
+                    onChangeItem={(idx, upd) => handleChangeItem(device.id, idx, upd)}
+                    onDeleteDevice={handleDeleteDevice}
+                    onReorder={(fromIdx, toIdx) => handleReorder(device.id, fromIdx, toIdx)}
+                    onPreview={() => setPreviewData({ items: lanes[device.id] || [], deviceName: device.name })}
+                    onTransitionPreview={(item, next, idx) => setTransPreview({
+                      currentItem: item,
+                      nextItem: next,
+                      laneIdx: device.id,
+                      itemIdx: idx
+                    })}
+                  />
+                ))}
+              </div>
+            </SortableContext>
+          </DndContext>
         </div>
       </div>
 

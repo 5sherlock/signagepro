@@ -2,7 +2,21 @@
   "permissions": {
     "allow": [
       "Bash(Get-ChildItem -Path \"c:\\\\WorkSpace\\\\signagepro\" -Recurse -Depth 2)",
-      "Bash(Select-Object FullName)"
+      "Bash(Select-Object FullName)",
+      "Bash(git checkout *)",
+      "PowerShell(\"\" | powershell.exe -File \"C:\\\\WorkSpace\\\\signagepro\\\\server\\\\setup.ps1\" 2>&1)",
+      "PowerShell(node --version)",
+      "PowerShell(npm --version)",
+      "PowerShell(Set-Location \"C:\\\\WorkSpace\\\\signagepro\\\\server\"; node -e \"const {PrismaClient}=require\\('@prisma/client'\\);const p=new PrismaClient\\(\\);Promise.all\\([p.store.count\\(\\),p.group.count\\(\\),p.device.count\\(\\),p.media.count\\(\\)]\\).then\\(\\([s,g,d,m]\\)=>console.log\\('stores:'+s+' groups:'+g+' devices:'+d+' media:'+m\\)\\).finally\\(\\(\\)=>p.$disconnect\\(\\)\\)\")",
+      "Skill(update-config)",
+      "Skill(update-config:*)",
+      "PowerShell(cd C:\\\\WorkSpace\\\\signagepro\\\\dashboard; Start-Process powershell -ArgumentList \"-NoExit\", \"-Command\", \"cd C:\\\\WorkSpace\\\\signagepro\\\\dashboard; npm run dev\" -WindowStyle Normal)",
+      "PowerShell(Start-Process \"http://localhost:5173\")",
+      "PowerShell(cd C:\\\\WorkSpace\\\\signagepro\\\\server; for \\($i = 1; $i -le 12; $i++\\) { $result = node -e \"const { PrismaClient } = require\\('./node_modules/@prisma/client'\\); const prisma = new PrismaClient\\(\\); prisma.device.findMany\\({ orderBy: { lastSeen: 'desc' } }\\).then\\(devices => { devices.forEach\\(d => { const ago = d.lastSeen ? Math.round\\(\\(Date.now\\(\\) - new Date\\(d.lastSeen\\)\\)/1000\\) : null; console.log\\(d.name + ' | ' + d.status + ' | ' + ago + '초 전'\\); }\\); }\\);\"; Write-Host \"[$i/12] $\\(Get-Date -Format 'HH:mm:ss'\\) — $result\"; Start-Sleep -Seconds 5 })",
+      "PowerShell(Get-Process -Name node | Where-Object { $_.Id -eq 28072 } | Select-Object Id, CPU)",
+      "Bash(node -e ' *)",
+      "PowerShell(Get-ChildItem \"$env:USERPROFILE\\\\.gradle\\\\wrapper\\\\dists\" -Recurse -Filter \"gradle-wrapper.jar\" -ErrorAction SilentlyContinue | Select-Object -First 3 FullName)",
+      "PowerShell($adb = \"$env:LOCALAPPDATA\\\\Android\\\\Sdk\\\\platform-tools\\\\adb.exe\"; & $adb devices)"
     ]
   }
 }

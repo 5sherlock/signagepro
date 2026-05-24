@@ -1,0 +1,18 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "if": "Bash(git pull*)",
+            "command": "powershell.exe -File \"C:\\WorkSpace\\signagepro\\backup_db.ps1\"",
+            "timeout": 60,
+            "statusMessage": "DB를 USB에 백업 중..."
+          }
+        ]
+      }
+    ]
+  }
+}
