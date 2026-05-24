@@ -86,8 +86,9 @@ Copy-Safe "$ROOT\android\app\signagepro.keystore"                          "$DES
 Copy-Safe "$ROOT\android\app\build\outputs\apk\debug\app-debug.apk"       "$DEST\android\app-debug.apk"
 Copy-Safe "$ROOT\server\update\app.apk"                                    "$DEST\server\update\app.apk"
 
-# 새 PC 구축 스크립트 (signagepro_backup 폴더에 함께 복사)
+# 새 PC 구축 스크립트 (더블클릭용 .bat 포함)
 Copy-Safe "$ROOT\setup_from_usb.ps1" "$DEST\setup_from_usb.ps1"
+Copy-Safe "$ROOT\setup_from_usb.bat" "$DEST\setup_from_usb.bat"
 
 # SETUP.md
 $secret = ""
