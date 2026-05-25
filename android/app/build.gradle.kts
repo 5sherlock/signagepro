@@ -1,3 +1,6 @@
+import java.util.Date
+import java.text.SimpleDateFormat
+
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
@@ -13,6 +16,10 @@ android {
         targetSdk = 34             // 동일 디바이스에서 targetSdk 36도 설치 확인됨
         versionCode = 1
         versionName = "0.1.0"
+
+        // 빌드 날짜를 BuildConfig에 자동 삽입 (관제 화면 버전 표시용)
+        val buildDate = SimpleDateFormat("yyyy-MM-dd HH:mm").format(Date())
+        buildConfigField("String", "BUILD_DATE", "\"$buildDate\"")
 
         // RK3229 = ARMv7 32bit. 다른 ABI 빌드 생략으로 APK 크기·복잡도 감소
         ndk {
@@ -37,6 +44,10 @@ android {
             enableV2Signing = false
             enableV3Signing = false
         }
+    }
+
+    buildFeatures {
+        buildConfig = true
     }
 
     buildTypes {

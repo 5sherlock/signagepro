@@ -10,6 +10,8 @@ import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import java.io.IOException
 import java.net.InetSocketAddress
 import java.net.Socket
@@ -18,11 +20,12 @@ import java.net.Socket
  * 서버 TCP 10080에 연결하여 인증 → 주기적 하트비트 전송.
  * 끊기면 지수 백오프로 재연결 (1s → 60s).
  *
- * 프로토콜 (server/index.js와 동일):
+ * 프로토콜:
  *   1. 클라이언트 → auth:<deviceId>:<secret>\n
  *   2. 서버    → auth:ok\n
- *   3. 클라이언트 → status:<deviceId>/cpu:<n>/mem:<n>\n  (주기)
+ *   3. 클라이언트 → status:<deviceId>/cpu:<n>/mem:<n>/ver:<v>/vol:<n>\n  (10초)
  *   4. 서버    → ok:\n
+ *   5. 클라이언트 → vu:<deviceId>/<level>\n  (300ms, ack 없음)
  */
 class HeartbeatService(
     private val serverHost: String,
@@ -32,7 +35,13 @@ class HeartbeatService(
     private val metrics: SystemMetrics,
     private val appVersion: String = "unknown",
     private val intervalMs: Long = 10_000L,
-    private val connectTimeoutMs: Int = 5_000
+    private val connectTimeoutMs: Int = 5_000,
+    /** 다운로드 진행 중이면 "cur/total/pct" 반환, 아니면 null */
+    private val dlStatusProvider: (() -> String?)? = null,
+    /** 현재 볼륨 레벨 (0~15) 반환 */
+    private val volumeProvider: (() -> Int?)? = null,
+    /** 실제 오디오 출력 레벨 (0~100) — Visualizer 측정값 */
+    private val vuProvider: (() -> Int)? = null
 ) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var job: Job? = null
@@ -75,14 +84,41 @@ class HeartbeatService(
             if (authResp != "auth:ok") throw IOException("인증 실패: $authResp")
             Log.i(TAG, "TCP 인증 성공")
 
-            // 2. 하트비트 루프
-            while (currentCoroutineContext().isActive) {
-                val cpu = "%.1f".format(metrics.cpuUsage())
-                val mem = "%.1f".format(metrics.memUsage())
-                out.write("status:$deviceId/cpu:$cpu/mem:$mem/ver:$appVersion\n"); out.flush()
-                val ack = input.readLine() ?: throw IOException("EOF on heartbeat")
-                if (!ack.startsWith("ok")) throw IOException("ACK 오류: $ack")
-                delay(intervalMs)
+            // 소켓 쓰기 뮤텍스 — 하트비트 루프 + VU 루프 동시 쓰기 방지
+            val writeMutex = Mutex()
+
+            // 2. VU 빠른 전송 루프 (300ms, ack 없음)
+            val vuJob = if (vuProvider != null) {
+                scope.launch {
+                    while (currentCoroutineContext().isActive) {
+                        val level = vuProvider.invoke()
+                        writeMutex.withLock {
+                            out.write("vu:$deviceId/$level\n")
+                            out.flush()
+                        }
+                        delay(300L)
+                    }
+                }
+            } else null
+
+            try {
+                // 3. 하트비트 루프 (10초, ack 필요)
+                while (currentCoroutineContext().isActive) {
+                    val cpu = "%.1f".format(metrics.cpuUsage())
+                    val mem = "%.1f".format(metrics.memUsage())
+                    val dlPart = dlStatusProvider?.invoke()?.let { "/dl:$it" } ?: ""
+                    val volPart = volumeProvider?.invoke()?.let { "/vol:$it" } ?: ""
+                    val timePart = "/time:${System.currentTimeMillis()}"
+                    writeMutex.withLock {
+                        out.write("status:$deviceId/cpu:$cpu/mem:$mem/ver:$appVersion$dlPart$volPart$timePart\n")
+                        out.flush()
+                    }
+                    val ack = input.readLine() ?: throw IOException("EOF on heartbeat")
+                    if (!ack.startsWith("ok")) throw IOException("ACK 오류: $ack")
+                    delay(intervalMs)
+                }
+            } finally {
+                vuJob?.cancel()
             }
         }
     }

@@ -48,7 +48,8 @@ class ScreenScheduleManager(private val context: Context) {
     }
 
     private fun checkAndExecute() {
-        val cal = Calendar.getInstance()
+        // 스케줄 시각은 KST(한국 표준시) 기준 — 기기 시스템 시간대와 무관하게 항상 Asia/Seoul 사용
+        val cal = Calendar.getInstance(java.util.TimeZone.getTimeZone("Asia/Seoul"))
         val hour = cal.get(Calendar.HOUR_OF_DAY)
         val minute = cal.get(Calendar.MINUTE)
         // Calendar: SUNDAY=1 → 0, MONDAY=2 → 1 ... SATURDAY=7 → 6

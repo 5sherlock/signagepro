@@ -1,0 +1,358 @@
+◇ injected env (2) from .env // tip: ⌘ custom filepath { path: '/custom/path/.env' }
+[Express] 대시보드 API 서버가 포트 3000에서 실행 중입니다.
+[TCP] 사이니지 보드용 소켓 서버가 포트 10080에서 대기 중입니다.
+[SCHED] 2개 cron 등록됨
+[REQ] 2026-05-25T11:01:00.453Z ::1 GET /api/devices
+[API] 기기 목록 조회 요청됨. 현재 기기 수: 3대
+[TCP] 보드 접속됨: ::ffff:172.30.1.54:52914
+[TCP] 인증 성공: dev-103
+[Socket.io] 기기 등록: dev-103
+[TCP] 보드 접속됨: ::ffff:172.30.1.1:56578
+[TCP] 인증 성공: dev-101
+[Socket.io] 기기 등록: dev-101
+[REQ] 2026-05-25T11:01:04.064Z ::ffff:172.30.1.54 GET /api/devices/dev-103
+[REQ] 2026-05-25T11:01:04.182Z ::1 GET /api/devices
+[API] 기기 목록 조회 요청됨. 현재 기기 수: 3대
+[REQ] 2026-05-25T11:01:04.194Z ::ffff:172.30.1.54 GET /api/groups/ffef918e-7865-41ae-bd1f-e74768b9e05a/playlist
+[REQ] 2026-05-25T11:01:04.462Z ::ffff:172.30.1.1 GET /api/devices/dev-101
+[REQ] 2026-05-25T11:01:04.568Z ::ffff:172.30.1.1 GET /api/groups/ffef918e-7865-41ae-bd1f-e74768b9e05a/playlist
+[TCP] 보드 접속됨: ::ffff:172.30.1.54:48110
+[TCP] 인증 성공: dev-103
+[Socket.io] 기기 등록: dev-103
+[REQ] 2026-05-25T11:01:04.750Z ::ffff:172.30.1.54 GET /api/devices/dev-103
+[REQ] 2026-05-25T11:01:04.762Z ::ffff:172.30.1.54 GET /api/groups/ffef918e-7865-41ae-bd1f-e74768b9e05a/playlist
+[TCP] 재연결 감지 — offline 처리 건너뜀: dev-103
+[TCP] 보드 접속됨: ::ffff:172.30.1.1:34816
+[TCP] 인증 성공: dev-101
+[Socket.io] 기기 등록: dev-101
+[REQ] 2026-05-25T11:01:05.173Z ::ffff:172.30.1.1 GET /api/devices/dev-101
+[REQ] 2026-05-25T11:01:05.209Z ::ffff:172.30.1.1 GET /api/groups/ffef918e-7865-41ae-bd1f-e74768b9e05a/playlist
+[TCP] 재연결 감지 — offline 처리 건너뜀: dev-101
+[TCP] 보드 접속됨: ::ffff:172.30.1.98:56570
+[TCP] 인증 성공: dev-102
+[TCP] 보드 접속됨: ::ffff:172.30.1.98:53493
+[TCP] 인증 성공: dev-102
+[Socket.io] 기기 등록: dev-102
+[Socket.io] 기기 등록: dev-102
+[REQ] 2026-05-25T11:01:08.171Z ::1 GET /api/devices
+[API] 기기 목록 조회 요청됨. 현재 기기 수: 3대
+[REQ] 2026-05-25T11:01:09.174Z ::1 GET /api/time
+[REQ] 2026-05-25T11:01:09.189Z ::ffff:127.0.0.1 GET /api/update/status
+[REQ] 2026-05-25T11:01:10.045Z ::ffff:172.30.1.98 GET /api/devices/dev-102
+[REQ] 2026-05-25T11:01:10.105Z ::ffff:172.30.1.98 GET /api/devices/dev-102
+[REQ] 2026-05-25T11:01:18.179Z ::ffff:127.0.0.1 GET /api/time
+[REQ] 2026-05-25T11:01:18.198Z ::1 GET /api/devices
+[API] 기기 목록 조회 요청됨. 현재 기기 수: 3대
+[REQ] 2026-05-25T11:01:19.169Z ::1 GET /api/time
+[REQ] 2026-05-25T11:01:19.181Z ::1 GET /api/devices
+[REQ] 2026-05-25T11:01:19.182Z ::ffff:127.0.0.1 GET /api/update/status
+[API] 기기 목록 조회 요청됨. 현재 기기 수: 3대
+[REQ] 2026-05-25T11:01:27.905Z ::1 GET /api/devices
+[API] 기기 목록 조회 요청됨. 현재 기기 수: 3대
+[REQ] 2026-05-25T11:01:28.575Z ::1 GET /api/time
+[REQ] 2026-05-25T11:01:28.587Z ::1 GET /api/update/status
+[TCP] 재연결 감지 — offline 처리 건너뜀: dev-102
+[TCP] 보드 오프라인: dev-102
+[REQ] 2026-05-25T11:01:33.579Z ::1 GET /api/devices
+[API] 기기 목록 조회 요청됨. 현재 기기 수: 3대
+[TCP] 보드 접속됨: ::ffff:172.30.1.98:33239
+[TCP] 인증 성공: dev-102
+[Socket.io] 기기 등록: dev-102
+[REQ] 2026-05-25T11:01:37.903Z ::1 GET /api/devices
+[API] 기기 목록 조회 요청됨. 현재 기기 수: 3대
+[REQ] 2026-05-25T11:01:38.579Z ::1 GET /api/time
+[REQ] 2026-05-25T11:01:38.590Z ::1 GET /api/update/status
+[REQ] 2026-05-25T11:01:38.815Z ::ffff:172.30.1.98 GET /api/devices/dev-102
+[REQ] 2026-05-25T11:01:39.474Z ::ffff:172.30.1.98 GET /api/groups/ffef918e-7865-41ae-bd1f-e74768b9e05a/playlist
+[REQ] 2026-05-25T11:01:40.677Z ::1 POST /api/update/adb-install
+[ADB] connect 172.30.1.98:5555: connected to 172.30.1.98:5555
+[ADB] install 172.30.1.98:5555: Performing Push Install
+	pkg: /data/local/tmp/app.apk
+Failure [INSTALL_FAILED_INVALID_APK]
+C:\WorkSpace\signagepro\server\update\app.apk: 1 file pushed, 0 skipped. 3.9 MB/s (327517 bytes in 0.080s)
+[ADB] connect 172.30.1.54:5555: connected to 172.30.1.54:5555
+[ADB] install 172.30.1.54:5555: Performing Push Install
+	pkg: /data/local/tmp/app.apk
+Failure [INSTALL_FAILED_INVALID_APK]
+C:\WorkSpace\signagepro\server\update\app.apk: 1 file pushed, 0 skipped. 4.3 MB/s (327517 bytes in 0.073s)
+[ADB] connect 172.30.1.1:5555: connected to 172.30.1.1:5555
+[ADB] install 172.30.1.1:5555: Performing Push Install
+	pkg: /data/local/tmp/app.apk
+Failure [INSTALL_FAILED_INVALID_APK]
+C:\WorkSpace\signagepro\server\update\app.apk: 1 file pushed, 0 skipped. 5.4 MB/s (327517 bytes in 0.058s)
+[REQ] 2026-05-25T11:01:47.893Z ::1 GET /api/time
+[REQ] 2026-05-25T11:01:47.898Z ::1 GET /api/devices
+[API] 기기 목록 조회 요청됨. 현재 기기 수: 3대
+[REQ] 2026-05-25T11:01:48.576Z ::1 GET /api/time
+[REQ] 2026-05-25T11:01:48.593Z ::1 GET /api/update/status
+[REQ] 2026-05-25T11:01:48.596Z ::1 GET /api/devices
+[API] 기기 목록 조회 요청됨. 현재 기기 수: 3대
+[REQ] 2026-05-25T11:01:58.175Z ::1 GET /api/devices
+[API] 기기 목록 조회 요청됨. 현재 기기 수: 3대
+[REQ] 2026-05-25T11:01:59.173Z ::1 GET /api/time
+[REQ] 2026-05-25T11:01:59.185Z ::1 GET /api/update/status
+[REQ] 2026-05-25T11:02:04.163Z ::1 GET /api/devices
+[API] 기기 목록 조회 요청됨. 현재 기기 수: 3대
+[REQ] 2026-05-25T11:02:08.184Z ::1 GET /api/devices
+[API] 기기 목록 조회 요청됨. 현재 기기 수: 3대
+[REQ] 2026-05-25T11:02:09.173Z ::1 GET /api/time
+[REQ] 2026-05-25T11:02:09.184Z ::1 GET /api/update/status
+[REQ] 2026-05-25T11:02:17.327Z ::1 POST /api/update/apk
+[OTA] APK 업로드 완료: 0.3 MB
+[REQ] 2026-05-25T11:02:18.167Z ::1 GET /api/time
+[REQ] 2026-05-25T11:02:18.178Z ::1 GET /api/devices
+[API] 기기 목록 조회 요청됨. 현재 기기 수: 3대
+[REQ] 2026-05-25T11:02:19.164Z ::1 GET /api/time
+[REQ] 2026-05-25T11:02:19.176Z ::1 GET /api/devices
+[REQ] 2026-05-25T11:02:19.177Z ::1 GET /api/update/status
+[API] 기기 목록 조회 요청됨. 현재 기기 수: 3대
+[REQ] 2026-05-25T11:02:27.900Z ::1 GET /api/devices
+[API] 기기 목록 조회 요청됨. 현재 기기 수: 3대
+[REQ] 2026-05-25T11:02:28.578Z ::1 GET /api/time
+[REQ] 2026-05-25T11:02:28.581Z ::1 GET /api/update/status
+[REQ] 2026-05-25T11:02:33.588Z ::1 GET /api/devices
+[API] 기기 목록 조회 요청됨. 현재 기기 수: 3대
+[REQ] 2026-05-25T11:02:37.906Z ::1 GET /api/devices
+[API] 기기 목록 조회 요청됨. 현재 기기 수: 3대
+[REQ] 2026-05-25T11:02:38.578Z ::1 GET /api/time
+[REQ] 2026-05-25T11:02:38.587Z ::1 GET /api/update/status
+[REQ] 2026-05-25T11:02:44.138Z ::1 POST /api/update/apk
+[OTA] APK 업로드 완료: 6.5 MB
+[REQ] 2026-05-25T11:02:48.105Z ::1 POST /api/update/adb-install
+[REQ] 2026-05-25T11:02:48.115Z ::1 GET /api/time
+[REQ] 2026-05-25T11:02:48.141Z ::1 GET /api/devices
+[API] 기기 목록 조회 요청됨. 현재 기기 수: 3대
+[ADB] connect 172.30.1.98:5555: already connected to 172.30.1.98:5555
+[REQ] 2026-05-25T11:02:48.587Z ::1 GET /api/time
+[REQ] 2026-05-25T11:02:48.602Z ::1 GET /api/devices
+[REQ] 2026-05-25T11:02:48.604Z ::1 GET /api/update/status
+[API] 기기 목록 조회 요청됨. 현재 기기 수: 3대
+[REQ] 2026-05-25T11:02:57.895Z ::1 GET /api/devices
+[API] 기기 목록 조회 요청됨. 현재 기기 수: 3대
+[REQ] 2026-05-25T11:02:58.587Z ::1 GET /api/time
+[REQ] 2026-05-25T11:02:58.592Z ::1 GET /api/update/status
+[TCP] 보드 오프라인: dev-102
+[REQ] 2026-05-25T11:03:03.585Z ::1 GET /api/devices
+[API] 기기 목록 조회 요청됨. 현재 기기 수: 3대
+[REQ] 2026-05-25T11:03:07.895Z ::1 GET /api/devices
+[API] 기기 목록 조회 요청됨. 현재 기기 수: 3대
+[REQ] 2026-05-25T11:03:08.580Z ::1 GET /api/time
+[REQ] 2026-05-25T11:03:08.596Z ::1 GET /api/update/status
+[REQ] 2026-05-25T11:03:18.165Z ::1 GET /api/time
+[REQ] 2026-05-25T11:03:18.183Z ::1 GET /api/devices
+[API] 기기 목록 조회 요청됨. 현재 기기 수: 3대
+[REQ] 2026-05-25T11:03:19.174Z ::1 GET /api/time
+[REQ] 2026-05-25T11:03:19.187Z ::1 GET /api/devices
+[REQ] 2026-05-25T11:03:19.188Z ::1 GET /api/update/status
+[API] 기기 목록 조회 요청됨. 현재 기기 수: 3대
+[REQ] 2026-05-25T11:03:28.178Z ::1 GET /api/devices
+[API] 기기 목록 조회 요청됨. 현재 기기 수: 3대
+[REQ] 2026-05-25T11:03:29.166Z ::1 GET /api/time
+[REQ] 2026-05-25T11:03:29.178Z ::1 GET /api/update/status
+[REQ] 2026-05-25T11:03:34.176Z ::1 GET /api/devices
+[API] 기기 목록 조회 요청됨. 현재 기기 수: 3대
+[ADB] install 172.30.1.98:5555: Performing Push Install
+	pkg: /data/local/tmp/app.apk
+Success
+C:\WorkSpace\signagepro\server\update\app.apk: 1 file pushed, 0 skipped. 0.8 MB/s (6804339 bytes in 7.729s)
+[REQ] 2026-05-25T11:03:38.163Z ::1 GET /api/devices
+[API] 기기 목록 조회 요청됨. 현재 기기 수: 3대
+[REQ] 2026-05-25T11:03:39.174Z ::1 GET /api/time
+[REQ] 2026-05-25T11:03:39.186Z ::1 GET /api/update/status
+[ADB] am start 172.30.1.98:5555: Starting: Intent { cmp=com.signagepro.player/.MainActivity }
+[ADB] connect 172.30.1.54:5555: already connected to 172.30.1.54:5555
+[TCP] 보드 접속됨: ::ffff:172.30.1.98:50425
+[TCP] 인증 성공: dev-102
+[Socket.io] 기기 등록: dev-102
+[REQ] 2026-05-25T11:03:46.011Z ::ffff:172.30.1.98 GET /api/devices/dev-102
+[REQ] 2026-05-25T11:03:46.660Z ::ffff:172.30.1.98 GET /api/groups/ffef918e-7865-41ae-bd1f-e74768b9e05a/playlist
+[REQ] 2026-05-25T11:03:48.177Z ::1 GET /api/time
+[REQ] 2026-05-25T11:03:48.181Z ::1 GET /api/devices
+[API] 기기 목록 조회 요청됨. 현재 기기 수: 3대
+[REQ] 2026-05-25T11:03:49.172Z ::1 GET /api/time
+[REQ] 2026-05-25T11:03:49.185Z ::1 GET /api/devices
+[REQ] 2026-05-25T11:03:49.185Z ::1 GET /api/update/status
+[API] 기기 목록 조회 요청됨. 현재 기기 수: 3대
+[TCP] 보드 오프라인: dev-103
+[REQ] 2026-05-25T11:03:58.179Z ::1 GET /api/devices
+[API] 기기 목록 조회 요청됨. 현재 기기 수: 3대
+[REQ] 2026-05-25T11:03:59.168Z ::1 GET /api/time
+[REQ] 2026-05-25T11:03:59.181Z ::1 GET /api/update/status
+[REQ] 2026-05-25T11:04:04.176Z ::1 GET /api/devices
+[API] 기기 목록 조회 요청됨. 현재 기기 수: 3대
+[REQ] 2026-05-25T11:04:08.183Z ::1 GET /api/devices
+[API] 기기 목록 조회 요청됨. 현재 기기 수: 3대
+[REQ] 2026-05-25T11:04:09.167Z ::1 GET /api/time
+[REQ] 2026-05-25T11:04:09.180Z ::1 GET /api/update/status
+[ADB] install 172.30.1.54:5555: Performing Push Install
+	pkg: /data/local/tmp/app.apk
+Success
+C:\WorkSpace\signagepro\server\update\app.apk: 1 file pushed, 0 skipped. 0.8 MB/s (6804339 bytes in 8.479s)
+[ADB] am start 172.30.1.54:5555: Starting: Intent { cmp=com.signagepro.player/.MainActivity }
+[ADB] connect 172.30.1.1:5555: already connected to 172.30.1.1:5555
+[TCP] 보드 접속됨: ::ffff:172.30.1.54:55965
+[TCP] 인증 성공: dev-103
+[Socket.io] 기기 등록: dev-103
+[REQ] 2026-05-25T11:04:26.597Z ::ffff:172.30.1.54 GET /api/devices/dev-103
+[REQ] 2026-05-25T11:04:26.702Z ::ffff:172.30.1.54 GET /api/groups/ffef918e-7865-41ae-bd1f-e74768b9e05a/playlist
+[TCP] 보드 오프라인: dev-101
+[REQ] 2026-05-25T11:04:32.732Z ::1 GET /api/time
+[REQ] 2026-05-25T11:04:32.742Z ::1 GET /api/time
+[REQ] 2026-05-25T11:04:32.744Z ::1 GET /api/devices
+[REQ] 2026-05-25T11:04:32.745Z ::1 GET /api/devices
+[REQ] 2026-05-25T11:04:32.746Z ::1 GET /api/update/status
+[API] 기기 목록 조회 요청됨. 현재 기기 수: 3대
+[API] 기기 목록 조회 요청됨. 현재 기기 수: 3대
+[REQ] 2026-05-25T11:04:33.578Z ::1 GET /api/devices
+[API] 기기 목록 조회 요청됨. 현재 기기 수: 3대
+[REQ] 2026-05-25T11:04:37.895Z ::1 GET /api/devices
+[API] 기기 목록 조회 요청됨. 현재 기기 수: 3대
+[REQ] 2026-05-25T11:04:38.579Z ::1 GET /api/time
+[REQ] 2026-05-25T11:04:38.594Z ::1 GET /api/update/status
+[REQ] 2026-05-25T11:04:48.177Z ::1 GET /api/time
+[REQ] 2026-05-25T11:04:48.197Z ::1 GET /api/devices
+[API] 기기 목록 조회 요청됨. 현재 기기 수: 3대
+[REQ] 2026-05-25T11:04:49.162Z ::1 GET /api/time
+[REQ] 2026-05-25T11:04:49.174Z ::1 GET /api/devices
+[REQ] 2026-05-25T11:04:49.175Z ::1 GET /api/update/status
+[API] 기기 목록 조회 요청됨. 현재 기기 수: 3대
+[ADB] install 172.30.1.1:5555: Performing Push Install
+	pkg: /data/local/tmp/app.apk
+Success
+C:\WorkSpace\signagepro\server\update\app.apk: 1 file pushed, 0 skipped. 0.9 MB/s (6804339 bytes in 7.135s)
+[REQ] 2026-05-25T11:04:58.181Z ::1 GET /api/devices
+[API] 기기 목록 조회 요청됨. 현재 기기 수: 3대
+[REQ] 2026-05-25T11:04:59.168Z ::1 GET /api/time
+[REQ] 2026-05-25T11:04:59.180Z ::1 GET /api/update/status
+[ADB] am start 172.30.1.1:5555: Starting: Intent { cmp=com.signagepro.player/.MainActivity }
+[REQ] 2026-05-25T11:05:04.165Z ::1 GET /api/devices
+[API] 기기 목록 조회 요청됨. 현재 기기 수: 3대
+[TCP] 보드 접속됨: ::ffff:172.30.1.1:34448
+[TCP] 인증 성공: dev-101
+[Socket.io] 기기 등록: dev-101
+[REQ] 2026-05-25T11:05:06.366Z ::ffff:172.30.1.1 GET /api/devices/dev-101
+[REQ] 2026-05-25T11:05:06.462Z ::ffff:172.30.1.1 GET /api/groups/ffef918e-7865-41ae-bd1f-e74768b9e05a/playlist
+[REQ] 2026-05-25T11:05:08.174Z ::1 GET /api/devices
+[API] 기기 목록 조회 요청됨. 현재 기기 수: 3대
+[REQ] 2026-05-25T11:05:09.174Z ::1 GET /api/time
+[REQ] 2026-05-25T11:05:09.177Z ::1 GET /api/update/status
+[REQ] 2026-05-25T11:05:18.176Z ::1 GET /api/time
+[REQ] 2026-05-25T11:05:18.187Z ::1 GET /api/devices
+[API] 기기 목록 조회 요청됨. 현재 기기 수: 3대
+[REQ] 2026-05-25T11:05:19.174Z ::1 GET /api/time
+[REQ] 2026-05-25T11:05:19.190Z ::1 GET /api/devices
+[REQ] 2026-05-25T11:05:19.191Z ::1 GET /api/update/status
+[API] 기기 목록 조회 요청됨. 현재 기기 수: 3대
+[REQ] 2026-05-25T11:05:28.183Z ::1 GET /api/devices
+[API] 기기 목록 조회 요청됨. 현재 기기 수: 3대
+[REQ] 2026-05-25T11:05:29.175Z ::1 GET /api/time
+[REQ] 2026-05-25T11:05:29.187Z ::1 GET /api/update/status
+[REQ] 2026-05-25T11:05:34.167Z ::1 GET /api/devices
+[API] 기기 목록 조회 요청됨. 현재 기기 수: 3대
+[REQ] 2026-05-25T11:05:38.167Z ::1 GET /api/devices
+[API] 기기 목록 조회 요청됨. 현재 기기 수: 3대
+[REQ] 2026-05-25T11:05:39.181Z ::1 GET /api/time
+[REQ] 2026-05-25T11:05:39.199Z ::1 GET /api/update/status
+[REQ] 2026-05-25T11:06:36.166Z ::1 GET /api/time
+[REQ] 2026-05-25T11:06:36.176Z ::1 GET /api/time
+[REQ] 2026-05-25T11:06:36.178Z ::1 GET /api/devices
+[REQ] 2026-05-25T11:06:36.179Z ::1 GET /api/devices
+[REQ] 2026-05-25T11:06:36.179Z ::1 GET /api/update/status
+[API] 기기 목록 조회 요청됨. 현재 기기 수: 3대
+[API] 기기 목록 조회 요청됨. 현재 기기 수: 3대
+[REQ] 2026-05-25T11:06:37.899Z ::1 GET /api/devices
+[API] 기기 목록 조회 요청됨. 현재 기기 수: 3대
+[REQ] 2026-05-25T11:06:38.584Z ::1 GET /api/time
+[REQ] 2026-05-25T11:06:38.596Z ::1 GET /api/update/status
+[REQ] 2026-05-25T11:06:43.588Z ::1 GET /api/groups/ffef918e-7865-41ae-bd1f-e74768b9e05a/playlist
+[REQ] 2026-05-25T11:06:43.598Z ::1 GET /api/time
+[REQ] 2026-05-25T11:06:43.603Z ::1 GET /api/time
+[REQ] 2026-05-25T11:06:43.604Z ::1 GET /api/groups/ffef918e-7865-41ae-bd1f-e74768b9e05a/playlist
+[REQ] 2026-05-25T11:06:43.604Z ::1 GET /api/time
+[REQ] 2026-05-25T11:06:43.605Z ::1 GET /api/time
+[REQ] 2026-05-25T11:06:43.606Z ::1 GET /api/time
+[REQ] 2026-05-25T11:06:43.607Z ::1 GET /api/time
+[REQ] 2026-05-25T11:06:43.607Z ::1 GET /api/groups/ffef918e-7865-41ae-bd1f-e74768b9e05a/playlist
+[REQ] 2026-05-25T11:06:43.610Z ::1 GET /api/groups/ffef918e-7865-41ae-bd1f-e74768b9e05a/playlist
+[REQ] 2026-05-25T11:06:43.612Z ::1 GET /api/groups/ffef918e-7865-41ae-bd1f-e74768b9e05a/playlist
+[REQ] 2026-05-25T11:06:43.614Z ::1 GET /api/groups/ffef918e-7865-41ae-bd1f-e74768b9e05a/playlist
+[REQ] 2026-05-25T11:06:43.640Z ::1 GET /uploads/1779584573564-1.jpg
+[REQ] 2026-05-25T11:06:43.641Z ::1 GET /uploads/1779584573609-3.jpg
+[REQ] 2026-05-25T11:06:43.642Z ::1 GET /uploads/1779688776144-hanroro_love_mv.mp4
+[REQ] 2026-05-25T11:06:43.658Z ::1 GET /uploads/1779688776144-hanroro_love_mv.mp4
+[REQ] 2026-05-25T11:06:43.693Z ::1 GET /uploads/1779688776144-hanroro_love_mv.mp4
+[REQ] 2026-05-25T11:06:43.711Z ::1 GET /uploads/1779688776144-hanroro_love_mv.mp4
+[REQ] 2026-05-25T11:06:43.733Z ::1 GET /uploads/1779688776144-hanroro_love_mv.mp4
+[REQ] 2026-05-25T11:06:47.575Z ::1 GET /uploads/1779688776144-hanroro_love_mv.mp4
+[REQ] 2026-05-25T11:06:48.576Z ::1 GET /api/time
+[REQ] 2026-05-25T11:06:48.593Z ::1 GET /api/devices
+[REQ] 2026-05-25T11:06:48.596Z ::1 GET /api/update/status
+[API] 기기 목록 조회 요청됨. 현재 기기 수: 3대
+[REQ] 2026-05-25T11:06:50.057Z ::1 GET /uploads/1779584573654-11.jpg
+[REQ] 2026-05-25T11:06:50.067Z ::1 GET /uploads/1779584573703-33.jpg
+[REQ] 2026-05-25T11:06:55.292Z ::1 GET /api/media?storeId=716b15c5-b347-479e-bf31-7d7efd780387
+[REQ] 2026-05-25T11:06:55.307Z ::1 GET /api/media?storeId=716b15c5-b347-479e-bf31-7d7efd780387
+[REQ] 2026-05-25T11:06:55.307Z ::1 GET /api/groups/ffef918e-7865-41ae-bd1f-e74768b9e05a/playlist
+[REQ] 2026-05-25T11:06:55.325Z ::1 GET /uploads/1779688776144-hanroro_love_mv.mp4
+[REQ] 2026-05-25T11:06:55.366Z ::1 GET /uploads/1779688776144-hanroro_love_mv.mp4
+[REQ] 2026-05-25T11:06:55.370Z ::1 GET /uploads/1779688776144-hanroro_love_mv.mp4
+[REQ] 2026-05-25T11:06:55.377Z ::1 GET /uploads/1779688776144-hanroro_love_mv.mp4
+[REQ] 2026-05-25T11:06:55.481Z ::1 GET /uploads/1779688776144-hanroro_love_mv.mp4
+[REQ] 2026-05-25T11:06:55.485Z ::1 GET /uploads/1779688776144-hanroro_love_mv.mp4
+[REQ] 2026-05-25T11:06:56.665Z ::1 GET /api/groups/ffef918e-7865-41ae-bd1f-e74768b9e05a/playlist
+[REQ] 2026-05-25T11:06:56.676Z ::1 GET /api/time
+[REQ] 2026-05-25T11:06:56.680Z ::1 GET /api/time
+[REQ] 2026-05-25T11:06:56.681Z ::1 GET /api/groups/ffef918e-7865-41ae-bd1f-e74768b9e05a/playlist
+[REQ] 2026-05-25T11:06:56.682Z ::1 GET /api/time
+[REQ] 2026-05-25T11:06:56.684Z ::1 GET /api/time
+[REQ] 2026-05-25T11:06:56.687Z ::1 GET /api/groups/ffef918e-7865-41ae-bd1f-e74768b9e05a/playlist
+[REQ] 2026-05-25T11:06:56.688Z ::1 GET /api/time
+[REQ] 2026-05-25T11:06:56.690Z ::1 GET /api/time
+[REQ] 2026-05-25T11:06:56.692Z ::1 GET /api/groups/ffef918e-7865-41ae-bd1f-e74768b9e05a/playlist
+[REQ] 2026-05-25T11:06:56.695Z ::1 GET /api/groups/ffef918e-7865-41ae-bd1f-e74768b9e05a/playlist
+[REQ] 2026-05-25T11:06:56.698Z ::1 GET /api/groups/ffef918e-7865-41ae-bd1f-e74768b9e05a/playlist
+[REQ] 2026-05-25T11:06:58.576Z ::1 GET /api/time
+[REQ] 2026-05-25T11:06:58.593Z ::1 GET /api/update/status
+[REQ] 2026-05-25T11:07:00.121Z ::1 GET /uploads/1779584573564-1.jpg
+[REQ] 2026-05-25T11:07:00.132Z ::1 GET /uploads/1779584573609-3.jpg
+[REQ] 2026-05-25T11:07:03.582Z ::1 GET /api/devices
+[API] 기기 목록 조회 요청됨. 현재 기기 수: 3대
+[REQ] 2026-05-25T11:07:06.772Z ::1 GET /uploads/1779688776144-hanroro_love_mv.mp4
+[REQ] 2026-05-25T11:07:09.165Z ::1 GET /api/time
+[REQ] 2026-05-25T11:07:09.179Z ::1 GET /api/update/status
+[REQ] 2026-05-25T11:07:10.165Z ::1 GET /uploads/1779584573654-11.jpg
+[REQ] 2026-05-25T11:07:10.175Z ::1 GET /uploads/1779584573703-33.jpg
+[REQ] 2026-05-25T11:07:19.173Z ::1 GET /api/time
+[REQ] 2026-05-25T11:07:19.192Z ::1 GET /api/devices
+[REQ] 2026-05-25T11:07:19.193Z ::1 GET /api/update/status
+[API] 기기 목록 조회 요청됨. 현재 기기 수: 3대
+[REQ] 2026-05-25T11:07:29.166Z ::1 GET /api/time
+[REQ] 2026-05-25T11:07:29.178Z ::1 GET /api/update/status
+[REQ] 2026-05-25T11:07:34.177Z ::1 GET /api/devices
+[API] 기기 목록 조회 요청됨. 현재 기기 수: 3대
+[REQ] 2026-05-25T11:07:39.172Z ::1 GET /api/time
+[REQ] 2026-05-25T11:07:39.186Z ::1 GET /api/update/status
+[REQ] 2026-05-25T11:07:49.167Z ::1 GET /api/time
+[REQ] 2026-05-25T11:07:49.179Z ::1 GET /api/devices
+[REQ] 2026-05-25T11:07:49.180Z ::1 GET /api/update/status
+[API] 기기 목록 조회 요청됨. 현재 기기 수: 3대
+[REQ] 2026-05-25T11:07:59.178Z ::1 GET /api/time
+[REQ] 2026-05-25T11:07:59.181Z ::1 GET /api/update/status
+[REQ] 2026-05-25T11:08:04.166Z ::1 GET /api/devices
+[API] 기기 목록 조회 요청됨. 현재 기기 수: 3대
+[REQ] 2026-05-25T11:08:36.189Z ::1 GET /api/time
+[REQ] 2026-05-25T11:08:36.202Z ::1 GET /api/devices
+[REQ] 2026-05-25T11:08:36.203Z ::1 GET /api/update/status
+[API] 기기 목록 조회 요청됨. 현재 기기 수: 3대
+[REQ] 2026-05-25T11:09:36.168Z ::1 GET /api/time
+[REQ] 2026-05-25T11:09:36.179Z ::1 GET /api/devices
+[REQ] 2026-05-25T11:09:36.180Z ::1 GET /api/update/status
+[API] 기기 목록 조회 요청됨. 현재 기기 수: 3대
+[REQ] 2026-05-25T11:10:36.177Z ::1 GET /api/time
+[REQ] 2026-05-25T11:10:36.181Z ::1 GET /api/devices
+[REQ] 2026-05-25T11:10:36.182Z ::1 GET /api/update/status
+[API] 기기 목록 조회 요청됨. 현재 기기 수: 3대
+[REQ] 2026-05-25T11:11:36.167Z ::1 GET /api/time
+[REQ] 2026-05-25T11:11:36.182Z ::1 GET /api/devices
+[REQ] 2026-05-25T11:11:36.183Z ::1 GET /api/update/status
+[API] 기기 목록 조회 요청됨. 현재 기기 수: 3대

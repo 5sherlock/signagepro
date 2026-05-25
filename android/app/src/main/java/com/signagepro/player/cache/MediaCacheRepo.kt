@@ -45,9 +45,14 @@ class MediaCacheRepo(
 
     /**
      * 필요 시 다운로드 후 파일 반환. 이미 같은 hash면 즉시 반환.
+     * [onProgress]: 다운로드 진행률 (0~100). Content-Length 미제공 시 호출 안 됨.
      * 다운로드 실패 시 [DownloadException].
      */
-    suspend fun ensure(serverUrl: String, media: MediaDto): File = withContext(Dispatchers.IO) {
+    suspend fun ensure(
+        serverUrl: String,
+        media: MediaDto,
+        onProgress: (suspend (pct: Int) -> Unit)? = null
+    ): File = withContext(Dispatchers.IO) {
         cachedFile(media)?.let { return@withContext it }
 
         val hash = media.hash
@@ -59,7 +64,6 @@ class MediaCacheRepo(
             cachedFile(media)?.let { return@withLock it }
 
             val target = File(baseDir, fileNameFor(media, hash))
-            // .part 파일명에 고유 suffix — 동일 hash가 아니어도 충돌 없게
             val tmp = File(baseDir, "${target.name}.${System.nanoTime()}.part")
 
             val url = serverUrl.trimEnd('/') + media.path
@@ -70,8 +74,40 @@ class MediaCacheRepo(
                         throw DownloadException("HTTP ${resp.code} for $url")
                     }
                     val body = resp.body ?: throw DownloadException("Empty body for $url")
+                    val contentLength = body.contentLength() // -1이면 알 수 없음
+
+                    val buf = ByteArray(32 * 1024) // 32KB 버퍼
+                    var downloaded = 0L
+                    var lastReportedPct = -1
+                    var lastReportMs = 0L
+
                     tmp.outputStream().use { out ->
-                        body.byteStream().copyTo(out)
+                        body.byteStream().use { input ->
+                            while (true) {
+                                val n = input.read(buf)
+                                if (n <= 0) break
+                                out.write(buf, 0, n)
+                                downloaded += n
+
+                                // 진행률 보고: 5% 단위 또는 500ms 간격으로 throttle
+                                if (onProgress != null && contentLength > 0) {
+                                    val pct = (downloaded * 100L / contentLength).toInt()
+                                    val now = System.currentTimeMillis()
+                                    if (pct != lastReportedPct &&
+                                        (pct - lastReportedPct >= 5 || now - lastReportMs >= 500)) {
+                                        lastReportedPct = pct
+                                        lastReportMs = now
+                                        withContext(Dispatchers.Main) {
+                                            onProgress(pct)
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    // 완료 시 100% 보고
+                    if (onProgress != null && contentLength > 0) {
+                        withContext(Dispatchers.Main) { onProgress(100) }
                     }
                 }
 

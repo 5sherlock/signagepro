@@ -27,7 +27,7 @@ class MediaRenderer(
 ) {
     private val player: ExoPlayer = ExoPlayer.Builder(context).build().apply {
         repeatMode = Player.REPEAT_MODE_ONE  // playlist duration이 비디오 길이보다 길 때 루프
-        volume = 1f
+        volume = 0f                          // 동영상 기본 음소거 — 사이니지에서 의도치 않은 사운드 방지
     }
 
     private var active: FrameLayout = layerA
@@ -99,9 +99,24 @@ class MediaRenderer(
     }
 
     private fun loadImage(layer: FrameLayout, file: File) {
+        // 비디오 → 이미지 전환 시 ExoPlayer 완전 정지.
+        // 그렇지 않으면 비활성 레이어에서 비디오가 계속 디코딩되며 GPU/메모리 점유 →
+        // 일부 STB에서 이미지 레이어가 갱신되지 않거나 블랙으로 표시되는 문제 발생.
+        if (player.playWhenReady || player.mediaItemCount > 0) {
+            player.stop()
+            player.clearMediaItems()
+        }
+
         val playerView = videoOf(layer)
         val imageView = imageOf(layer)
         playerView.visibility = View.GONE
+        playerView.player = null
+
+        // 반대편 레이어의 PlayerView도 정리 — 잔존 표면이 이미지를 덮는 현상 방지
+        val otherPV = videoOf(otherLayer(layer))
+        otherPV.visibility = View.GONE
+        otherPV.player = null
+
         imageView.visibility = View.VISIBLE
 
         // 다운샘플링하여 OOM 방지

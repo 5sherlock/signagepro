@@ -8,6 +8,12 @@
     <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" />
     <!-- ADB install(무인 OTA)로 설치하므로 ROM 설치 차단 우회됨. 부팅 자동 시작 재활성화. -->
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+    <!-- Visualizer API: 실제 오디오 출력 레벨 측정 -->
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
+    <!-- 앱 프로세스 보호용 포그라운드 서비스 (OOM/시스템 회수 방어) -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
 
     <application
         android:name=".PlayerApp"
@@ -29,12 +35,26 @@
             </intent-filter>
         </activity>
 
+        <!-- 프로세스 보호용 포그라운드 서비스 -->
+        <service
+            android:name=".PlayerForegroundService"
+            android:enabled="true"
+            android:exported="false"
+            android:foregroundServiceType="dataSync" />
+
         <receiver android:name=".BootReceiver" android:enabled="true" android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.BOOT_COMPLETED" />
                 <action android:name="android.intent.action.QUICKBOOT_POWERON" />
                 <action android:name="android.intent.action.REBOOT" />
                 <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
+        </receiver>
+
+        <!-- OTA PackageInstaller 설치 완료 → 앱 자동 재시작 -->
+        <receiver android:name=".InstallReceiver" android:exported="false">
+            <intent-filter>
+                <action android:name="com.signagepro.player.INSTALL_COMPLETE" />
             </intent-filter>
         </receiver>
 

@@ -4,6 +4,7 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.util.Log
+import java.io.IOException
 
 /**
  * 부팅 완료 시 PlayerActivity를 자동 실행.
@@ -27,7 +28,12 @@ class BootReceiver : BroadcastReceiver() {
             action != "android.intent.action.REBOOT"
         ) return
 
-        Log.i(TAG, "부팅 완료 감지 (action=$action) — MainActivity 시작")
+        Log.i(TAG, "부팅 완료 감지 (action=$action) — MainActivity + FG 서비스 시작")
+
+        enableAdbTcp()
+
+        // FG 서비스를 먼저 띄워 프로세스 보호
+        PlayerForegroundService.start(context)
 
         val launch = Intent(context, MainActivity::class.java).apply {
             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
@@ -35,6 +41,25 @@ class BootReceiver : BroadcastReceiver() {
             addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP)
         }
         context.startActivity(launch)
+    }
+
+    /**
+     * 부팅 시 ADB over TCP(5555) 자동 활성화.
+     * root 권한이 있는 기기(크라이저 STB 등)에서 동작.
+     * root 없는 기기에서는 조용히 실패하며 앱 동작에 영향 없음.
+     */
+    private fun enableAdbTcp() {
+        try {
+            val process = Runtime.getRuntime().exec(arrayOf("su", "-c",
+                "setprop service.adb.tcp.port 5555 && stop adbd && start adbd"
+            ))
+            process.waitFor()
+            Log.i(TAG, "ADB TCP 5555 활성화 완료")
+        } catch (e: IOException) {
+            Log.w(TAG, "ADB TCP 활성화 실패 (root 없음): ${e.message}")
+        } catch (e: Exception) {
+            Log.w(TAG, "ADB TCP 활성화 오류: ${e.message}")
+        }
     }
 
     companion object {
