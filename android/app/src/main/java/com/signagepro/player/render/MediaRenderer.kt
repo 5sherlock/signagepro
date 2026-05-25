@@ -1,6 +1,7 @@
 package com.signagepro.player.render
 
 import android.content.Context
+import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.view.View
 import android.view.animation.DecelerateInterpolator
@@ -35,6 +36,29 @@ class MediaRenderer(
     private var currentItemId: String? = null
     private var currentItem: PlaylistItemDto? = null  // 현재 표시 중(전환의 출발) 슬라이드
 
+    // 이미지 사전 디코딩 캐시 — IO 스레드에서 decodeFile 후 Main 스레드 전달
+    @Volatile private var preloadedBitmap: Bitmap? = null
+    @Volatile private var preloadedItemId: String? = null
+
+    /**
+     * IO 스레드에서 호출: 다음 슬라이드의 이미지를 미리 디코딩해 캐시에 저장.
+     * 비디오 슬롯은 no-op.
+     */
+    fun preloadImage(item: PlaylistItemDto, file: File) {
+        if (item.media.type.lowercase() != "image") return
+        if (item.id == preloadedItemId && preloadedBitmap != null) return  // 이미 로드됨
+
+        val opts = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        BitmapFactory.decodeFile(file.absolutePath, opts)
+        val maxDim = 1920
+        var sample = 1
+        while (opts.outWidth / sample > maxDim || opts.outHeight / sample > maxDim) sample *= 2
+        val loadOpts = BitmapFactory.Options().apply { inSampleSize = sample }
+        val bmp = BitmapFactory.decodeFile(file.absolutePath, loadOpts) ?: return
+        preloadedBitmap = bmp
+        preloadedItemId = item.id
+    }
+
     init {
         // 초기에는 양쪽 레이어 모두 숨김
         active.alpha = 1f
@@ -59,7 +83,7 @@ class MediaRenderer(
         // 1. standby 레이어에 새 미디어 로드
         when (item.media.type.lowercase()) {
             "video" -> loadVideo(standby, file)
-            "image" -> loadImage(standby, file)
+            "image" -> loadImage(standby, file, item.id)
             else -> return
         }
 
@@ -98,7 +122,7 @@ class MediaRenderer(
         player.playWhenReady = true
     }
 
-    private fun loadImage(layer: FrameLayout, file: File) {
+    private fun loadImage(layer: FrameLayout, file: File, itemId: String) {
         // 비디오 → 이미지 전환 시 ExoPlayer 완전 정지.
         // 그렇지 않으면 비활성 레이어에서 비디오가 계속 디코딩되며 GPU/메모리 점유 →
         // 일부 STB에서 이미지 레이어가 갱신되지 않거나 블랙으로 표시되는 문제 발생.
@@ -119,14 +143,23 @@ class MediaRenderer(
 
         imageView.visibility = View.VISIBLE
 
-        // 다운샘플링하여 OOM 방지
-        val opts = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-        BitmapFactory.decodeFile(file.absolutePath, opts)
-        val maxDim = 1920
-        var sample = 1
-        while (opts.outWidth / sample > maxDim || opts.outHeight / sample > maxDim) sample *= 2
-        val loadOpts = BitmapFactory.Options().apply { inSampleSize = sample }
-        val bmp = BitmapFactory.decodeFile(file.absolutePath, loadOpts)
+        // preloadImage()로 IO 스레드에서 미리 디코딩된 비트맵 사용 (있으면).
+        // 없으면 Main 스레드에서 동기 디코딩 (폴백).
+        val bmp: Bitmap? = if (itemId == preloadedItemId) {
+            val b = preloadedBitmap
+            preloadedBitmap = null
+            preloadedItemId = null
+            b
+        } else {
+            // 폴백: Main 스레드 동기 디코딩 (느린 기기에서 타이밍 drift 유발 가능)
+            val opts = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+            BitmapFactory.decodeFile(file.absolutePath, opts)
+            val maxDim = 1920
+            var sample = 1
+            while (opts.outWidth / sample > maxDim || opts.outHeight / sample > maxDim) sample *= 2
+            val loadOpts = BitmapFactory.Options().apply { inSampleSize = sample }
+            BitmapFactory.decodeFile(file.absolutePath, loadOpts)
+        }
         imageView.setImageBitmap(bmp)
     }
 

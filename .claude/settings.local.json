@@ -46,7 +46,10 @@
       "Bash(rm -rf app/build/outputs/apk/release/)",
       "Bash(./gradlew :app:assembleRelease --console=plain --no-daemon)",
       "Bash(echo \"EXIT=$?\")",
-      "Read(//tmp/**)"
+      "Read(//tmp/**)",
+      "Bash(cd /c/WorkSpace/signagepro && grep -n \"preload\\\\|withContext\\\\|minWait\\\\|transMs\\\\|coerceAtLeast\" android/app/src/main/java/com/signagepro/player/engine/PlayerCoordinator.kt)",
+      "PowerShell(try { $r = Invoke-WebRequest -Uri \"http://localhost:3000/api/time\" -UseBasicParsing -TimeoutSec 3; Write-Host \"서버 실행 중: $\\($r.Content\\)\" } catch { Write-Host \"서버 오프라인: $_\" })",
+      "PowerShell($body = '{\"deviceId\": null}'; $r = Invoke-WebRequest -Uri \"http://localhost:3000/api/update/adb-install\" -Method POST -Body $body -ContentType \"application/json\" -UseBasicParsing -TimeoutSec 300; Write-Host $r.Content)"
     ]
   }
 }

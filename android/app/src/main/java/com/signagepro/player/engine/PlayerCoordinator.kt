@@ -453,12 +453,24 @@ class PlayerCoordinator(
 
                 val file = cache.cachedFile(slot.item.media)
                 if (file != null) {
+                    // 이미지는 IO 스레드에서 미리 디코딩 — Main 스레드 차단을 방지해
+                    // waitMs 계산 정확도를 높이고 애니메이션 프레임 누락을 예방.
+                    if (slot.item.media.type.lowercase() == "image") {
+                        withContext(Dispatchers.IO) {
+                            renderer.preloadImage(slot.item, file)
+                        }
+                    }
                     renderer.show(slot.item, file)
                 } else {
                     Log.w(TAG, "캐시에 없음: ${slot.item.media.filename}")
                 }
 
-                val waitMs = (slot.nextSlotEpochMs - ntp.now()).coerceAtLeast(200L)
+                // 최소 대기 = 전환 애니메이션 시간 + 200ms 버퍼.
+                // 이보다 짧으면 이전 fadeToBlack 완료 전에 다음 show()가 호출되어
+                // standby.alpha=0f 강제 세팅이 현재 표시 중인 레이어를 즉시 블랙으로 만듦.
+                val transMs = (slot.item.transitionTime?.toLong() ?: 1000L)
+                val minWaitMs = transMs + 200L
+                val waitMs = (slot.nextSlotEpochMs - ntp.now()).coerceAtLeast(minWaitMs)
                 delay(waitMs)
             }
         }
