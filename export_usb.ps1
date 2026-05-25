@@ -18,8 +18,20 @@ git add -A
 $status = git status --porcelain
 if ($status) {
     if (-not $Message) {
-        $Message = Read-Host "커밋 메시지"
-        if (-not $Message) { $Message = "작업 저장 $(Get-Date -Format 'yyyy-MM-dd HH:mm')" }
+        # 변경 파일 기준으로 모듈 자동 감지
+        $changedFiles = git diff --cached --name-only
+        $mods = @()
+        if ($changedFiles -match '^android/') { $mods += 'android' }
+        if ($changedFiles -match '^server/')  { $mods += 'server' }
+        if ($changedFiles -match '^dashboard/') { $mods += 'dashboard' }
+        if ($changedFiles -match '^android_player/') { $mods += 'android_player' }
+        if ($mods.Count -eq 0) { $mods += 'etc' }
+        $modStr   = $mods -join ' · '
+        $date     = Get-Date -Format 'yyyy-MM-dd HH:mm'
+        $fileList = ($changedFiles | ForEach-Object { "- $_" }) -join "`n"
+        $Message  = "update($modStr): $date`n`n$fileList"
+        Write-Host "  자동 생성된 커밋 메시지:" -ForegroundColor DarkGray
+        Write-Host $Message -ForegroundColor White
     }
     $branch = git rev-parse --abbrev-ref HEAD
     git commit -m $Message
@@ -83,7 +95,7 @@ if (Test-Path "$ROOT\server\uploads") {
 }
 
 Copy-Safe "$ROOT\android\app\signagepro.keystore"                          "$DEST\android\signagepro.keystore"
-Copy-Safe "$ROOT\android\app\build\outputs\apk\debug\app-debug.apk"       "$DEST\android\app-debug.apk"
+Copy-Safe "$ROOT\android\app\build\outputs\apk\release\app-release.apk"   "$DEST\android\app-release.apk"
 Copy-Safe "$ROOT\server\update\app.apk"                                    "$DEST\server\update\app.apk"
 
 # 새 PC 구축 스크립트 (더블클릭용 .bat 포함)
