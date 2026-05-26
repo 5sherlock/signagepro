@@ -1332,11 +1332,56 @@ function LoginScreen({ onLogin }) {
 function App() {
   const [authed, setAuthed] = useState(!!getToken());
   const [activeTab, setActiveTab] = useState('dashboard');
-  const [devices, setDevices] = useState([]);
+  const [currentDateTime, setCurrentDateTime] = useState(new Date());
+
+  useEffect(() => {
+    const clockTimer = setInterval(() => {
+      setCurrentDateTime(new Date());
+    }, 1000);
+    return () => clearInterval(clockTimer);
+  }, []);
+  const [devices, setDevicesState] = useState(() => {
+    try {
+      const cached = JSON.parse(localStorage.getItem('SIGNAGE_DEVICES') || '[]');
+      // 초기 로드 시에는 혼선을 피하기 위해 시각적인 상태를 안전하게 오프라인 상태로 우선 복원합니다.
+      return cached.map(d => ({ ...d, status: 'offline' }));
+    } catch { return []; }
+  });
+
+  const [groups, setGroupsState] = useState(() => {
+    try { return JSON.parse(localStorage.getItem('SIGNAGE_GROUPS') || '[]'); } catch { return []; }
+  });
+
+  const [stores, setStoresState] = useState(() => {
+    try { return JSON.parse(localStorage.getItem('SIGNAGE_STORES') || '[]'); } catch { return []; }
+  });
+
+  const setDevices = useCallback((updater) => {
+    setDevicesState(prev => {
+      const next = typeof updater === 'function' ? updater(prev) : updater;
+      localStorage.setItem('SIGNAGE_DEVICES', JSON.stringify(next));
+      return next;
+    });
+  }, []);
+
+  const setGroups = useCallback((updater) => {
+    setGroupsState(prev => {
+      const next = typeof updater === 'function' ? updater(prev) : updater;
+      localStorage.setItem('SIGNAGE_GROUPS', JSON.stringify(next));
+      return next;
+    });
+  }, []);
+
+  const setStores = useCallback((updater) => {
+    setStoresState(prev => {
+      const next = typeof updater === 'function' ? updater(prev) : updater;
+      localStorage.setItem('SIGNAGE_STORES', JSON.stringify(next));
+      return next;
+    });
+  }, []);
+
   // PC 스피커로 듣기 — deviceId Set (체크된 기기만 음소거 해제)
   const [pcAudioSet, setPcAudioSet] = useState(new Set());
-  const [groups, setGroups] = useState([]);
-  const [stores, setStores] = useState([]);
   const [selectedStoreId, setSelectedStoreId] = useState('');
   const [gridLayout, setGridLayout] = useState('auto');
   const [deviceMeta, setDeviceMeta] = useState({});
@@ -1374,7 +1419,20 @@ function App() {
           groupName: d.group?.name || '미배정 기기',
           storeName: d.store?.name || '미배정 사업장'
         }));
-        setDevices(mappedDevices);
+        setDevices(prev => {
+          return mappedDevices.map(newDev => {
+            const oldDev = prev.find(d => d.id === newDev.id);
+            if (oldDev) {
+              return {
+                ...newDev,
+                deviceTime: oldDev.deviceTime,
+                vu: oldDev.vu,
+                vol: oldDev.vol ?? newDev.vol
+              };
+            }
+            return newDev;
+          });
+        });
       })
       .catch(err => console.error('기기 목록 불러오기 실패:', err));
   }, [onUnauth]);
@@ -1456,8 +1514,14 @@ function App() {
       // 재연결 시 DB 실제 상태로 동기화 (끊긴 동안 놓친 offline 이벤트 복구)
       fetchDevices();
     });
-    socket.on('disconnect', () => setServerOnline(false));
-    socket.on('connect_error', () => setServerOnline(false));
+    socket.on('disconnect', () => {
+      setServerOnline(false);
+      setDevices(prev => prev.map(d => ({ ...d, status: 'offline' })));
+    });
+    socket.on('connect_error', () => {
+      setServerOnline(false);
+      setDevices(prev => prev.map(d => ({ ...d, status: 'offline' })));
+    });
 
     socket.on('device_status_update', (update) => {
       setDevices(prev => {
@@ -1554,7 +1618,19 @@ function App() {
             <span>환경설정</span>
           </a>
         </nav>
-        <div style={{ padding: '16px', marginTop: 'auto' }}>
+        <div style={{ padding: '16px', marginTop: 'auto', display: 'flex', flexDirection: 'column', gap: '10px' }}>
+          {/* Dashboard Version & Last Updated Date/Time display */}
+          <div style={{ padding: '10px', borderRadius: '8px', background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.06)', display: 'flex', flexDirection: 'column', gap: '6px' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.7rem', color: '#64748b', alignItems: 'center' }}>
+              <span>대시보드 버전</span>
+              <span style={{ fontWeight: 600, color: '#3b82f6', fontFamily: 'monospace' }}>v1.0.0</span>
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '2px', fontSize: '0.68rem', color: '#64748b', borderTop: '1px solid rgba(255,255,255,0.05)', paddingTop: '6px', marginTop: '2px' }}>
+              <span style={{ color: '#475569', fontSize: '0.62rem', fontWeight: 600, textTransform: 'uppercase' }}>최종 업데이트</span>
+              <span style={{ color: 'var(--text-secondary)', fontFamily: 'monospace', fontWeight: 600 }}>2026-05-26 11:23</span>
+            </div>
+          </div>
+
           <button
             onClick={() => {
               apiFetch(`${SOCKET_URL}/api/auth/logout`, { method: 'POST' }).catch(() => {});
@@ -1656,8 +1732,33 @@ function App() {
                   <div
                     key={device.id}
                     className="glass-card device-card animate-fade-in"
-                    style={{ animationDelay: `${index * 0.1}s` }}
+                    style={{ animationDelay: `${index * 0.1}s`, position: 'relative' }}
                   >
+                    {/* 서버 오프라인 오버레이 레이어 추가 */}
+                    {serverOnline !== true && (
+                      <div style={{
+                        position: 'absolute', top: 0, left: 0, right: 0, bottom: 0,
+                        background: 'rgba(15, 23, 42, 0.78)', // 어두운 반투명 색상
+                        backdropFilter: 'blur(3px)', // 흐림 효과
+                        borderRadius: '16px', // 기기 카드 둥근 모서리 맞춤
+                        display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
+                        zIndex: 10, gap: '10px',
+                        border: '1px solid rgba(239, 68, 68, 0.2)',
+                        padding: '16px', textAlign: 'center'
+                      }}>
+                        <div style={{
+                          width: '38px', height: '38px', borderRadius: '50%', background: 'rgba(239, 68, 68, 0.15)',
+                          display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#EF4444', fontWeight: 'bold', fontSize: '1.1rem'
+                        }}>
+                          ⚠️
+                        </div>
+                        <div style={{ fontWeight: 700, fontSize: '0.88rem', color: '#EF4444' }}>서버 통신 차단</div>
+                        <div style={{ fontSize: '0.7rem', color: '#94a3b8', lineHeight: '1.3' }}>
+                          대시보드 서버가 가동 상태가 아니므로<br />기기 실시간 모니터링을 진행할 수 없습니다.
+                        </div>
+                      </div>
+                    )}
+
                     {/* PiP 화면 영역 */}
                     <div className="thumbnail-wrapper">
                       <div className="device-thumbnail">
