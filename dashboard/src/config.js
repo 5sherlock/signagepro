@@ -1,5 +1,5 @@
 const savedUrl = typeof window !== 'undefined' ? localStorage.getItem('SIGNAGE_SERVER_URL') : null;
-export const API_URL = savedUrl || 'http://localhost:3000';
+export const API_URL = savedUrl || 'http://localhost:3300';
 export const SOCKET_URL = API_URL;
 
 export function getToken() {

@@ -8,12 +8,31 @@ param(
     [string]$Message = ""
 )
 
-$ROOT = "C:\WorkSpace\signagepro"
+$ROOT = $PSScriptRoot
+if (-not $ROOT) {
+    $ROOT = "c:\Users\amore\WorkSpace\signagepro"
+}
 Set-Location $ROOT
 
 # 1. Git commit + push
 Write-Host ""
 Write-Host "[1/3] Git commit & push" -ForegroundColor Cyan
+
+# [NEW] 대상 피처 브랜치로 자동 순간이동 (생성 및 전환 예외 처리)
+$targetBranch = "feature/device-delete-offline-ux"
+$currentBranch = git rev-parse --abbrev-ref HEAD
+
+if ($currentBranch -ne $targetBranch) {
+    Write-Host "  현재 브랜치($currentBranch)에서 대상 피처 브랜치($targetBranch)로 스마트 이동 중..." -ForegroundColor Cyan
+    $exists = git branch --list $targetBranch
+    if ($exists) {
+        git checkout $targetBranch
+    } else {
+        git checkout -b $targetBranch
+    }
+    Write-Host "  [OK] 브랜치 전환 완료: $targetBranch" -ForegroundColor Green
+}
+
 git add -A
 $status = git status --porcelain
 if ($status) {
@@ -45,12 +64,12 @@ if ($status) {
 Write-Host ""
 Write-Host "[2/3] USB 드라이브 확인" -ForegroundColor Cyan
 if (-not $UsbPath) {
-    $removable = Get-WmiObject Win32_LogicalDisk | Where-Object { $_.DriveType -eq 2 }
+    $removable = @(Get-WmiObject Win32_LogicalDisk | Where-Object { $_.DriveType -eq 2 })
     if ($removable.Count -eq 0) {
         Write-Host "  [ERROR] USB를 찾을 수 없습니다." -ForegroundColor Red
         exit 1
     } elseif ($removable.Count -eq 1) {
-        $UsbPath = $removable.DeviceID + "\"
+        $UsbPath = $removable[0].DeviceID + "\"
         Write-Host "  [OK] USB 감지: $UsbPath" -ForegroundColor Green
     } else {
         Write-Host "  여러 드라이브 감지됨:"
@@ -109,65 +128,51 @@ if (Test-Path "$ROOT\server\.env") {
     if ($line) { $secret = ($line -replace 'DEVICE_SECRET\s*=\s*"?([^"]+)"?','$1').Trim() }
 }
 
-$md = @"
-# SignagePro 새 PC 구축 가이드
-생성: $(Get-Date -Format 'yyyy-MM-dd HH:mm')
-
----
-
-## 1. 사전 설치
-- Node.js 20+   https://nodejs.org
-- Java JDK 21   https://www.oracle.com/java
-- Android Studio https://developer.android.com/studio
-- Git            https://git-scm.com
-
-## 2. 클론
-    git clone <저장소URL> C:\WorkSpace\signagepro
-    cd C:\WorkSpace\signagepro
-
-## 3. USB에서 파일 복사
-    copy USB:\signagepro_backup\server\prisma\dev.db        server\prisma\dev.db
-    copy USB:\signagepro_backup\server\.env                 server\.env
-    xcopy USB:\signagepro_backup\server\uploads\*           server\uploads\ /E /I /Y
-    xcopy USB:\signagepro_backup\server\update\*            server\update\ /E /I /Y
-    copy USB:\signagepro_backup\android\signagepro.keystore android\app\signagepro.keystore
-
-## 4. 서버 실행
-    cd server
-    npm install
-    npx prisma generate
-    npx prisma db push
-    node index.js
-
-## 5. 대시보드 실행
-    cd dashboard
-    npm install
-    npm run dev
-
-## 6. Android 빌드
-    android\local.properties 생성:
-        sdk.dir=C:\\Users\\<사용자명>\\AppData\\Local\\Android\\Sdk
-
-    android\gradle.properties 에 추가:
-        org.gradle.java.home=C:\\Program Files\\Java\\jdk-21.0.11
-
-    빌드:
-        cd android
-        .\gradlew.bat assembleDebug
-
-## 7. 포트
-    3000  API 서버 + Socket.io
-    5173  대시보드
-    10080 Android TCP 하트비트
-    5555  ADB over TCP
-
-## 8. 기기 설정 정보
-    Device Secret : $secret
-    서버 주소     : http://<이 PC IP>:3000
-    기기 진입     : 우상단 더블탭 -> 관리 메뉴 -> 설정 변경
-"@
-
-$md | Out-File "$DEST\SETUP.md" -Encoding utf8
+$sp = "$DEST\SETUP.md"
+Set-Content -Path $sp -Value "# SignagePro 새 PC 구축 가이드" -Encoding utf8
+Add-Content -Path $sp -Value ("생성: " + (Get-Date -Format 'yyyy-MM-dd HH:mm') + "`n")
+Add-Content -Path $sp -Value "---`n"
+Add-Content -Path $sp -Value "## 1. 사전 설치"
+Add-Content -Path $sp -Value "- Node.js 20+   https://nodejs.org"
+Add-Content -Path $sp -Value "- Java JDK 21   https://www.oracle.com/java"
+Add-Content -Path $sp -Value "- Android Studio https://developer.android.com/studio"
+Add-Content -Path $sp -Value "- Git            https://git-scm.com`n"
+Add-Content -Path $sp -Value "## 2. 클론"
+Add-Content -Path $sp -Value "    git clone <저장소URL> C:\WorkSpace\signagepro"
+Add-Content -Path $sp -Value "    cd C:\WorkSpace\signagepro`n"
+Add-Content -Path $sp -Value "## 3. USB에서 파일 복사"
+Add-Content -Path $sp -Value "    copy USB:\signagepro_backup\server\prisma\dev.db        server\prisma\dev.db"
+Add-Content -Path $sp -Value "    copy USB:\signagepro_backup\server\.env                 server\.env"
+Add-Content -Path $sp -Value "    xcopy USB:\signagepro_backup\server\uploads\*           server\uploads\ /E /I /Y"
+Add-Content -Path $sp -Value "    xcopy USB:\signagepro_backup\server\update\*            server\update\ /E /I /Y"
+Add-Content -Path $sp -Value "    copy USB:\signagepro_backup\android\signagepro.keystore android\app\signagepro.keystore`n"
+Add-Content -Path $sp -Value "## 4. 서버 실행"
+Add-Content -Path $sp -Value "    cd server"
+Add-Content -Path $sp -Value "    npm install"
+Add-Content -Path $sp -Value "    npx prisma generate"
+Add-Content -Path $sp -Value "    npx prisma db push"
+Add-Content -Path $sp -Value "    node index.js`n"
+Add-Content -Path $sp -Value "## 5. 대시보드 실행"
+Add-Content -Path $sp -Value "    cd dashboard"
+Add-Content -Path $sp -Value "    npm install"
+Add-Content -Path $sp -Value "    npm run dev`n"
+Add-Content -Path $sp -Value "## 6. Android 빌드"
+Add-Content -Path $sp -Value "    android\local.properties 생성:"
+Add-Content -Path $sp -Value "        sdk.dir=C:\\Users\\<사용자명>\\AppData\\Local\\Android\\Sdk`n"
+Add-Content -Path $sp -Value "    android\gradle.properties 에 추가:"
+Add-Content -Path $sp -Value "        org.gradle.java.home=C:\\Program Files\\Java\\jdk-21.0.11`n"
+Add-Content -Path $sp -Value "    빌드:"
+Add-Content -Path $sp -Value "        cd android"
+Add-Content -Path $sp -Value "        .\gradlew.bat assembleDebug`n"
+Add-Content -Path $sp -Value "## 7. 포트"
+Add-Content -Path $sp -Value "    3000  API 서버 + Socket.io"
+Add-Content -Path $sp -Value "    5173  대시보드"
+Add-Content -Path $sp -Value "    10080 Android TCP 하트비트"
+Add-Content -Path $sp -Value "    5555  ADB over TCP`n"
+Add-Content -Path $sp -Value "## 8. 기기 설정 정보"
+Add-Content -Path $sp -Value ("    Device Secret : " + $secret)
+Add-Content -Path $sp -Value "    서버 주소     : http://<이 PC IP>:3000"
+Add-Content -Path $sp -Value "    기기 진입     : 우상단 더블탭 -> 관리 메뉴 -> 설정 변경"
 Write-Host "  [OK] SETUP.md 생성됨"
 
 # 완료
@@ -182,5 +187,5 @@ Write-Host "백업 파일 목록:" -ForegroundColor Cyan
 Get-ChildItem $DEST -Recurse -File | ForEach-Object {
     $rel = $_.FullName.Replace($DEST,"").TrimStart("\")
     $kb  = [math]::Round($_.Length/1KB,1)
-    Write-Host "  $rel ($kb KB)"
+    Write-Host ("  " + $rel + " (" + $kb + " KB)")
 }

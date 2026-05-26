@@ -1,4 +1,4 @@
-# ============================================================
+﻿# ============================================================
 # SignagePro -- 새 PC 서버 구축 스크립트
 # USB의 signagepro_backup 폴더 안에서 실행:
 #   PowerShell -ExecutionPolicy Bypass -File .\setup_from_usb.ps1

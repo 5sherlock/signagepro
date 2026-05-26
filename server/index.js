@@ -1173,7 +1173,7 @@ async function reloadCrons() {
 reloadCrons();
 
 // 서버 실행
-const HTTP_PORT = 3000;
+const HTTP_PORT = process.env.PORT || 3300;
 const TCP_PORT = 10080;
 
 httpServer.listen(HTTP_PORT, () => {
