@@ -35,6 +35,7 @@ function startServer() {
 
   const envVars = {
     ...process.env,
+    PORT: process.env.PORT || '3300',
     NODE_ENV: isDev ? 'development' : 'production',
     DATABASE_URL: isDev
       ? `file:${path.resolve(serverDir, 'prisma/dev.db')}`
