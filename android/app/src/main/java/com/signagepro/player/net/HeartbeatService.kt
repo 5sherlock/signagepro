@@ -46,7 +46,12 @@ class HeartbeatService(
      * 현재 재생 중인 슬라이드 정보. 형식: "<index>|<total>|<filename>"
      * index/total은 1-based. null이면 heartbeat에 포함하지 않음.
      */
-    private val slideProvider: (() -> String?)? = null
+    private val slideProvider: (() -> String?)? = null,
+    /**
+     * 화면 상태 반환. "on" 또는 "off". null이면 heartbeat에 포함하지 않음.
+     * 스케줄에 의해 화면이 꺼지면 "off", 켜지면 "on" 반환.
+     */
+    private val screenStateProvider: (() -> String)? = null
 ) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var job: Job? = null
@@ -116,8 +121,9 @@ class HeartbeatService(
                     val timePart = "/time:${System.currentTimeMillis()}"
                     // slide: "1|5|filename.jpg" 형식 — '|' 구분자로 '/' 충돌 방지
                     val slidePart = slideProvider?.invoke()?.let { "/slide:$it" } ?: ""
+                    val screenPart = screenStateProvider?.invoke()?.let { "/screen:$it" } ?: ""
                     writeMutex.withLock {
-                        out.write("status:$deviceId/cpu:$cpu/mem:$mem/ver:$appVersion$dlPart$volPart$timePart$slidePart\n")
+                        out.write("status:$deviceId/cpu:$cpu/mem:$mem/ver:$appVersion$dlPart$volPart$timePart$slidePart$screenPart\n")
                         out.flush()
                     }
                     val ack = input.readLine() ?: throw IOException("EOF on heartbeat")

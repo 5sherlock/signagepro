@@ -1457,7 +1457,8 @@ function App() {
                 vu: newDev.vu ?? oldDev.vu,
                 vol: newDev.vol ?? oldDev.vol,
                 dl: newDev.dl ?? oldDev.dl,
-                slide: newDev.slide ?? oldDev.slide
+                slide: newDev.slide ?? oldDev.slide,
+                screenOff: newDev.screenOff ?? oldDev.screenOff ?? false
               };
             }
             return newDev;
@@ -1559,7 +1560,7 @@ function App() {
         if (exists) {
           return prev.map(d =>
             d.id === update.deviceId
-              ? { ...d, status: update.status, cpuUsage: update.cpu ?? d.cpuUsage, memUsage: update.mem ?? d.memUsage, ip: update.ip || d.ip, appVersion: update.appVersion || d.appVersion, dl: update.dl ?? null, vol: update.vol ?? d.vol, deviceTime: update.deviceTime ?? d.deviceTime, slide: update.slide ?? d.slide }
+              ? { ...d, status: update.status, cpuUsage: update.cpu ?? d.cpuUsage, memUsage: update.mem ?? d.memUsage, ip: update.ip || d.ip, appVersion: update.appVersion || d.appVersion, dl: update.dl ?? null, vol: update.vol ?? d.vol, deviceTime: update.deviceTime ?? d.deviceTime, slide: update.slide ?? d.slide, screenOff: update.screenOff ?? d.screenOff ?? false }
               : d
           );
         } else {
@@ -1783,6 +1784,26 @@ function App() {
                         <div style={{ fontWeight: 700, fontSize: '0.88rem', color: '#EF4444' }}>서버 통신 차단</div>
                         <div style={{ fontSize: '0.7rem', color: '#94a3b8', lineHeight: '1.3' }}>
                           대시보드 서버가 가동 상태가 아니므로<br />기기 실시간 모니터링을 진행할 수 없습니다.
+                        </div>
+                      </div>
+                    )}
+
+                    {/* 화면 꺼짐 오버레이 — 스케줄 OFF, 기기는 온라인 유지 */}
+                    {device.screenOff && device.status === 'online' && serverOnline === true && (
+                      <div style={{
+                        position: 'absolute', top: 0, left: 0, right: 0, bottom: 0,
+                        background: 'rgba(8, 12, 28, 0.86)',
+                        backdropFilter: 'blur(2px)',
+                        borderRadius: '16px',
+                        display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
+                        zIndex: 5, gap: '8px',
+                        border: '1px solid rgba(99,102,241,0.25)',
+                        padding: '16px', textAlign: 'center', pointerEvents: 'none'
+                      }}>
+                        <div style={{ fontSize: '1.6rem', lineHeight: 1 }}>🌙</div>
+                        <div style={{ fontWeight: 700, fontSize: '0.82rem', color: '#818cf8' }}>화면 꺼짐</div>
+                        <div style={{ fontSize: '0.66rem', color: '#475569', lineHeight: '1.4' }}>
+                          스케줄에 의해 꺼진 상태<br/>기기는 정상 연결 중
                         </div>
                       </div>
                     )}

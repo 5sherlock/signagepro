@@ -76,6 +76,12 @@ class PlayerCoordinator(
     @Volatile private var dlStatus: String? = null
 
     /**
+     * 화면 켜짐/꺼짐 상태 — heartbeat에 포함.
+     * true = 화면 켜짐 (기본값), false = 스케줄에 의해 화면 꺼짐.
+     */
+    @Volatile private var screenOn: Boolean = true
+
+    /**
      * 현재 재생 중인 슬라이드 정보 — heartbeat에 포함.
      * 형식: "<index>|<total>|<filename>" (index 1-based, '|' 구분자)
      */
@@ -170,6 +176,8 @@ class PlayerCoordinator(
         }
 
         initVisualizer()
+        // 화면 ON/OFF 시 screenOn 상태 업데이트 → heartbeat에 포함
+        scheduleManager.onScreenStateChange = { on -> screenOn = on }
         startHeartbeat(serverUrl, deviceId, secret)
         startControlChannel(serverUrl, deviceId)
         startTimeSyncLoop(serverUrl)
@@ -508,7 +516,8 @@ class PlayerCoordinator(
                 val cur = audioManager.getStreamVolume(AudioManager.STREAM_MUSIC)
                 if (max > 0) (cur.toFloat() / max * 15).toInt() else null
             },
-            vuProvider = { getVuLevel() }
+            vuProvider = { getVuLevel() },
+            screenStateProvider = { if (screenOn) "on" else "off" }
         ).also { it.start() }
     }
 

@@ -20,6 +20,13 @@ class ScreenScheduleManager(private val context: Context) {
     @Volatile private var schedules: List<ScheduleDto> = emptyList()
     private var job: Job? = null
 
+    /**
+     * 화면 ON/OFF 시 호출되는 콜백.
+     * true = 화면 켜짐, false = 화면 꺼짐.
+     * HeartbeatService에 상태를 전달하기 위해 PlayerCoordinator가 설정.
+     */
+    var onScreenStateChange: ((Boolean) -> Unit)? = null
+
     private val powerManager = context.getSystemService(Context.POWER_SERVICE) as PowerManager
     private val dpm = context.getSystemService(Context.DEVICE_POLICY_SERVICE) as DevicePolicyManager
     private val adminComponent = ComponentName(context, SignageDeviceAdmin::class.java)
@@ -82,6 +89,7 @@ class ScreenScheduleManager(private val context: Context) {
             )
             wl.acquire(3_000L)
             Log.i(TAG, "화면 켜기 완료")
+            onScreenStateChange?.invoke(true)
         } catch (e: Exception) {
             Log.e(TAG, "화면 켜기 실패", e)
         }
@@ -92,6 +100,7 @@ class ScreenScheduleManager(private val context: Context) {
             if (dpm.isAdminActive(adminComponent)) {
                 dpm.lockNow()
                 Log.i(TAG, "화면 끄기 완료 (lockNow)")
+                onScreenStateChange?.invoke(false)
             } else {
                 Log.w(TAG, "Device Admin 미활성 — 화면 끄기 불가. 관리자 권한을 부여하세요.")
             }
