@@ -359,7 +359,9 @@ app.get('/api/devices', async (req, res) => {
         slide: status === 'online' ? (cached.slide || null) : null,
         dl: status === 'online' ? (cached.dl || null) : null,
         vol: cached.vol !== undefined ? cached.vol : (d.vol !== undefined ? d.vol : null),
-        vu: status === 'online' ? (cached.vu || 0) : 0
+        vu: status === 'online' ? (cached.vu || 0) : 0,
+        // 오프라인이면 screenOff 초기화 (기기 재연결 시 새 상태로 갱신됨)
+        screenOff: status === 'online' ? (cached.screenOff ?? false) : false
       };
     });
     console.log(`[API] 기기 목록 조회 요청됨. 현재 기기 수: ${devices.length}대`);
@@ -1005,7 +1007,7 @@ async function handleTcpMessage(socket, msg) {
     }
 
     const parts = msg.substring(7).split('/');
-    let cpu = null, mem = null, ver = null, dl = null, vol = null, deviceTime = null, slide = null;
+    let cpu = null, mem = null, ver = null, dl = null, vol = null, deviceTime = null, slide = null, screen = null;
     parts.forEach(p => {
       if (p.startsWith('cpu:')) cpu = parseFloat(p.substring(4));
       if (p.startsWith('mem:')) mem = parseFloat(p.substring(4));
@@ -1024,6 +1026,8 @@ async function handleTcpMessage(socket, msg) {
           slide = { index: parseInt(sp[0]) || 0, total: parseInt(sp[1]) || 0, filename: sp[2] || '' };
         }
       }
+      // screen: "on" 또는 "off" — 스케줄에 의한 화면 상태
+      if (p.startsWith('screen:')) screen = p.substring(7).trim();
     });
     // dl: cur/total/pct 가 '/'로 분리되어 parts에 ['dl:1','3','67'] 형태로 들어옴
     const dlIdx = parts.findIndex(p => p.startsWith('dl:'));
@@ -1047,7 +1051,9 @@ async function handleTcpMessage(socket, msg) {
       vol: vol !== null ? vol : cached.vol,
       cpu: cpu ?? cached.cpu,
       mem: mem ?? cached.mem,
-      ver: ver ?? cached.ver
+      ver: ver ?? cached.ver,
+      // screen: "on"/"off" — null이면 이전 값 유지 (구버전 앱 호환)
+      screenOff: screen !== null ? (screen === 'off') : (cached.screenOff ?? false)
     });
 
     try {
@@ -1056,7 +1062,8 @@ async function handleTcpMessage(socket, msg) {
         update: { status: 'online', lastSeen: new Date(), ip: normalizeIp(socket.remoteAddress), cpuUsage: cpu, memUsage: mem, ...(ver && { appVersion: ver }) },
         create: { id: deviceId, name: deviceId, status: 'online', lastSeen: new Date(), ip: normalizeIp(socket.remoteAddress), cpuUsage: cpu, memUsage: mem, appVersion: ver }
       });
-      io.emit('device_status_update', { deviceId, status: 'online', cpu, mem, ip: normalizeIp(socket.remoteAddress), appVersion: ver, dl, vol, deviceTime, slide });
+      const screenOff = deviceLiveStateCache.get(deviceId)?.screenOff ?? false;
+      io.emit('device_status_update', { deviceId, status: 'online', cpu, mem, ip: normalizeIp(socket.remoteAddress), appVersion: ver, dl, vol, deviceTime, slide, screenOff });
       socket.write('ok:\n');
     } catch (err) {
       console.error('[TCP] DB 에러:', err);
