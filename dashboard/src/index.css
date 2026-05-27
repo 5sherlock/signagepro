@@ -254,37 +254,35 @@ h6 {
   overflow-y: auto;
   /* 대시보드 그리드 내에서만 스크롤 */
   padding-right: 4px;
-  justify-items: flex-start;
-  justify-content: flex-start;
-  max-width: 1000px;
+  align-content: start;
+  width: 100%;
+  max-width: 100%;
   margin: 0;
 }
 
 /* Auto Layout Classes */
 .dashboard-grid.count-1 {
-  grid-template-columns: 1fr;
-  grid-template-rows: auto;
+  grid-template-columns: minmax(0, 480px);
 }
 
 .dashboard-grid.count-2 {
   grid-template-columns: repeat(2, 1fr);
-  grid-template-rows: auto;
 }
 
 .dashboard-grid.count-3 {
   grid-template-columns: repeat(3, 1fr);
-  grid-template-rows: auto;
 }
 
 .dashboard-grid.count-4 {
   grid-template-columns: repeat(2, 1fr);
-  grid-template-rows: auto;
 }
 
-.dashboard-grid.count-5,
+.dashboard-grid.count-5 {
+  grid-template-columns: repeat(3, 1fr);
+}
+
 .dashboard-grid.count-6 {
-  grid-template-columns: repeat(4, 1fr);
-  grid-template-rows: auto;
+  grid-template-columns: repeat(3, 1fr);
 }
 
 .dashboard-grid.count-many {
@@ -341,6 +339,25 @@ h6 {
   grid-template-rows: repeat(3, 1fr);
 }
 
+.dashboard-grid.layout-4x1 {
+  grid-template-columns: repeat(4, 1fr);
+  grid-template-rows: 1fr;
+}
+
+.dashboard-grid.layout-5x1 {
+  grid-template-columns: repeat(5, 1fr);
+  grid-template-rows: 1fr;
+}
+
+/* 좁은 카드(4x1, 5x1) — 텍스트 영역만 축소, 썸네일은 유지 */
+.dashboard-grid.layout-4x1 .device-header {
+  zoom: 0.88;
+}
+
+.dashboard-grid.layout-5x1 .device-header {
+  zoom: 0.78;
+}
+
 .thumbnail-wrapper {
   width: 100%;
   aspect-ratio: 16/9;
@@ -394,14 +411,18 @@ h6 {
   display: flex;
   justify-content: space-between;
   align-items: flex-start;
-  margin-bottom: 20px;
-  padding: 0 12px; /* Content within yellow lines */
+  margin-bottom: 12px;
+  padding: 0 12px;
+  gap: 6px;
 }
 
 .device-name {
-  font-size: 1.25rem;
+  font-size: 1rem;
   font-weight: 600;
   margin-bottom: 4px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .device-group {
@@ -579,11 +600,13 @@ h6 {
 @keyframes slide-in-down   { from { transform: translateY(-100%); } to { transform: translateY(0); } }
 @keyframes slide-out-down  { from { transform: translateY(0); }     to { transform: translateY(100%); } }
 
-.preview-fade     { animation: fade-to-black-in  var(--trans-time, 1s) ease-in-out forwards; }
-.preview-fade-out { animation: fade-to-black-out var(--trans-time, 1s) ease-in-out forwards; }
+/* incoming 레이어: opacity:0 선언으로 브라우저가 애니메이션 시작 전
+   단 1프레임이라도 기본값(1)으로 렌더링하는 플래시 현상 방지              */
+.preview-fade     { opacity: 0; animation: fade-to-black-in  var(--trans-time, 1s) ease-in-out forwards; }
+.preview-fade-out {             animation: fade-to-black-out var(--trans-time, 1s) ease-in-out forwards; }
 
-.preview-dissolve     { animation: dissolve-transition  var(--trans-time, 1s) ease-in-out forwards; }
-.preview-dissolve-out { animation: fade-out-transition  var(--trans-time, 1s) ease-in-out forwards; }
+.preview-dissolve     { opacity: 0; animation: dissolve-transition  var(--trans-time, 1s) ease-in-out forwards; }
+.preview-dissolve-out {             animation: fade-out-transition  var(--trans-time, 1s) ease-in-out forwards; }
 
 .preview-slide-in-right  { animation: slide-in-right  var(--trans-time, 0.8s) cubic-bezier(0.4,0,0.2,1) forwards; }
 .preview-slide-out-right { animation: slide-out-right var(--trans-time, 0.8s) cubic-bezier(0.4,0,0.2,1) forwards; }

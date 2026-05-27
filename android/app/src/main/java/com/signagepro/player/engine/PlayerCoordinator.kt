@@ -75,6 +75,12 @@ class PlayerCoordinator(
     /** 다운로드 진행 상태 — heartbeat에 포함. "cur/total/pct" 형식 */
     @Volatile private var dlStatus: String? = null
 
+    /**
+     * 현재 재생 중인 슬라이드 정보 — heartbeat에 포함.
+     * 형식: "<index>|<total>|<filename>" (index 1-based, '|' 구분자)
+     */
+    @Volatile private var currentSlideInfo: String? = null
+
     private val audioManager by lazy {
         context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
     }
@@ -452,6 +458,7 @@ class PlayerCoordinator(
                 if (slot == null) { delay(1_000); continue }
 
                 val file = cache.cachedFile(slot.item.media)
+                var animMs = 0L
                 if (file != null) {
                     // 이미지는 IO 스레드에서 미리 디코딩 — Main 스레드 차단을 방지해
                     // waitMs 계산 정확도를 높이고 애니메이션 프레임 누락을 예방.
@@ -460,16 +467,21 @@ class PlayerCoordinator(
                             renderer.preloadImage(slot.item, file)
                         }
                     }
-                    renderer.show(slot.item, file)
+                    // show()는 실제 실행된 전환 애니메이션 지속 시간(ms)을 반환.
+                    // prevItem.transitionTime 기준이므로 slot.item.transitionTime과 다를 수 있음.
+                    animMs = renderer.show(slot.item, file)
+                    // 현재 재생 슬라이드 정보를 heartbeat에 포함 — 대시보드 실시간 미리보기용
+                    currentSlideInfo = "${slot.index + 1}|${slot.total}|${slot.item.media.filename}"
                 } else {
                     Log.w(TAG, "캐시에 없음: ${slot.item.media.filename}")
                 }
 
-                // 최소 대기 = 전환 애니메이션 시간 + 200ms 버퍼.
-                // 이보다 짧으면 이전 fadeToBlack 완료 전에 다음 show()가 호출되어
-                // standby.alpha=0f 강제 세팅이 현재 표시 중인 레이어를 즉시 블랙으로 만듦.
-                val transMs = (slot.item.transitionTime?.toLong() ?: 1000L)
-                val minWaitMs = transMs + 200L
+                // 최소 대기 = 실제 실행된 전환 애니메이션 시간 + 200ms 버퍼.
+                // ⚠ 이전 코드는 slot.item.transitionTime(다음 슬라이드 값)을 사용했으나
+                //   애니메이션은 prevItem.transitionTime으로 실행되어, 두 값이 다르면
+                //   fadeToBlack 도중 다음 show()가 호출되어 화면이 블랙이 되는 버그 발생.
+                // → show() 반환값(animMs) 사용으로 항상 올바른 최솟값 보장.
+                val minWaitMs = animMs + 200L
                 val waitMs = (slot.nextSlotEpochMs - ntp.now()).coerceAtLeast(minWaitMs)
                 delay(waitMs)
             }
@@ -490,6 +502,7 @@ class PlayerCoordinator(
             metrics = metrics,
             appVersion = versionName,
             dlStatusProvider = { dlStatus },
+            slideProvider = { currentSlideInfo },
             volumeProvider = {
                 val max = audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC)
                 val cur = audioManager.getStreamVolume(AudioManager.STREAM_MUSIC)
