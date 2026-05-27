@@ -49,7 +49,7 @@ function computeNtpPosition(medias, epochMs) {
 //   현재 방식: 200ms setInterval로 매 tick마다 NTP epoch 재계산
 //              → 오차가 쌓이지 않음. 101/102가 항상 동일 슬라이드 표시
 
-function DevicePreview({ groupId, deviceId, onUpdate, pcAudio = false, devVol = 8 }) {
+function DevicePreview({ groupId, deviceId, onUpdate, pcAudio = false, devVol = 8, liveSlide = null }) {
   const [playlist, setPlaylist] = useState([]);
   const [ntpOffset, setNtpOffset] = useState(0); // 서버시각 − 로컬시각 (ms)
   const [currentIndex, setCurrentIndex] = useState(0);
@@ -102,13 +102,25 @@ function DevicePreview({ groupId, deviceId, onUpdate, pcAudio = false, devVol = 
     return () => socket.disconnect();
   }, [groupId, deviceId]);
 
-  // ── 200ms 마다 NTP 기반 슬라이드 위치 재계산 ─────────────────────────────
+  // liveSlide ref — effect 의존성에 추가하지 않고 최신값을 tick 내부에서 참조
+  const liveSlideRef = useRef(liveSlide);
+  useEffect(() => { liveSlideRef.current = liveSlide; }, [liveSlide]);
+
+  // ── 200ms 마다 슬라이드 위치 재계산 ──────────────────────────────────────
+  // 우선순위: 기기가 보고한 실제 슬라이드 인덱스(liveSlide) > NTP 계산값
   useEffect(() => {
     if (!playlist.length) return;
 
     const tick = () => {
       const nowMs = Date.now() + ntpOffset;
-      const { idx, elapsed } = computeNtpPosition(playlist, nowMs);
+      const { idx: ntpIdx, elapsed } = computeNtpPosition(playlist, nowMs);
+
+      // 기기 실제 보고값(1-based → 0-based 변환) 우선 사용
+      const live = liveSlideRef.current;
+      const liveIdx = (live && live.index > 0 && live.index <= playlist.length)
+        ? live.index - 1
+        : null;
+      const idx = liveIdx !== null ? liveIdx : ntpIdx;
 
       // 인덱스가 바뀌면 전환 애니메이션 트리거
       if (prevIdxRef.current !== -1 && prevIdxRef.current !== idx) {
@@ -136,6 +148,9 @@ function DevicePreview({ groupId, deviceId, onUpdate, pcAudio = false, devVol = 
   const transType = (prevItem ?? activeItem)?.transition?.toLowerCase() || 'fade';
   const transTime = (prevItem ?? activeItem)?.transitionTime || 1000;
   const duration = activeItem?.duration || 10;
+
+  // 기기 실제 보고값으로 미리보기 중인지 여부
+  const isLiveSync = liveSlide && liveSlide.index > 0 && liveSlide.index <= playlist.length;
 
   // ── 부모(App)에 현재 재생 상태 보고 ─────────────────────────────────────
   // onUpdate를 deps에 포함하면 App 재렌더 시 새 함수 레퍼런스 → 무한 루프
@@ -206,6 +221,16 @@ function DevicePreview({ groupId, deviceId, onUpdate, pcAudio = false, devVol = 
 
   return (
     <div style={{ position: 'relative', width: '100%', height: '100%', overflow: 'hidden', background: '#000' }}>
+      {/* LIVE / NTP 표시 배지 */}
+      <div style={{
+        position: 'absolute', top: 4, right: 4, zIndex: 10,
+        fontSize: '0.48rem', fontWeight: 700, letterSpacing: '0.04em',
+        padding: '2px 5px', borderRadius: 3,
+        background: isLiveSync ? 'rgba(16,185,129,0.85)' : 'rgba(99,102,241,0.75)',
+        color: '#fff', pointerEvents: 'none',
+      }}>
+        {isLiveSync ? '● LIVE' : '◎ NTP'}
+      </div>
       {/* 전환 중: 이전 슬라이드 — slide-out 애니메이션 적용 */}
       {isTransitioning && prevItem && (
         <div
@@ -1383,7 +1408,7 @@ function App() {
   // PC 스피커로 듣기 — deviceId Set (체크된 기기만 음소거 해제)
   const [pcAudioSet, setPcAudioSet] = useState(new Set());
   const [selectedStoreId, setSelectedStoreId] = useState('');
-  const [gridLayout, setGridLayout] = useState('auto');
+  const [gridLayout, setGridLayout] = useState('5x1');
   const [deviceMeta, setDeviceMeta] = useState({});
   // 음소거 전 볼륨 기억 — 음소거 해제 시 원래 볼륨으로 복원
   const preMuteVol = useRef({});
@@ -1425,9 +1450,12 @@ function App() {
             if (oldDev) {
               return {
                 ...newDev,
-                deviceTime: oldDev.deviceTime,
-                vu: oldDev.vu,
-                vol: oldDev.vol ?? newDev.vol
+                ip: newDev.ip || oldDev.ip,               // IP가 null로 덮어써지면 🕐 블록 전체가 사라짐
+                deviceTime: newDev.deviceTime ?? oldDev.deviceTime,
+                vu: newDev.vu ?? oldDev.vu,
+                vol: newDev.vol ?? oldDev.vol,
+                dl: newDev.dl ?? oldDev.dl,
+                slide: newDev.slide ?? oldDev.slide
               };
             }
             return newDev;
@@ -1529,7 +1557,7 @@ function App() {
         if (exists) {
           return prev.map(d =>
             d.id === update.deviceId
-              ? { ...d, status: update.status, cpuUsage: update.cpu ?? d.cpuUsage, memUsage: update.mem ?? d.memUsage, ip: update.ip || d.ip, appVersion: update.appVersion || d.appVersion, dl: update.dl ?? null, vol: update.vol ?? d.vol, deviceTime: update.deviceTime ?? d.deviceTime }
+              ? { ...d, status: update.status, cpuUsage: update.cpu ?? d.cpuUsage, memUsage: update.mem ?? d.memUsage, ip: update.ip || d.ip, appVersion: update.appVersion || d.appVersion, dl: update.dl ?? null, vol: update.vol ?? d.vol, deviceTime: update.deviceTime ?? d.deviceTime, slide: update.slide ?? d.slide }
               : d
           );
         } else {
@@ -1623,11 +1651,11 @@ function App() {
           <div style={{ padding: '10px', borderRadius: '8px', background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.06)', display: 'flex', flexDirection: 'column', gap: '6px' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.7rem', color: '#64748b', alignItems: 'center' }}>
               <span>대시보드 버전</span>
-              <span style={{ fontWeight: 600, color: '#3b82f6', fontFamily: 'monospace' }}>v1.0.0</span>
+              <span style={{ fontWeight: 600, color: '#3b82f6', fontFamily: 'monospace' }}>v{__APP_VERSION__}</span>
             </div>
             <div style={{ display: 'flex', flexDirection: 'column', gap: '2px', fontSize: '0.68rem', color: '#64748b', borderTop: '1px solid rgba(255,255,255,0.05)', paddingTop: '6px', marginTop: '2px' }}>
-              <span style={{ color: '#475569', fontSize: '0.62rem', fontWeight: 600, textTransform: 'uppercase' }}>최종 업데이트</span>
-              <span style={{ color: 'var(--text-secondary)', fontFamily: 'monospace', fontWeight: 600 }}>2026-05-26 11:23</span>
+              <span style={{ color: '#475569', fontSize: '0.62rem', fontWeight: 600, textTransform: 'uppercase' }}>빌드 날짜</span>
+              <span style={{ color: 'var(--text-secondary)', fontFamily: 'monospace', fontWeight: 600 }}>{__BUILD_DATE__}</span>
             </div>
           </div>
 
@@ -1678,7 +1706,9 @@ function App() {
                   <option value="2x2">2 x 2</option>
                   <option value="3x2">3 x 2</option>
                   <option value="3x3">3 x 3</option>
+                  <option value="4x1">4 x 1</option>
                   <option value="4x3">4 x 3</option>
+                  <option value="5x1">5 x 1</option>
                   <option value="custom">직접 입력</option>
                 </select>
                 {gridLayout === 'custom' && (
@@ -1708,10 +1738,6 @@ function App() {
                     </div>
                   </div>
                 )}
-                <button className="btn btn-primary" style={{ marginLeft: '12px' }} onClick={() => setActiveTab('groups')}>
-                  <Plus size={18} />
-                  기기 추가
-                </button>
               </div>
             </header>
 
@@ -1773,6 +1799,7 @@ function App() {
                             onUpdate={(meta) => setDeviceMeta(prev => ({ ...prev, [device.id]: meta }))}
                             pcAudio={pcAudioSet.has(device.id)}
                             devVol={device.vol ?? 8}
+                            liveSlide={device.slide ?? null}
                           />
                         ) : (
                           <div style={{ width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#666', background: '#111' }}>
@@ -1789,11 +1816,11 @@ function App() {
                         <div className="device-group" style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>
                           {device.storeName} &gt; {device.groupName}
                         </div>
-                        {device.ip && (
-                          <div style={{ fontSize: '0.7rem', color: 'var(--text-secondary)', fontFamily: 'monospace', marginTop: '2px', display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' }}>
-                            <span>{device.ip}</span>
+                        {(device.ip || device.deviceTime) && (
+                          <div style={{ fontSize: '0.7rem', color: 'var(--text-secondary)', fontFamily: 'monospace', marginTop: '2px', display: 'flex', gap: '6px', alignItems: 'center', flexWrap: 'nowrap', overflow: 'hidden' }}>
+                            {device.ip && <span style={{ flexShrink: 0 }}>{device.ip}</span>}
                             {device.deviceTime && (
-                              <span style={{ color: '#475569', fontFamily: 'monospace' }} title="기기 현재 시각 (KST 기준으로 스케줄 적용됨)">
+                              <span style={{ color: '#475569', fontFamily: 'monospace', flexShrink: 0, whiteSpace: 'nowrap' }} title="기기 현재 시각 (KST 기준으로 스케줄 적용됨)">
                                 🕐 {new Date(device.deviceTime).toLocaleTimeString('ko-KR', { timeZone: 'Asia/Seoul', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false })}
                               </span>
                             )}
@@ -1804,25 +1831,26 @@ function App() {
                           if (!sched.length) return null;
                           const s = sched[0];
                           return (
-                            <div style={{ fontSize: '0.72rem', color: '#38bdf8', marginTop: '4px', display: 'flex', gap: '8px', flexWrap: 'wrap', overflow: 'visible' }}>
-                              {s.onTime ? <span>☀️ {s.onTime}</span> : null}
-                              {s.offTime ? <span>🌙 {s.offTime}</span> : null}
+                            <div style={{ fontSize: '0.72rem', color: '#38bdf8', marginTop: '3px', display: 'flex', gap: '8px', flexWrap: 'nowrap', overflow: 'hidden' }}>
+                              {s.onTime  ? <span style={{ flexShrink: 0, whiteSpace: 'nowrap' }}>☀️ {s.onTime}</span>  : null}
+                              {s.offTime ? <span style={{ flexShrink: 0, whiteSpace: 'nowrap' }}>🌙 {s.offTime}</span> : null}
                             </div>
                           );
                         })()}
                         {deviceMeta[device.id] && (
                           <div style={{ marginTop: '4px' }}>
                             <div style={{ display: 'flex', alignItems: 'center', gap: '4px', marginBottom: '2px', overflow: 'hidden' }}>
-                              <Film size={10} style={{ color: 'var(--text-secondary)' }} />
+                              <Film size={10} style={{ color: 'var(--text-secondary)', flexShrink: 0 }} />
                               <span style={{ fontSize: '0.65rem', color: 'var(--text-primary)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
                                 {deviceMeta[device.id].filename}
                               </span>
                             </div>
-                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                            {/* 시간 / 전환타입 — 항상 한 줄 (whiteSpace:nowrap으로 강제) */}
+                            <div style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', marginTop: '1px' }}>
                               <span style={{ fontFamily: 'monospace', fontSize: '0.65rem', color: 'var(--text-secondary)' }}>
                                 {formatTime(deviceMeta[device.id].currentTime)} / {formatTime(deviceMeta[device.id].duration)}
                               </span>
-                              <span style={{ fontSize: '0.6rem', color: '#60a5fa', fontWeight: 600, textTransform: 'uppercase' }}>
+                              <span style={{ marginLeft: '6px', fontSize: '0.58rem', color: '#60a5fa', fontWeight: 700, textTransform: 'uppercase', background: 'rgba(96,165,250,0.1)', padding: '1px 4px', borderRadius: 3 }}>
                                 {deviceMeta[device.id].transType}
                               </span>
                             </div>
@@ -1834,18 +1862,37 @@ function App() {
                           <span className="status-dot"></span>
                           {device.status === 'online' ? '온라인' : '오프라인'}
                         </div>
-                        {device.appVersion ? (
-                          <span style={{
-                            fontSize: '0.65rem', fontFamily: 'monospace',
-                            color: (standardVersion && device.appVersion !== standardVersion) ? '#f59e0b' : 'var(--text-secondary)',
-                            fontWeight: (standardVersion && device.appVersion !== standardVersion) ? 700 : 400,
-                          }}
-                            title={(standardVersion && device.appVersion !== standardVersion) ? `기준 버전: v${standardVersion}` : ''}
-                          >
-                            {(standardVersion && device.appVersion !== standardVersion) ? '⚠ ' : ''}v{device.appVersion}
-                          </span>
-                        ) : (
-                          <span style={{ fontSize: '0.65rem', color: '#f59e0b', fontWeight: 700 }} title="앱 버전 미확인">
+                        {device.appVersion ? (() => {
+                          const isOutdated = standardVersion && device.appVersion !== standardVersion;
+                          // "0.4.0 (2026-05-27 12:50)" → verNum="0.4.0", verDate="2026-05-27 12:50"
+                          const parenIdx = device.appVersion.indexOf(' (');
+                          const verNum  = parenIdx >= 0 ? device.appVersion.slice(0, parenIdx) : device.appVersion;
+                          const verDate = parenIdx >= 0 ? device.appVersion.slice(parenIdx + 2).replace(/\)$/, '') : null;
+                          return (
+                            <div style={{
+                              display: 'flex',
+                              flexDirection: 'column',
+                              alignItems: 'flex-end',
+                              textAlign: 'right',
+                              lineHeight: 1.3
+                            }}>
+                              <span
+                                style={{ fontSize: '0.65rem', fontFamily: 'monospace', whiteSpace: 'nowrap',
+                                  color: isOutdated ? '#f59e0b' : 'var(--text-secondary)',
+                                  fontWeight: isOutdated ? 700 : 400 }}
+                                title={`v${device.appVersion}${isOutdated ? `  (기준: v${standardVersion})` : ''}`}
+                              >
+                                {isOutdated ? '⚠ ' : ''}v{verNum}
+                              </span>
+                              {verDate && (
+                                <span style={{ fontSize: '0.6rem', fontFamily: 'monospace', whiteSpace: 'nowrap', color: '#64748b' }}>
+                                  {verDate}
+                                </span>
+                              )}
+                            </div>
+                          );
+                        })() : (
+                          <span style={{ fontSize: '0.65rem', color: '#f59e0b', fontWeight: 700, whiteSpace: 'nowrap' }} title="앱 버전 미확인">
                             ⚠ 버전 미확인
                           </span>
                         )}

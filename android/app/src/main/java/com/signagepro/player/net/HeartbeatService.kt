@@ -41,7 +41,12 @@ class HeartbeatService(
     /** 현재 볼륨 레벨 (0~15) 반환 */
     private val volumeProvider: (() -> Int?)? = null,
     /** 실제 오디오 출력 레벨 (0~100) — Visualizer 측정값 */
-    private val vuProvider: (() -> Int)? = null
+    private val vuProvider: (() -> Int)? = null,
+    /**
+     * 현재 재생 중인 슬라이드 정보. 형식: "<index>|<total>|<filename>"
+     * index/total은 1-based. null이면 heartbeat에 포함하지 않음.
+     */
+    private val slideProvider: (() -> String?)? = null
 ) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var job: Job? = null
@@ -57,17 +62,17 @@ class HeartbeatService(
     }
 
     private suspend fun runForever() {
-        var backoff = 1_000L
+        var backoff = 0L // 첫 재연결은 즉시 (0ms), 이후 지수 백오프
         while (currentCoroutineContext().isActive) {
             try {
                 runSession()
-                backoff = 1_000L
+                backoff = 0L // 정상 종료 시 즉시 재시도
             } catch (e: Exception) {
                 Log.w(TAG, "TCP 세션 종료: ${e.message}")
             }
             if (!currentCoroutineContext().isActive) break
-            delay(backoff)
-            backoff = (backoff * 2).coerceAtMost(60_000L)
+            if (backoff > 0L) delay(backoff)
+            backoff = (backoff.coerceAtLeast(500L) * 2).coerceAtMost(60_000L)
         }
     }
 
@@ -109,8 +114,10 @@ class HeartbeatService(
                     val dlPart = dlStatusProvider?.invoke()?.let { "/dl:$it" } ?: ""
                     val volPart = volumeProvider?.invoke()?.let { "/vol:$it" } ?: ""
                     val timePart = "/time:${System.currentTimeMillis()}"
+                    // slide: "1|5|filename.jpg" 형식 — '|' 구분자로 '/' 충돌 방지
+                    val slidePart = slideProvider?.invoke()?.let { "/slide:$it" } ?: ""
                     writeMutex.withLock {
-                        out.write("status:$deviceId/cpu:$cpu/mem:$mem/ver:$appVersion$dlPart$volPart$timePart\n")
+                        out.write("status:$deviceId/cpu:$cpu/mem:$mem/ver:$appVersion$dlPart$volPart$timePart$slidePart\n")
                         out.flush()
                     }
                     val ack = input.readLine() ?: throw IOException("EOF on heartbeat")

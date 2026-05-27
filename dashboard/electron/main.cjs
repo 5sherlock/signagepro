@@ -2,7 +2,7 @@ const { app, BrowserWindow } = require('electron');
 const path = require('path');
 const { spawn } = require('child_process');
 const fs = require('fs');
-const isDev = !app.isPackaged;
+const isDev = process.env.NODE_ENV === 'development';
 
 let mainWindow;
 let serverProcess;
@@ -132,3 +132,4 @@ app.on('activate', () => {
     createWindow();
   }
 });
+

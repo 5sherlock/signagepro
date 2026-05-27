@@ -16,6 +16,9 @@ const cron = require('node-cron');
 const prisma = new PrismaClient();
 const app = express();
 
+// 메모리에 보관할 기기별 실시간 상태 캐시 (deviceTime, slide, dl, vol, vu)
+const deviceLiveStateCache = new Map();
+
 const DEVICE_SECRET = process.env.DEVICE_SECRET || 'changeme';
 const HEARTBEAT_TIMEOUT_MS = 35000; // 하트비트 10초 간격 × 3 + 여유
 if (DEVICE_SECRET === 'changeme') {
@@ -176,6 +179,14 @@ io.on('connection', (socket) => {
     const name = typeof data === 'object' ? data?.name : null;
     if (!deviceId) return;
     socket.deviceId = deviceId;
+    
+    // 웹 플레이어 실시간 상태 캐시 갱신
+    const cached = deviceLiveStateCache.get(deviceId) || {};
+    deviceLiveStateCache.set(deviceId, {
+      ...cached,
+      deviceTime: Date.now()
+    });
+
     try {
       await prisma.device.upsert({
         where: { id: deviceId },
@@ -340,7 +351,16 @@ app.get('/api/devices', async (req, res) => {
     const result = devices.map(d => {
       const stale = !d.lastSeen || (now - new Date(d.lastSeen).getTime()) > HEARTBEAT_TIMEOUT_MS;
       const status = stale ? 'offline' : d.status;
-      return { ...d, status };
+      const cached = deviceLiveStateCache.get(d.id) || {};
+      return {
+        ...d,
+        status,
+        deviceTime: status === 'online' ? (cached.deviceTime || null) : null,
+        slide: status === 'online' ? (cached.slide || null) : null,
+        dl: status === 'online' ? (cached.dl || null) : null,
+        vol: cached.vol !== undefined ? cached.vol : (d.vol !== undefined ? d.vol : null),
+        vu: status === 'online' ? (cached.vu || 0) : 0
+      };
     });
     console.log(`[API] 기기 목록 조회 요청됨. 현재 기기 수: ${devices.length}대`);
     res.json(result);
@@ -943,6 +963,9 @@ function normalizeIp(ip) {
 // socket → deviceId 매핑 (오프라인 감지용)
 const socketDeviceMap = new Map();
 
+// deviceId → 오프라인 처리 대기 타이머 (순간 재연결 감지용 debounce)
+const offlineTimers = new Map();
+
 async function handleTcpMessage(socket, msg) {
   // 인증: auth:<deviceId>:<secret>
   if (msg.startsWith('auth:')) {
@@ -964,7 +987,12 @@ async function handleTcpMessage(socket, msg) {
     const parts = msg.substring(3).split('/');
     const deviceId = parts[0];
     const vu = parseInt(parts[1]) || 0;
-    if (deviceId) io.emit('device_vu_update', { deviceId, vu });
+    if (deviceId) {
+      io.emit('device_vu_update', { deviceId, vu });
+      const cached = deviceLiveStateCache.get(deviceId) || {};
+      cached.vu = vu;
+      deviceLiveStateCache.set(deviceId, cached);
+    }
     return; // ack 없음
   }
 
@@ -977,7 +1005,7 @@ async function handleTcpMessage(socket, msg) {
     }
 
     const parts = msg.substring(7).split('/');
-    let cpu = null, mem = null, ver = null, dl = null, vol = null, deviceTime = null;
+    let cpu = null, mem = null, ver = null, dl = null, vol = null, deviceTime = null, slide = null;
     parts.forEach(p => {
       if (p.startsWith('cpu:')) cpu = parseFloat(p.substring(4));
       if (p.startsWith('mem:')) mem = parseFloat(p.substring(4));
@@ -988,6 +1016,13 @@ async function handleTcpMessage(socket, msg) {
         // 형식: dl:cur/total/pct → 이미 split('/')로 나뉘어 있으므로 다음 두 파트가 total, pct
         // 실제론 dl:cur 로만 파싱됨. 전체 dl 필드는 'dl:1', '3', '67' 세 파트로 분리됨
         // → 인덱스로 처리
+      }
+      // slide: "<index>|<total>|<filename>" (1-based index, '|' 구분자)
+      if (p.startsWith('slide:')) {
+        const sp = p.substring(6).split('|');
+        if (sp.length >= 2) {
+          slide = { index: parseInt(sp[0]) || 0, total: parseInt(sp[1]) || 0, filename: sp[2] || '' };
+        }
       }
     });
     // dl: cur/total/pct 가 '/'로 분리되어 parts에 ['dl:1','3','67'] 형태로 들어옴
@@ -1002,13 +1037,26 @@ async function handleTcpMessage(socket, msg) {
     if (!Number.isFinite(mem)) mem = null;
     if (!Number.isFinite(vol)) vol = null;
 
+    // 실시간 상태 캐시 갱신
+    const cached = deviceLiveStateCache.get(deviceId) || {};
+    deviceLiveStateCache.set(deviceId, {
+      ...cached,
+      deviceTime: deviceTime ?? cached.deviceTime,
+      slide: slide !== null ? slide : cached.slide,
+      dl: dl !== null ? dl : cached.dl,
+      vol: vol !== null ? vol : cached.vol,
+      cpu: cpu ?? cached.cpu,
+      mem: mem ?? cached.mem,
+      ver: ver ?? cached.ver
+    });
+
     try {
       await prisma.device.upsert({
         where: { id: deviceId },
         update: { status: 'online', lastSeen: new Date(), ip: normalizeIp(socket.remoteAddress), cpuUsage: cpu, memUsage: mem, ...(ver && { appVersion: ver }) },
         create: { id: deviceId, name: deviceId, status: 'online', lastSeen: new Date(), ip: normalizeIp(socket.remoteAddress), cpuUsage: cpu, memUsage: mem, appVersion: ver }
       });
-      io.emit('device_status_update', { deviceId, status: 'online', cpu, mem, ip: normalizeIp(socket.remoteAddress), appVersion: ver, dl, vol, deviceTime });
+      io.emit('device_status_update', { deviceId, status: 'online', cpu, mem, ip: normalizeIp(socket.remoteAddress), appVersion: ver, dl, vol, deviceTime, slide });
       socket.write('ok:\n');
     } catch (err) {
       console.error('[TCP] DB 에러:', err);
@@ -1038,12 +1086,22 @@ const tcpServer = net.createServer((socket) => {
     }
   });
 
-  socket.on('close', async () => {
+  socket.on('close', () => {
     const deviceId = socketDeviceMap.get(socket);
     socketDeviceMap.delete(socket);
-    if (deviceId) {
+    if (!deviceId) return;
+
+    // 기존 대기 타이머가 있으면 취소 (동일 기기 소켓 중복 종료 시)
+    if (offlineTimers.has(deviceId)) {
+      clearTimeout(offlineTimers.get(deviceId));
+    }
+
+    // 3초 debounce — Android 재연결 backoff(1s) 흡수하여 순간 끊김 시 UI 깜빡임 방지
+    // 진짜 오프라인(전원 차단 등)이면 3초 후 정상 offline 처리됨
+    const timer = setTimeout(async () => {
+      offlineTimers.delete(deviceId);
+
       // 같은 기기가 이미 새 소켓으로 재연결했으면 offline 처리 건너뜀
-      // (재부팅 시 새 소켓이 먼저 붙고 구 소켓 timeout이 나중에 발생하는 레이스 컨디션 방지)
       const alreadyReconnected = [...socketDeviceMap.values()].includes(deviceId);
       if (alreadyReconnected) {
         console.log(`[TCP] 재연결 감지 — offline 처리 건너뜀: ${deviceId}`);
@@ -1059,7 +1117,9 @@ const tcpServer = net.createServer((socket) => {
       } catch (err) {
         console.error('[TCP] 오프라인 처리 에러:', err);
       }
-    }
+    }, 3000);
+
+    offlineTimers.set(deviceId, timer);
   });
 
   socket.on('error', (err) => {

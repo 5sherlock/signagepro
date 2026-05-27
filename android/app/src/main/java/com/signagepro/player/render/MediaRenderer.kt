@@ -71,9 +71,11 @@ class MediaRenderer(
 
     /**
      * 새 슬라이드 표시. 동일 itemId면 무시.
+     * @return 실제로 실행된 전환 애니메이션 지속 시간(ms). 즉시 전환이면 0.
+     *         호출 측은 이 값 + 버퍼를 최소 대기 시간으로 사용해야 한다.
      */
-    fun show(item: PlaylistItemDto, file: File) {
-        if (item.id == currentItemId) return
+    fun show(item: PlaylistItemDto, file: File): Long {
+        if (item.id == currentItemId) return 0L
 
         val isFirst = currentItem == null
         val prevItem = currentItem  // 나가는 슬라이드 — 대시보드와 동일하게 outgoing 기준으로 전환 효과 결정
@@ -84,20 +86,22 @@ class MediaRenderer(
         when (item.media.type.lowercase()) {
             "video" -> loadVideo(standby, file)
             "image" -> loadImage(standby, file, item.id)
-            else -> return
+            else -> return 0L
         }
 
         // 2. 전환 효과 — 나가는 슬라이드 기준 (최초 슬라이드는 전환 없이 즉시 표시)
-        if (isFirst) {
+        //    반환값: 실제 애니메이션 지속 시간(ms)
+        val animDurationMs: Long = if (isFirst) {
             instantSwap()
+            0L
         } else {
             val transitionMs = (prevItem?.transitionTime ?: 1000).coerceAtLeast(0).toLong()
             val dir = prevItem?.slideDirection?.lowercase() ?: "right"
             when (prevItem?.transition?.lowercase() ?: "fade") {
-                "fade"    -> fadeToBlack(transitionMs)
-                "dissolve"-> crossfade(transitionMs)
-                "slide"   -> slideTransition(transitionMs, dir)
-                else      -> instantSwap()
+                "fade"     -> { fadeToBlack(transitionMs);          transitionMs }
+                "dissolve" -> { crossfade(transitionMs);            transitionMs }
+                "slide"    -> { slideTransition(transitionMs, dir); transitionMs }
+                else       -> { instantSwap();                      0L           }
             }
         }
 
@@ -105,6 +109,8 @@ class MediaRenderer(
         val tmp = active
         active = standby
         standby = tmp
+
+        return animDurationMs
     }
 
     private fun loadVideo(layer: FrameLayout, file: File) {
@@ -180,14 +186,20 @@ class MediaRenderer(
     /**
      * FADE — 검정으로 사라졌다 새 슬라이드가 나타남 (2단계 순차 페이드).
      * durationMs 절반: 페이드아웃 / 나머지 절반: 페이드인
+     *
+     * ⚠️ 주의: withEndAction 람다는 fadeToBlack() 반환 후 halfMs 뒤에 실행된다.
+     *   그 사이 show()에서 active/standby 가 스왑되므로, 람다 안에서 클래스 멤버
+     *   'standby' 를 참조하면 스왑 후의 구(舊) 레이어를 가리키게 된다.
+     *   → nextActive 로 신(新) 레이어 객체 참조를 미리 캡처해 사용해야 한다.
      */
     private fun fadeToBlack(durationMs: Long) {
         val prevActive = active
+        val nextActive = standby          // 스왑 전에 신 레이어 참조를 val 로 캡처
         val halfMs = (durationMs / 2).coerceAtLeast(100L)
 
-        standby.translationX = 0f
-        standby.translationY = 0f
-        standby.alpha = 0f
+        nextActive.translationX = 0f
+        nextActive.translationY = 0f
+        nextActive.alpha = 0f
 
         // 1단계: 현재 → 검정
         prevActive.animate()
@@ -195,7 +207,8 @@ class MediaRenderer(
             .setDuration(halfMs)
             .withEndAction {
                 // 2단계: 검정 → 새 슬라이드
-                standby.animate()
+                // standby 대신 캡처된 nextActive 사용 — 스왑 후에도 신 레이어를 정확히 참조
+                nextActive.animate()
                     .alpha(1f)
                     .setDuration(halfMs)
                     .withEndAction { imageOf(prevActive).setImageBitmap(null) }
