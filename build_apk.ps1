@@ -1,42 +1,52 @@
-$searchPaths = @(
-    "C:\Program Files\Java",
-    "C:\Program Files\Eclipse Adoptium",
-    "C:\Program Files\Amazon Corretto",
-    "C:\Program Files\Microsoft",
-    "C:\Program Files\BellSoft"
-)
+# ─────────────────────────────────────────────────────────────────────────────
+# build_apk.ps1  — SignagePro Android APK 빌드 + 서버 배포 폴더 자동 복사
+#
+# 사용법: .\build_apk.ps1
+#   1. Release APK 빌드 (android/app/build/outputs/apk/release/app-release.apk)
+#   2. server/update/app.apk 로 자동 복사 → 대시보드에서 바로 OTA 배포 가능
+# ─────────────────────────────────────────────────────────────────────────────
 
-$found = $null
-foreach ($p in $searchPaths) {
-    if (Test-Path $p) {
-        $dirs = Get-ChildItem -Path $p -Directory
-        # Java 11 이상 (17, 21 등) 폴더 찾기
-        foreach ($d in $dirs) {
-            if ($d.Name -match "11" -or $d.Name -match "17" -or $d.Name -match "21" -or $d.Name -match "jdk-") {
-                $javaExe = Join-Path $d.FullName "bin\java.exe"
-                if (Test-Path $javaExe) {
-                    $found = $d.FullName
-                    break
-                }
-            }
-        }
-    }
-    if ($found) { break }
+$ROOT    = "C:\Users\amore\WorkSpace\signagepro"
+$ANDROID = "$ROOT\android"
+$APK_SRC = "$ANDROID\app\build\outputs\apk\release\app-release.apk"
+$APK_DST = "$ROOT\server\update\app.apk"
+
+Set-Location $ANDROID
+
+Write-Host ""
+Write-Host "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" -ForegroundColor Cyan
+Write-Host "  SignagePro APK 빌드 시작" -ForegroundColor Cyan
+Write-Host "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" -ForegroundColor Cyan
+
+# 빌드
+.\gradlew assembleRelease
+if ($LASTEXITCODE -ne 0) {
+    Write-Host ""
+    Write-Host "❌ 빌드 실패 (exit code $LASTEXITCODE)" -ForegroundColor Red
+    exit 1
 }
 
-if ($found) {
-    Write-Host "Found modern Java at: $found"
-    $env:JAVA_HOME = $found
-} else {
-    Write-Host "Could not find Java in default Program Files. Attempting to use default system Java..."
-    # 기존에 설정되어 있던 오래된 JAVA_HOME 제거
-    Remove-Item Env:\JAVA_HOME -ErrorAction SilentlyContinue
+# 빌드 출력 확인
+if (-not (Test-Path $APK_SRC)) {
+    Write-Host "❌ APK 파일이 없습니다: $APK_SRC" -ForegroundColor Red
+    exit 1
 }
 
-# 새로 설정된 자바 버전 확인
-& java -version
+$sizeMB = [math]::Round((Get-Item $APK_SRC).Length / 1MB, 1)
+Write-Host ""
+Write-Host "✅ 빌드 성공: $sizeMB MB" -ForegroundColor Green
+Write-Host "   └ $APK_SRC" -ForegroundColor DarkGray
 
-Write-Host "Starting Gradle Build..."
-cd c:\WorkSpace\signagepro\android_player\android
-.\gradlew --stop
-.\gradlew assembleDebug "-Dorg.gradle.java.home=$found"
+# 서버 배포 폴더로 복사
+$updateDir = Split-Path $APK_DST
+if (-not (Test-Path $updateDir)) { New-Item -ItemType Directory -Force $updateDir | Out-Null }
+
+Copy-Item $APK_SRC $APK_DST -Force
+Write-Host ""
+Write-Host "📦 서버 배포 폴더 복사 완료" -ForegroundColor Green
+Write-Host "   └ $APK_DST" -ForegroundColor DarkGray
+Write-Host ""
+Write-Host "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" -ForegroundColor Cyan
+Write-Host "  대시보드 → 환경설정 → OTA 배포에서 바로 배포하세요" -ForegroundColor Cyan
+Write-Host "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" -ForegroundColor Cyan
+Write-Host ""
