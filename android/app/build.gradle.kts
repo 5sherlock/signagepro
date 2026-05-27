@@ -1,3 +1,6 @@
+import java.util.Date
+import java.text.SimpleDateFormat
+
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
@@ -11,8 +14,12 @@ android {
         applicationId = "com.signagepro.player"
         minSdk = 22                // Android 5.1.1 (RK3229 U4X+ CM)
         targetSdk = 34             // 동일 디바이스에서 targetSdk 36도 설치 확인됨
-        versionCode = 1
-        versionName = "0.1.0"
+        versionCode = 4
+        versionName = "0.4.0"
+
+        // 빌드 날짜를 BuildConfig에 자동 삽입 (관제 화면 버전 표시용)
+        val buildDate = SimpleDateFormat("yyyy-MM-dd HH:mm").format(Date())
+        buildConfigField("String", "BUILD_DATE", "\"$buildDate\"")
 
         // RK3229 = ARMv7 32bit. 다른 ABI 빌드 생략으로 APK 크기·복잡도 감소
         ndk {
@@ -27,15 +34,28 @@ android {
     // RK3229 커스텀 ROM(Android 5.1.1)의 구형 zip 파서는 APK Signing Block(v2/v3)을
     // 못 다뤄 "구문분석 오류"를 낸다. v1(JAR) 전용 서명으로 고전 APK처럼 처리되게 함.
     signingConfigs {
-        getByName("debug") {
-            enableV1Signing = true
+        // 프로젝트 전용 키 — 어떤 PC에서 빌드해도 동일한 서명
+        create("signagepro") {
+            storeFile = file("signagepro.keystore")
+            storePassword = "signagepro2026"
+            keyAlias = "signagepro"
+            keyPassword = "signagepro2026"
+            enableV1Signing = true   // Android 5.1.1 구형 ROM 호환
             enableV2Signing = false
             enableV3Signing = false
         }
     }
 
+    buildFeatures {
+        buildConfig = true
+    }
+
     buildTypes {
+        debug {
+            signingConfig = signingConfigs.getByName("signagepro")
+        }
         release {
+            signingConfig = signingConfigs.getByName("signagepro")
             isMinifyEnabled = false
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),

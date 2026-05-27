@@ -75,6 +75,24 @@ export default function GroupManager({ devices, fetchDevices, stores, fetchStore
     });
   };
 
+  const handleDeleteDevice = (id, name) => {
+    if (!window.confirm(`기기 [${name}] (ID: ${id})을(를) 정말로 대시보드에서 삭제하시겠습니까?\n\n※ 주의: 기기가 온전한 상태로 가동 중인 경우, 서버로 다시 실시간 하트비트를 보내 자동으로 다시 목록에 복원 및 등록될 수 있습니다.`)) return;
+
+    apiFetch(`${SOCKET_URL}/api/devices/${id}`, {
+      method: 'DELETE'
+    }).then(res => res.json())
+      .then(data => {
+        if (data.success) {
+          if (fetchDevices) fetchDevices();
+        } else {
+          alert('기기 삭제 실패: ' + (data.error || '알 수 없는 오류'));
+        }
+      }).catch(err => {
+        console.error('기기 삭제 에러:', err);
+        alert('기기 삭제 중 오류가 발생했습니다.');
+      });
+  };
+
   const onDragStart = (e, deviceId) => {
     e.dataTransfer.setData('deviceId', deviceId);
   };
@@ -325,14 +343,26 @@ export default function GroupManager({ devices, fetchDevices, stores, fetchStore
                       draggable 
                       onDragStart={(e) => onDragStart(e, d.id)}
                       style={{ 
-                        background: 'var(--glass-bg)', padding: '8px 14px', 
+                        background: 'var(--glass-bg)', padding: '8px 12px', 
                         borderRadius: '8px', cursor: 'grab', 
                         border: '1px solid rgba(255,255,255,0.1)',
-                        boxShadow: '0 2px 4px rgba(0,0,0,0.2)', fontSize: '0.9rem'
+                        boxShadow: '0 2px 4px rgba(0,0,0,0.2)', fontSize: '0.9rem',
+                        display: 'flex', alignItems: 'center', gap: '8px'
                       }}
                     >
-                      <Monitor size={14} style={{ marginRight: '6px', verticalAlign: 'middle', color: d.status==='online' ? '#10B981' : '#EF4444' }}/>
-                      {d.name}
+                      <Monitor size={14} style={{ color: d.status==='online' ? '#10B981' : '#EF4444', flexShrink: 0 }}/>
+                      <span style={{ flex: 1, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{d.name}</span>
+                      <button
+                        onClick={(e) => { e.stopPropagation(); handleDeleteDevice(d.id, d.name); }}
+                        style={{
+                          background: 'none', border: 'none', color: '#EF4444',
+                          cursor: 'pointer', padding: '2px', display: 'flex', alignItems: 'center',
+                          opacity: 0.7, transition: 'opacity 0.2s', flexShrink: 0
+                        }}
+                        title="기기 삭제"
+                      >
+                        <Trash2 size={14} />
+                      </button>
                     </div>
                   ))}
                   {unassignedStoreDevices.length === 0 && (
@@ -365,13 +395,25 @@ export default function GroupManager({ devices, fetchDevices, stores, fetchStore
                           onDragStart={(e) => onDragStart(e, d.id)}
                           style={{ 
                             background: 'linear-gradient(135deg, rgba(59,130,246,0.1), rgba(139,92,246,0.1))', 
-                            padding: '8px 14px', borderRadius: '8px', cursor: 'grab', 
+                            padding: '8px 12px', borderRadius: '8px', cursor: 'grab', 
                             border: '1px solid rgba(139,92,246,0.3)',
-                            boxShadow: '0 2px 4px rgba(0,0,0,0.2)', fontSize: '0.9rem'
+                            boxShadow: '0 2px 4px rgba(0,0,0,0.2)', fontSize: '0.9rem',
+                            display: 'flex', alignItems: 'center', gap: '8px'
                           }}
                         >
-                          <Monitor size={14} style={{ marginRight: '6px', verticalAlign: 'middle', color: d.status==='online' ? '#10B981' : '#EF4444' }}/>
-                          {d.name}
+                          <Monitor size={14} style={{ color: d.status==='online' ? '#10B981' : '#EF4444', flexShrink: 0 }}/>
+                          <span style={{ flex: 1, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{d.name}</span>
+                          <button
+                            onClick={(e) => { e.stopPropagation(); handleDeleteDevice(d.id, d.name); }}
+                            style={{
+                              background: 'none', border: 'none', color: '#EF4444',
+                              cursor: 'pointer', padding: '2px', display: 'flex', alignItems: 'center',
+                              opacity: 0.7, transition: 'opacity 0.2s', flexShrink: 0
+                            }}
+                            title="기기 삭제"
+                          >
+                            <Trash2 size={14} />
+                          </button>
                         </div>
                       ))}
                       {devices.filter(d => d.groupId === g.id && d.storeId === selectedStoreId).length === 0 && (

@@ -1,9 +1,17 @@
 package com.signagepro.player.engine
 
+import android.app.PendingIntent
+import android.app.admin.DevicePolicyManager
+import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageInstaller
+import android.media.AudioManager
+import android.media.audiofx.Visualizer
 import android.net.Uri
+import android.os.Build
 import android.util.Log
+import com.signagepro.player.SignageDeviceAdmin
 import com.signagepro.player.api.ApiClient
 import com.signagepro.player.api.PlaylistDto
 import com.signagepro.player.cache.MediaCacheRepo
@@ -64,6 +72,53 @@ class PlayerCoordinator(
     private var control: ControlChannel? = null
     private val scheduleManager = ScreenScheduleManager(context)
 
+    /** 다운로드 진행 상태 — heartbeat에 포함. "cur/total/pct" 형식 */
+    @Volatile private var dlStatus: String? = null
+
+    /**
+     * 현재 재생 중인 슬라이드 정보 — heartbeat에 포함.
+     * 형식: "<index>|<total>|<filename>" (index 1-based, '|' 구분자)
+     */
+    @Volatile private var currentSlideInfo: String? = null
+
+    private val audioManager by lazy {
+        context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
+    }
+
+    /** Visualizer — 전역 오디오 출력 레벨 측정 (session 0 = global mix) */
+    private var visualizer: Visualizer? = null
+
+    private fun initVisualizer() {
+        try {
+            visualizer?.release()
+            visualizer = Visualizer(0).apply {   // 0 = 전역 출력 믹스
+                captureSize = Visualizer.getCaptureSizeRange()[0]
+                measurementMode = Visualizer.MEASUREMENT_MODE_PEAK_RMS
+                enabled = true
+            }
+            Log.i(TAG, "Visualizer 초기화 완료 (글로벌 믹스)")
+        } catch (e: Exception) {
+            Log.w(TAG, "Visualizer 초기화 실패 — VU 비활성화: ${e.message}")
+            visualizer = null
+        }
+    }
+
+    /**
+     * 실제 오디오 출력 레벨 (0~100).
+     * mRms: 0.01 dBFS 단위, -9600(무음) ~ 0(풀스케일).
+     * -60dB ~ 0dB 구간을 0 ~ 100으로 선형 매핑.
+     */
+    private fun getVuLevel(): Int {
+        val v = visualizer ?: return 0
+        return try {
+            val msr = Visualizer.MeasurementPeakRms()
+            if (v.getMeasurementPeakRms(msr) == Visualizer.SUCCESS) {
+                val db = msr.mRms / 100.0          // -96.0 ~ 0.0 dB
+                ((db + 60.0) / 60.0 * 100).toInt().coerceIn(0, 100)
+            } else 0
+        } catch (e: Exception) { 0 }
+    }
+
     fun start() {
         scope.launch {
             try {
@@ -85,18 +140,36 @@ class PlayerCoordinator(
 
         engine = PlaylistEngine(ntp, deviceId)
 
-        onStatus("playlist 조회 중…")
-        val playlist = fetchPlaylistOrCached(serverUrl, deviceId)
-        if (playlist == null || playlist.medias.isEmpty()) {
-            onStatus("재생 가능한 미디어가 없습니다.")
-        } else {
-            engine!!.setPlaylist(playlist.medias)
-            onStatus("미디어 다운로드 중…")
-            prefetchAll(serverUrl, playlist)
-            onStatus("")
+        // 캐시가 있으면 서버 응답 기다리지 않고 즉시 재생 시작
+        val cached = store.load()
+        if (cached != null && cached.medias.isNotEmpty()) {
+            engine!!.setPlaylist(cached.medias)
             startLoop()
+            onStatus("")
+            Log.i(TAG, "캐시로 즉시 재생 시작 (${cached.medias.size}개 항목)")
+        } else {
+            onStatus("서버 연결 중…")
         }
 
+        // 서버 업데이트는 백그라운드에서 처리
+        scope.launch {
+            try {
+                val fresh = fetchPlaylistOrCached(serverUrl, deviceId)
+                if (fresh != null && fresh.medias.isNotEmpty()) {
+                    prefetchAll(serverUrl, fresh)
+                    engine?.setPlaylist(fresh.medias)
+                    if (loopJob == null || loopJob?.isActive != true) startLoop()
+                    onStatus("")
+                    Log.i(TAG, "서버에서 playlist 갱신 완료 (${fresh.medias.size}개 항목)")
+                } else if (loopJob?.isActive != true) {
+                    onStatus("재생 가능한 미디어가 없습니다.")
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "서버 갱신 실패 — 캐시로 계속 재생", e)
+            }
+        }
+
+        initVisualizer()
         startHeartbeat(serverUrl, deviceId, secret)
         startControlChannel(serverUrl, deviceId)
         startTimeSyncLoop(serverUrl)
@@ -156,15 +229,31 @@ class PlayerCoordinator(
     }
 
     private suspend fun prefetchAll(serverUrl: String, playlist: PlaylistDto) {
+        // 중복 hash 제거 — 같은 파일을 여러 기기에 배치해도 한 번만 다운로드
+        val uniqueItems = playlist.medias.distinctBy { it.media.hash ?: it.media.id }
+        val total = uniqueItems.size
         val activeHashes = mutableSetOf<String>()
-        for (item in playlist.medias) {
+
+        uniqueItems.forEachIndexed { idx, item ->
             item.media.hash?.let { activeHashes.add(it) }
+
+            // 이미 캐시된 파일은 건너뜀
+            if (cache.cachedFile(item.media) != null) {
+                onStatus("확인 중… (${idx + 1}/$total)  ${item.media.filename}")
+                return@forEachIndexed
+            }
+
             try {
-                cache.ensure(serverUrl, item.media)
+                cache.ensure(serverUrl, item.media) { pct ->
+                    dlStatus = "${idx + 1}/$total/$pct"
+                    onStatus("다운로드 (${idx + 1}/$total)  ${item.media.filename}\n$pct%")
+                }
             } catch (e: Exception) {
                 Log.w(TAG, "미디어 다운로드 실패: ${item.media.filename}", e)
+                onStatus("다운로드 실패: ${item.media.filename}")
             }
         }
+        dlStatus = null
         cache.trim(activeHashes)
     }
 
@@ -178,7 +267,11 @@ class PlayerCoordinator(
                 if (playlist.medias.isEmpty()) return@withLock
                 prefetchAll(serverUrl, playlist)
                 engine?.setPlaylist(playlist.medias)
-                if (loopJob == null || loopJob?.isActive != true) startLoop()
+                // 항상 루프 재시작 — 이전 슬롯의 delay()를 취소하고 즉시 새 콘텐츠 적용.
+                // (기존 if 분기는 OLD 슬롯의 긴 delay 동안 새 playlist가 반영되지 않아
+                //  화면이 잠깐 갱신됐다가 다시 블랙으로 보이는 문제를 유발했음)
+                startLoop()
+                onStatus("")   // 재생 시작 → 상태 문구 제거
             }
         }
     }
@@ -210,8 +303,30 @@ class PlayerCoordinator(
                     ApiClient.http().newCall(request).execute().use { resp ->
                         if (!resp.isSuccessful) throw Exception("HTTP ${resp.code}")
                         val body = resp.body ?: throw Exception("빈 응답")
-                        tmp.outputStream().use { out -> body.byteStream().copyTo(out) }
+                        val contentLength = body.contentLength()
+                        val buf = ByteArray(32 * 1024)
+                        var downloaded = 0L
+                        var lastPct = -1
+                        tmp.outputStream().use { out ->
+                            body.byteStream().use { input ->
+                                while (true) {
+                                    val n = input.read(buf)
+                                    if (n <= 0) break
+                                    out.write(buf, 0, n)
+                                    downloaded += n
+                                    if (contentLength > 0) {
+                                        val pct = (downloaded * 100L / contentLength).toInt().coerceIn(0, 99)
+                                        if (pct >= lastPct + 5) {
+                                            lastPct = pct
+                                            // cur=0/total=0 → APK 업데이트 마커 (미디어와 구분)
+                                            dlStatus = "0/0/$pct"
+                                        }
+                                    }
+                                }
+                            }
+                        }
                     }
+                    dlStatus = null
                     tmp.setReadable(true, false)
                     tmp
                 }
@@ -219,7 +334,15 @@ class PlayerCoordinator(
                 Log.i(TAG, "다운로드 완료: ${apkFile.length()} bytes")
                 onStatus("업데이트 설치 중…")
 
-                // 1순위: pm install -r (일부 STB ROM에서 무확인)
+                // 1순위: Device Owner PackageInstaller — 확인창 없이 자동 설치
+                val pkgOk = withContext(Dispatchers.IO) { installViaPackageInstaller(apkFile) }
+                if (pkgOk) {
+                    Log.i(TAG, "PackageInstaller(Device Owner) 자동 설치 완료")
+                    onStatus("업데이트 완료 — 재시작 중…")
+                    return@launch
+                }
+
+                // 2순위: su pm install -r (rooted 기기)
                 val pmOk = withContext(Dispatchers.IO) { trySilentInstallPm(apkFile) }
                 if (pmOk) {
                     Log.i(TAG, "pm install 자동 설치 완료")
@@ -227,7 +350,7 @@ class PlayerCoordinator(
                     return@launch
                 }
 
-                // 2순위: ACTION_VIEW — 시스템 설치 다이얼로그 (API 22에서 안정적)
+                // 3순위: ACTION_VIEW — 시스템 설치 다이얼로그 (최후 수단)
                 Log.i(TAG, "ACTION_VIEW 설치 시도")
                 withContext(Dispatchers.Main) { installViaActionView(apkFile) }
 
@@ -238,8 +361,63 @@ class PlayerCoordinator(
         }
     }
 
-    /** pm install -r 시도. exitCode==0 && "Success" 포함 시 true. */
+    /**
+     * Device Owner 권한으로 PackageInstaller를 통해 무확인 자동 설치.
+     * Device Owner가 아니면 즉시 false 반환.
+     * 성공 시 앱이 자동으로 교체되고 재시작됨.
+     */
+    private fun installViaPackageInstaller(apkFile: File): Boolean {
+        val dpm = context.getSystemService(Context.DEVICE_POLICY_SERVICE) as DevicePolicyManager
+        if (!dpm.isDeviceOwnerApp(context.packageName)) {
+            Log.i(TAG, "Device Owner 아님 — PackageInstaller 건너뜀")
+            return false
+        }
+        return try {
+            val installer = context.packageManager.packageInstaller
+            val params = PackageInstaller.SessionParams(PackageInstaller.SessionParams.MODE_FULL_INSTALL)
+            val sessionId = installer.createSession(params)
+            installer.openSession(sessionId).use { session ->
+                session.openWrite("package", 0, apkFile.length()).use { out ->
+                    apkFile.inputStream().copyTo(out)
+                    session.fsync(out)
+                }
+                val intent = Intent("com.signagepro.player.INSTALL_COMPLETE")
+                val flags = if (Build.VERSION.SDK_INT >= 23)
+                    PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+                else PendingIntent.FLAG_UPDATE_CURRENT
+                val pi = PendingIntent.getBroadcast(context, 0, intent, flags)
+                session.commit(pi.intentSender)
+            }
+            Log.i(TAG, "PackageInstaller 세션 커밋 완료 (Device Owner)")
+            true
+        } catch (e: Exception) {
+            Log.w(TAG, "PackageInstaller 실패: ${e.message}")
+            false
+        }
+    }
+
+    /**
+     * pm install -r 시도.
+     * 1순위: su root로 실행 (크라이저 STB 등 rooted 기기 — 확인 다이얼로그 없음)
+     * 2순위: 일반 pm install (일부 ROM에서 허용)
+     * exitCode==0 && "Success" 포함 시 true.
+     */
     private fun trySilentInstallPm(apkFile: File): Boolean {
+        // 1순위: root(su) 경유 — 설치 확인 다이얼로그 없이 자동 설치
+        try {
+            val proc = Runtime.getRuntime().exec(arrayOf(
+                "su", "-c", "pm install -r \"${apkFile.absolutePath}\""
+            ))
+            val exitCode = proc.waitFor()
+            val output = proc.inputStream.bufferedReader().readText()
+            val error  = proc.errorStream.bufferedReader().readText()
+            Log.i(TAG, "su pm install: exitCode=$exitCode out=$output err=$error")
+            if (exitCode == 0 && output.contains("Success", ignoreCase = true)) return true
+        } catch (e: Exception) {
+            Log.w(TAG, "su pm install 실행 불가: ${e.message}")
+        }
+
+        // 2순위: 일반 pm install (root 없는 일부 ROM 허용)
         return try {
             val proc = Runtime.getRuntime()
                 .exec(arrayOf("pm", "install", "-r", apkFile.absolutePath))
@@ -280,13 +458,31 @@ class PlayerCoordinator(
                 if (slot == null) { delay(1_000); continue }
 
                 val file = cache.cachedFile(slot.item.media)
+                var animMs = 0L
                 if (file != null) {
-                    renderer.show(slot.item, file)
+                    // 이미지는 IO 스레드에서 미리 디코딩 — Main 스레드 차단을 방지해
+                    // waitMs 계산 정확도를 높이고 애니메이션 프레임 누락을 예방.
+                    if (slot.item.media.type.lowercase() == "image") {
+                        withContext(Dispatchers.IO) {
+                            renderer.preloadImage(slot.item, file)
+                        }
+                    }
+                    // show()는 실제 실행된 전환 애니메이션 지속 시간(ms)을 반환.
+                    // prevItem.transitionTime 기준이므로 slot.item.transitionTime과 다를 수 있음.
+                    animMs = renderer.show(slot.item, file)
+                    // 현재 재생 슬라이드 정보를 heartbeat에 포함 — 대시보드 실시간 미리보기용
+                    currentSlideInfo = "${slot.index + 1}|${slot.total}|${slot.item.media.filename}"
                 } else {
                     Log.w(TAG, "캐시에 없음: ${slot.item.media.filename}")
                 }
 
-                val waitMs = (slot.nextSlotEpochMs - ntp.now()).coerceAtLeast(200L)
+                // 최소 대기 = 실제 실행된 전환 애니메이션 시간 + 200ms 버퍼.
+                // ⚠ 이전 코드는 slot.item.transitionTime(다음 슬라이드 값)을 사용했으나
+                //   애니메이션은 prevItem.transitionTime으로 실행되어, 두 값이 다르면
+                //   fadeToBlack 도중 다음 show()가 호출되어 화면이 블랙이 되는 버그 발생.
+                // → show() 반환값(animMs) 사용으로 항상 올바른 최솟값 보장.
+                val minWaitMs = animMs + 200L
+                val waitMs = (slot.nextSlotEpochMs - ntp.now()).coerceAtLeast(minWaitMs)
                 delay(waitMs)
             }
         }
@@ -296,14 +492,23 @@ class PlayerCoordinator(
         val host = URI(serverUrl).host ?: return
         heartbeat?.stop()
         val versionName = runCatching {
-            context.packageManager.getPackageInfo(context.packageName, 0).versionName ?: "unknown"
+            val name = context.packageManager.getPackageInfo(context.packageName, 0).versionName ?: "unknown"
+            "$name (${com.signagepro.player.BuildConfig.BUILD_DATE})"
         }.getOrDefault("unknown")
         heartbeat = HeartbeatService(
             serverHost = host,
             deviceId = deviceId,
             deviceSecret = secret,
             metrics = metrics,
-            appVersion = versionName
+            appVersion = versionName,
+            dlStatusProvider = { dlStatus },
+            slideProvider = { currentSlideInfo },
+            volumeProvider = {
+                val max = audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC)
+                val cur = audioManager.getStreamVolume(AudioManager.STREAM_MUSIC)
+                if (max > 0) (cur.toFloat() / max * 15).toInt() else null
+            },
+            vuProvider = { getVuLevel() }
         ).also { it.start() }
     }
 
@@ -315,10 +520,14 @@ class PlayerCoordinator(
             onPlaylistUpdated = { refreshPlaylist() },
             onAssignmentChanged = { refreshPlaylist() },
             onUpdateApk = { apkUrl -> downloadAndInstallApk(apkUrl) },
-            // 서버 재연결 시 최신 playlist + 스케줄 재조회
             onReconnected = { refreshPlaylist() },
-            // 스케줄 변경 시 기기 정보 재조회 → scheduleManager.update() 호출
-            onScheduleChanged = { refreshPlaylist() }
+            onScheduleChanged = { refreshPlaylist() },
+            onSetVolume = { level ->
+                val max = audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC)
+                val scaled = (level.toFloat() / 15 * max).toInt().coerceIn(0, max)
+                audioManager.setStreamVolume(AudioManager.STREAM_MUSIC, scaled, 0)
+                Log.i(TAG, "볼륨 설정: $level/15 → $scaled/$max")
+            }
         ).also { it.start() }
     }
 
@@ -328,6 +537,8 @@ class PlayerCoordinator(
         control?.stop()
         scheduleManager.stop()
         renderer.release()
+        visualizer?.release()
+        visualizer = null
         scope.coroutineContext[Job]?.cancel()
     }
 

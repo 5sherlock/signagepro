@@ -1,6 +1,7 @@
 package com.signagepro.player.render
 
 import android.content.Context
+import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.view.View
 import android.view.animation.DecelerateInterpolator
@@ -27,13 +28,36 @@ class MediaRenderer(
 ) {
     private val player: ExoPlayer = ExoPlayer.Builder(context).build().apply {
         repeatMode = Player.REPEAT_MODE_ONE  // playlist duration이 비디오 길이보다 길 때 루프
-        volume = 1f
+        volume = 0f                          // 동영상 기본 음소거 — 사이니지에서 의도치 않은 사운드 방지
     }
 
     private var active: FrameLayout = layerA
     private var standby: FrameLayout = layerB
     private var currentItemId: String? = null
     private var currentItem: PlaylistItemDto? = null  // 현재 표시 중(전환의 출발) 슬라이드
+
+    // 이미지 사전 디코딩 캐시 — IO 스레드에서 decodeFile 후 Main 스레드 전달
+    @Volatile private var preloadedBitmap: Bitmap? = null
+    @Volatile private var preloadedItemId: String? = null
+
+    /**
+     * IO 스레드에서 호출: 다음 슬라이드의 이미지를 미리 디코딩해 캐시에 저장.
+     * 비디오 슬롯은 no-op.
+     */
+    fun preloadImage(item: PlaylistItemDto, file: File) {
+        if (item.media.type.lowercase() != "image") return
+        if (item.id == preloadedItemId && preloadedBitmap != null) return  // 이미 로드됨
+
+        val opts = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        BitmapFactory.decodeFile(file.absolutePath, opts)
+        val maxDim = 1920
+        var sample = 1
+        while (opts.outWidth / sample > maxDim || opts.outHeight / sample > maxDim) sample *= 2
+        val loadOpts = BitmapFactory.Options().apply { inSampleSize = sample }
+        val bmp = BitmapFactory.decodeFile(file.absolutePath, loadOpts) ?: return
+        preloadedBitmap = bmp
+        preloadedItemId = item.id
+    }
 
     init {
         // 초기에는 양쪽 레이어 모두 숨김
@@ -47,9 +71,11 @@ class MediaRenderer(
 
     /**
      * 새 슬라이드 표시. 동일 itemId면 무시.
+     * @return 실제로 실행된 전환 애니메이션 지속 시간(ms). 즉시 전환이면 0.
+     *         호출 측은 이 값 + 버퍼를 최소 대기 시간으로 사용해야 한다.
      */
-    fun show(item: PlaylistItemDto, file: File) {
-        if (item.id == currentItemId) return
+    fun show(item: PlaylistItemDto, file: File): Long {
+        if (item.id == currentItemId) return 0L
 
         val isFirst = currentItem == null
         val prevItem = currentItem  // 나가는 슬라이드 — 대시보드와 동일하게 outgoing 기준으로 전환 효과 결정
@@ -59,21 +85,23 @@ class MediaRenderer(
         // 1. standby 레이어에 새 미디어 로드
         when (item.media.type.lowercase()) {
             "video" -> loadVideo(standby, file)
-            "image" -> loadImage(standby, file)
-            else -> return
+            "image" -> loadImage(standby, file, item.id)
+            else -> return 0L
         }
 
         // 2. 전환 효과 — 나가는 슬라이드 기준 (최초 슬라이드는 전환 없이 즉시 표시)
-        if (isFirst) {
+        //    반환값: 실제 애니메이션 지속 시간(ms)
+        val animDurationMs: Long = if (isFirst) {
             instantSwap()
+            0L
         } else {
             val transitionMs = (prevItem?.transitionTime ?: 1000).coerceAtLeast(0).toLong()
             val dir = prevItem?.slideDirection?.lowercase() ?: "right"
             when (prevItem?.transition?.lowercase() ?: "fade") {
-                "fade"    -> fadeToBlack(transitionMs)
-                "dissolve"-> crossfade(transitionMs)
-                "slide"   -> slideTransition(transitionMs, dir)
-                else      -> instantSwap()
+                "fade"     -> { fadeToBlack(transitionMs);          transitionMs }
+                "dissolve" -> { crossfade(transitionMs);            transitionMs }
+                "slide"    -> { slideTransition(transitionMs, dir); transitionMs }
+                else       -> { instantSwap();                      0L           }
             }
         }
 
@@ -81,6 +109,8 @@ class MediaRenderer(
         val tmp = active
         active = standby
         standby = tmp
+
+        return animDurationMs
     }
 
     private fun loadVideo(layer: FrameLayout, file: File) {
@@ -98,20 +128,44 @@ class MediaRenderer(
         player.playWhenReady = true
     }
 
-    private fun loadImage(layer: FrameLayout, file: File) {
+    private fun loadImage(layer: FrameLayout, file: File, itemId: String) {
+        // 비디오 → 이미지 전환 시 ExoPlayer 완전 정지.
+        // 그렇지 않으면 비활성 레이어에서 비디오가 계속 디코딩되며 GPU/메모리 점유 →
+        // 일부 STB에서 이미지 레이어가 갱신되지 않거나 블랙으로 표시되는 문제 발생.
+        if (player.playWhenReady || player.mediaItemCount > 0) {
+            player.stop()
+            player.clearMediaItems()
+        }
+
         val playerView = videoOf(layer)
         val imageView = imageOf(layer)
         playerView.visibility = View.GONE
+        playerView.player = null
+
+        // 반대편 레이어의 PlayerView도 정리 — 잔존 표면이 이미지를 덮는 현상 방지
+        val otherPV = videoOf(otherLayer(layer))
+        otherPV.visibility = View.GONE
+        otherPV.player = null
+
         imageView.visibility = View.VISIBLE
 
-        // 다운샘플링하여 OOM 방지
-        val opts = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-        BitmapFactory.decodeFile(file.absolutePath, opts)
-        val maxDim = 1920
-        var sample = 1
-        while (opts.outWidth / sample > maxDim || opts.outHeight / sample > maxDim) sample *= 2
-        val loadOpts = BitmapFactory.Options().apply { inSampleSize = sample }
-        val bmp = BitmapFactory.decodeFile(file.absolutePath, loadOpts)
+        // preloadImage()로 IO 스레드에서 미리 디코딩된 비트맵 사용 (있으면).
+        // 없으면 Main 스레드에서 동기 디코딩 (폴백).
+        val bmp: Bitmap? = if (itemId == preloadedItemId) {
+            val b = preloadedBitmap
+            preloadedBitmap = null
+            preloadedItemId = null
+            b
+        } else {
+            // 폴백: Main 스레드 동기 디코딩 (느린 기기에서 타이밍 drift 유발 가능)
+            val opts = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+            BitmapFactory.decodeFile(file.absolutePath, opts)
+            val maxDim = 1920
+            var sample = 1
+            while (opts.outWidth / sample > maxDim || opts.outHeight / sample > maxDim) sample *= 2
+            val loadOpts = BitmapFactory.Options().apply { inSampleSize = sample }
+            BitmapFactory.decodeFile(file.absolutePath, loadOpts)
+        }
         imageView.setImageBitmap(bmp)
     }
 
@@ -132,14 +186,20 @@ class MediaRenderer(
     /**
      * FADE — 검정으로 사라졌다 새 슬라이드가 나타남 (2단계 순차 페이드).
      * durationMs 절반: 페이드아웃 / 나머지 절반: 페이드인
+     *
+     * ⚠️ 주의: withEndAction 람다는 fadeToBlack() 반환 후 halfMs 뒤에 실행된다.
+     *   그 사이 show()에서 active/standby 가 스왑되므로, 람다 안에서 클래스 멤버
+     *   'standby' 를 참조하면 스왑 후의 구(舊) 레이어를 가리키게 된다.
+     *   → nextActive 로 신(新) 레이어 객체 참조를 미리 캡처해 사용해야 한다.
      */
     private fun fadeToBlack(durationMs: Long) {
         val prevActive = active
+        val nextActive = standby          // 스왑 전에 신 레이어 참조를 val 로 캡처
         val halfMs = (durationMs / 2).coerceAtLeast(100L)
 
-        standby.translationX = 0f
-        standby.translationY = 0f
-        standby.alpha = 0f
+        nextActive.translationX = 0f
+        nextActive.translationY = 0f
+        nextActive.alpha = 0f
 
         // 1단계: 현재 → 검정
         prevActive.animate()
@@ -147,7 +207,8 @@ class MediaRenderer(
             .setDuration(halfMs)
             .withEndAction {
                 // 2단계: 검정 → 새 슬라이드
-                standby.animate()
+                // standby 대신 캡처된 nextActive 사용 — 스왑 후에도 신 레이어를 정확히 참조
+                nextActive.animate()
                     .alpha(1f)
                     .setDuration(halfMs)
                     .withEndAction { imageOf(prevActive).setImageBitmap(null) }

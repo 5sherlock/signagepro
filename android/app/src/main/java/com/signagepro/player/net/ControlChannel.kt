@@ -21,13 +21,10 @@ class ControlChannel(
     private val onPlaylistUpdated: (groupId: String) -> Unit,
     private val onAssignmentChanged: () -> Unit,
     private val onUpdateApk: (apkUrl: String) -> Unit = {},
-    /**
-     * 서버 재연결 시 호출 — 서버 다운 중 콘텐츠가 바뀌었을 수 있으므로
-     * 재연결되면 최신 playlist를 즉시 재조회한다.
-     */
     private val onReconnected: () -> Unit = {},
-    /** 스케줄 변경 알림 — 기기 정보 재조회하여 최신 스케줄 적용 */
-    private val onScheduleChanged: () -> Unit = {}
+    private val onScheduleChanged: () -> Unit = {},
+    /** 볼륨 설정 명령 (0~15) */
+    private val onSetVolume: (level: Int) -> Unit = {}
 ) {
     private var socket: Socket? = null
     @Volatile private var wasConnected = false
@@ -42,8 +39,10 @@ class ControlChannel(
         }
         socket = IO.socket(serverUrl, opts).apply {
             on(Socket.EVENT_CONNECT) {
+                // 서버에 기기 ID 등록 → 개별 명령(볼륨 등) 수신용 룸 입장
+                val reg = JSONObject().put("deviceId", selfDeviceId)
+                socket?.emit("register_device", reg)
                 if (wasConnected) {
-                    // 재연결 — 다운 중 변경된 콘텐츠 반영
                     Log.i(TAG, "Socket.io 재연결됨 → playlist 재조회")
                     onReconnected()
                 } else {
@@ -88,6 +87,17 @@ class ControlChannel(
             on("screen_schedule") { _ ->
                 Log.i(TAG, "screen_schedule 이벤트 수신 → 스케줄 재조회")
                 onScheduleChanged()
+            }
+            on("set_volume") { args ->
+                val data = args.firstOrNull() as? JSONObject ?: return@on
+                val target = data.optString("deviceId", "")
+                if (target.isBlank() || target == selfDeviceId) {
+                    val level = data.optInt("level", -1)
+                    if (level in 0..15) {
+                        Log.i(TAG, "볼륨 설정 수신: $level")
+                        onSetVolume(level)
+                    }
+                }
             }
             connect()
         }

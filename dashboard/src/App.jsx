@@ -49,7 +49,7 @@ function computeNtpPosition(medias, epochMs) {
 //   현재 방식: 200ms setInterval로 매 tick마다 NTP epoch 재계산
 //              → 오차가 쌓이지 않음. 101/102가 항상 동일 슬라이드 표시
 
-function DevicePreview({ groupId, deviceId, onUpdate }) {
+function DevicePreview({ groupId, deviceId, onUpdate, pcAudio = false, devVol = 8, liveSlide = null }) {
   const [playlist, setPlaylist] = useState([]);
   const [ntpOffset, setNtpOffset] = useState(0); // 서버시각 − 로컬시각 (ms)
   const [currentIndex, setCurrentIndex] = useState(0);
@@ -58,6 +58,16 @@ function DevicePreview({ groupId, deviceId, onUpdate }) {
   const [currentTime, setCurrentTime] = useState(0);
   const prevIdxRef = useRef(-1);
   const transTimerRef = useRef(null);
+  const videoElRef = useRef(null);
+
+  // ── PC 오디오 볼륨/음소거 실시간 반영 ────────────────────────────────────
+  useEffect(() => {
+    const el = videoElRef.current;
+    if (!el) return;
+    const muted = !pcAudio || devVol === 0;
+    el.muted = muted;
+    if (!muted) el.volume = Math.max(0, Math.min(1, devVol / 15));
+  }, [pcAudio, devVol]);
 
   // ── 플레이리스트 + NTP 오프셋 로드 ──────────────────────────────────────
   useEffect(() => {
@@ -92,13 +102,25 @@ function DevicePreview({ groupId, deviceId, onUpdate }) {
     return () => socket.disconnect();
   }, [groupId, deviceId]);
 
-  // ── 200ms 마다 NTP 기반 슬라이드 위치 재계산 ─────────────────────────────
+  // liveSlide ref — effect 의존성에 추가하지 않고 최신값을 tick 내부에서 참조
+  const liveSlideRef = useRef(liveSlide);
+  useEffect(() => { liveSlideRef.current = liveSlide; }, [liveSlide]);
+
+  // ── 200ms 마다 슬라이드 위치 재계산 ──────────────────────────────────────
+  // 우선순위: 기기가 보고한 실제 슬라이드 인덱스(liveSlide) > NTP 계산값
   useEffect(() => {
     if (!playlist.length) return;
 
     const tick = () => {
       const nowMs = Date.now() + ntpOffset;
-      const { idx, elapsed } = computeNtpPosition(playlist, nowMs);
+      const { idx: ntpIdx, elapsed } = computeNtpPosition(playlist, nowMs);
+
+      // 기기 실제 보고값(1-based → 0-based 변환) 우선 사용
+      const live = liveSlideRef.current;
+      const liveIdx = (live && live.index > 0 && live.index <= playlist.length)
+        ? live.index - 1
+        : null;
+      const idx = liveIdx !== null ? liveIdx : ntpIdx;
 
       // 인덱스가 바뀌면 전환 애니메이션 트리거
       if (prevIdxRef.current !== -1 && prevIdxRef.current !== idx) {
@@ -126,6 +148,9 @@ function DevicePreview({ groupId, deviceId, onUpdate }) {
   const transType = (prevItem ?? activeItem)?.transition?.toLowerCase() || 'fade';
   const transTime = (prevItem ?? activeItem)?.transitionTime || 1000;
   const duration = activeItem?.duration || 10;
+
+  // 기기 실제 보고값으로 미리보기 중인지 여부
+  const isLiveSync = liveSlide && liveSlide.index > 0 && liveSlide.index <= playlist.length;
 
   // ── 부모(App)에 현재 재생 상태 보고 ─────────────────────────────────────
   // onUpdate를 deps에 포함하면 App 재렌더 시 새 함수 레퍼런스 → 무한 루프
@@ -169,9 +194,20 @@ function DevicePreview({ groupId, deviceId, onUpdate }) {
     const { media } = item;
     if (media.type === 'video') {
       return (
-        <div style={{ width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#000', color: '#fff', fontSize: '0.7rem' }}>
-          VIDEO: {media.filename}
-        </div>
+        <video
+          key={media.path}
+          ref={videoElRef}
+          src={`${SOCKET_URL}${media.path}`}
+          autoPlay
+          muted={!pcAudio || devVol === 0}
+          loop
+          playsInline
+          onLoadedMetadata={e => {
+            e.target.muted = !pcAudio || devVol === 0;
+            e.target.volume = Math.max(0, Math.min(1, devVol / 15));
+          }}
+          style={{ width: '100%', height: '100%', objectFit: 'cover', background: '#000' }}
+        />
       );
     }
     return (
@@ -185,6 +221,16 @@ function DevicePreview({ groupId, deviceId, onUpdate }) {
 
   return (
     <div style={{ position: 'relative', width: '100%', height: '100%', overflow: 'hidden', background: '#000' }}>
+      {/* LIVE / NTP 표시 배지 */}
+      <div style={{
+        position: 'absolute', top: 4, right: 4, zIndex: 10,
+        fontSize: '0.48rem', fontWeight: 700, letterSpacing: '0.04em',
+        padding: '2px 5px', borderRadius: 3,
+        background: isLiveSync ? 'rgba(16,185,129,0.85)' : 'rgba(99,102,241,0.75)',
+        color: '#fff', pointerEvents: 'none',
+      }}>
+        {isLiveSync ? '● LIVE' : '◎ NTP'}
+      </div>
       {/* 전환 중: 이전 슬라이드 — slide-out 애니메이션 적용 */}
       {isTransitioning && prevItem && (
         <div
@@ -210,6 +256,38 @@ function DevicePreview({ groupId, deviceId, onUpdate }) {
 }
 
 // ─────────────────────────────────────────────
+// GradientLevelMeter — Option C 그라디언트 L/R 레벨미터
+// ─────────────────────────────────────────────
+/** GradientLevelMeter — 실제 Visualizer 측정값(0~100) 기반, 우측 컴팩트 */
+function GradientLevelMeter({ vu }) {
+  const pct = Math.max(0, Math.min(100, vu ?? 0));
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+      {['L', 'R'].map(ch => (
+        <div key={ch} style={{ display: 'flex', alignItems: 'center', gap: 3 }}>
+          <span style={{ fontSize: '0.45rem', color: '#334155', width: 6, flexShrink: 0, textAlign: 'right' }}>{ch}</span>
+          <div style={{
+            width: 72, height: 7, background: '#0c111e', borderRadius: 2,
+            overflow: 'hidden', position: 'relative',
+            boxShadow: 'inset 0 1px 2px rgba(0,0,0,0.6)'
+          }}>
+            <div style={{
+              height: '100%', width: `${pct}%`, borderRadius: 2,
+              background: 'linear-gradient(to right, #22c55e 0%, #84cc16 45%, #eab308 65%, #f97316 80%, #ef4444 100%)',
+              transition: 'width 0.1s', position: 'relative'
+            }}>
+              {pct > 2 && (
+                <div style={{ position: 'absolute', right: 0, top: 0, width: 2, height: '100%', background: '#fff', opacity: 0.8 }} />
+              )}
+            </div>
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────
 // App
 // ─────────────────────────────────────────────
 
@@ -220,12 +298,72 @@ function DevicePreview({ groupId, deviceId, onUpdate }) {
 const DAY_LABELS = ['일', '월', '화', '수', '목', '금', '토'];
 const ALL_DAYS = '0,1,2,3,4,5,6';
 
-function ScreenScheduleSection({ onUnauth }) {
+/** 시:분 스텝퍼 — ▲▼ + 직접 입력, 항상 두 자리 표시 */
+function TimeStepper({ value, onChange }) {
+  const parts = (value || '00:00').split(':');
+  const h = parseInt(parts[0]) || 0;
+  const m = parseInt(parts[1]) || 0;
+
+  const fmt = (n, max) => ((n % max + max) % max).toString().padStart(2, '0');
+  const stepH = d => onChange(`${fmt(h + d, 24)}:${fmt(m, 60)}`);
+  const stepM = d => onChange(`${fmt(h, 24)}:${fmt(m + d, 60)}`);
+
+  const btnSt = { width: '40px', height: '22px', borderRadius: '5px', border: '1px solid var(--border)', background: 'rgba(255,255,255,0.06)', color: 'var(--text-secondary)', fontSize: '0.65rem', cursor: 'pointer', lineHeight: 1 };
+  const inpSt = { width: '40px', height: '38px', textAlign: 'center', fontSize: '1.15rem', fontWeight: 700, fontFamily: 'monospace', background: 'rgba(255,255,255,0.06)', border: '1px solid var(--border)', borderRadius: '6px', color: 'var(--text-primary)', outline: 'none', cursor: 'text' };
+
+  const col = (display, onUp, onDown, onBlurCommit) => (
+    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '2px' }}>
+      <button onClick={onUp} style={btnSt}>▲</button>
+      <input
+        type="text" inputMode="numeric" maxLength={2}
+        defaultValue={display}
+        key={display}                    /* display 바뀌면 재마운트 → 값 동기화 */
+        style={inpSt}
+        onFocus={e => { e.target.select(); e.target.style.borderColor = '#3b82f6'; e.target.style.background = 'rgba(59,130,246,0.12)'; }}
+        onBlur={e => {
+          e.target.style.borderColor = 'var(--border)';
+          e.target.style.background = 'rgba(255,255,255,0.06)';
+          onBlurCommit(e.target.value);
+        }}
+      />
+      <button onClick={onDown} style={btnSt}>▼</button>
+    </div>
+  );
+
+  return (
+    <div style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', background: 'rgba(255,255,255,0.04)', border: '1px solid var(--border)', borderRadius: '10px', padding: '6px 10px' }}>
+      {col(fmt(h, 24), () => stepH(1), () => stepH(-1), v => { let n = parseInt(v,10); if(isNaN(n))n=0; onChange(`${fmt(n,24)}:${fmt(m,60)}`); })}
+      <span style={{ fontSize: '1.1rem', fontWeight: 700, color: 'var(--text-secondary)', userSelect: 'none' }}>:</span>
+      {col(fmt(m, 60), () => stepM(1), () => stepM(-1), v => { let n = parseInt(v,10); if(isNaN(n))n=0; onChange(`${fmt(h,24)}:${fmt(n,60)}`); })}
+    </div>
+  );
+}
+
+function ScreenScheduleSection({ onUnauth, deviceOrder = {} }) {
   const [schedules, setSchedules] = useState([]);
+  const [devices, setDevices] = useState([]);
   const [saving, setSaving] = useState(false);
   const [toast, setToast] = useState(null); // { msg, ok }
   const [draft, setDraft] = useState({ deviceId: '', onTime: '09:00', offTime: '22:00', days: '1,2,3,4,5', enabled: true });
   const [editId, setEditId] = useState(null);
+  const [showForm, setShowForm] = useState(false); // 추가 폼 열림/닫힘
+  // 서버 현재 시각 (스케줄 cron은 서버 Asia/Seoul 기준으로 실행됨)
+  const [serverNow, setServerNow] = useState(null);
+  useEffect(() => {
+    let base = null; // 서버 epochMs 기준점
+    let baseLocal = null; // 기준점 수신 시 로컬 Date.now()
+    const sync = () =>
+      fetch(`${SOCKET_URL}/api/time`, { cache: 'no-store' })
+        .then(r => r.ok ? r.json() : null)
+        .then(d => { if (d?.epochMs) { base = d.epochMs; baseLocal = Date.now(); } })
+        .catch(() => {});
+    sync();
+    const syncId = setInterval(sync, 30000); // 30초마다 서버와 재동기화
+    const tickId = setInterval(() => {
+      if (base !== null) setServerNow(base + (Date.now() - baseLocal));
+    }, 1000);
+    return () => { clearInterval(syncId); clearInterval(tickId); };
+  }, []);
 
   const showToast = (msg, ok = true) => {
     setToast({ msg, ok });
@@ -241,25 +379,17 @@ function ScreenScheduleSection({ onUnauth }) {
 
   useEffect(() => { load(); }, []);
 
+  useEffect(() => {
+    apiFetch(`${SOCKET_URL}/api/devices`)
+      .then(r => r.json()).then(setDevices).catch(() => {});
+  }, []);
+
   const toggleDay = (day) => {
     const cur = draft.days ? draft.days.split(',').map(Number) : [];
     const next = cur.includes(day) ? cur.filter(d => d !== day) : [...cur, day].sort((a, b) => a - b);
     setDraft(p => ({ ...p, days: next.join(',') }));
   };
 
-  const save = async () => {
-    setSaving(true);
-    try {
-      const body = { ...draft, id: editId || undefined };
-      await apiFetch(`${SOCKET_URL}/api/schedules`, { method: 'POST', body: JSON.stringify(body) })
-        .then(check401);
-      setEditId(null);
-      setDraft({ deviceId: '', onTime: '09:00', offTime: '22:00', days: '1,2,3,4,5', enabled: true });
-      load();
-      showToast('✅ 저장 완료 — 기기에 자동 전송됨');
-    } catch (e) { if (e.message !== '401') showToast('❌ 저장 실패', false); }
-    finally { setSaving(false); }
-  };
 
   const remove = async (id) => {
     if (!window.confirm('스케줄을 삭제할까요?')) return;
@@ -282,90 +412,241 @@ function ScreenScheduleSection({ onUnauth }) {
 
 
   const activeDays = draft.days ? draft.days.split(',').map(Number) : [];
-  const inputStyle = { padding: '6px 10px', borderRadius: '6px', border: '1px solid var(--border)', background: 'var(--bg-primary)', color: 'var(--text-primary)', fontSize: '0.9rem', colorScheme: 'dark' };
+  const isFormOpen = showForm || !!editId;
+  const inp = { padding: '7px 11px', borderRadius: '8px', border: '1px solid var(--border)', background: 'rgba(255,255,255,0.06)', color: 'var(--text-primary)', fontSize: '0.95rem', colorScheme: 'dark', outline: 'none', width: '100%' };
+
+  const closeForm = () => { setShowForm(false); setEditId(null); setDraft({ deviceId: '', onTime: '09:00', offTime: '22:00', days: '1,2,3,4,5', enabled: true }); };
+  const handleSave = async () => {
+    // 중복 체크 — 같은 기기·시간·요일 조합이 이미 존재하는지 확인
+    const dup = schedules.find(s =>
+      s.id !== editId &&
+      (s.deviceId || '') === (draft.deviceId || '') &&
+      s.onTime  === draft.onTime &&
+      s.offTime === draft.offTime &&
+      s.days    === draft.days
+    );
+    if (dup) { showToast('❌ 동일한 스케줄이 이미 있습니다', false); return; }
+
+    setSaving(true);
+    try {
+      await apiFetch(`${SOCKET_URL}/api/schedules`, { method: 'POST', body: JSON.stringify({ ...draft, id: editId || undefined }) }).then(check401);
+      closeForm();
+      load();
+      showToast('✅ 저장 완료 — 기기에 자동 전송됨');
+    } catch (e) { if (e.message !== '401') showToast('❌ 저장 실패', false); }
+    finally { setSaving(false); }
+  };
 
   return (
-    <div className="glass-card" style={{ maxWidth: '600px', padding: '30px', marginTop: '20px' }}>
-      <h2 style={{ margin: 0, marginBottom: toast ? '10px' : '20px', fontSize: '1.2rem' }}>🕐 화면 스케줄</h2>
+    <div className="glass-card" style={{ maxWidth: '600px', padding: '24px 28px', marginTop: '20px', height: 'auto', alignSelf: 'stretch' }}>
+
+      {/* ── 헤더 ── */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '20px' }}>
+        <h2 style={{ margin: 0, fontSize: '1.15rem', flex: 1 }}>🕐 화면 스케줄</h2>
+        {serverNow && (
+          <span style={{ fontSize: '0.72rem', color: '#64748b', fontFamily: 'monospace', background: 'rgba(255,255,255,0.04)', padding: '3px 8px', borderRadius: '6px', border: '1px solid var(--border)', flexShrink: 0 }}
+            title="서버 시각 — 스케줄은 이 시각(KST) 기준으로 실행됩니다">
+            🖥 서버 {new Date(serverNow).toLocaleTimeString('ko-KR', { timeZone: 'Asia/Seoul', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false })}
+          </span>
+        )}
+        {!isFormOpen && (
+          <button onClick={() => setShowForm(true)}
+            style={{ display: 'flex', alignItems: 'center', gap: '5px', padding: '6px 14px', borderRadius: '8px', border: 'none', background: '#3b82f6', color: '#fff', fontSize: '0.82rem', fontWeight: 700, cursor: 'pointer', flexShrink: 0 }}>
+            + 새 스케줄
+          </button>
+        )}
+      </div>
+
+      {/* ── 토스트 ── */}
       {toast && (
-        <div style={{ marginBottom: '16px', padding: '8px 14px', borderRadius: '8px', background: toast.ok ? 'rgba(16,185,129,0.15)' : 'rgba(239,68,68,0.15)', border: `1px solid ${toast.ok ? '#10B981' : '#EF4444'}`, fontSize: '0.85rem', fontWeight: 600, color: toast.ok ? '#10B981' : '#EF4444' }}>
+        <div style={{ marginBottom: '16px', padding: '9px 14px', borderRadius: '8px', background: toast.ok ? 'rgba(16,185,129,0.12)' : 'rgba(239,68,68,0.12)', border: `1px solid ${toast.ok ? '#10B981' : '#EF4444'}`, fontSize: '0.85rem', fontWeight: 600, color: toast.ok ? '#10B981' : '#EF4444' }}>
           {toast.msg}
         </div>
       )}
 
-      {/* 등록된 스케줄 목록 */}
-      {schedules.length > 0 && (
-        <div style={{ marginBottom: '20px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
-          {schedules.map(s => (
-            <div key={s.id} style={{ padding: '12px 14px', borderRadius: '8px', background: 'rgba(255,255,255,0.04)', border: '1px solid var(--border)', display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
-              <span style={{ flex: 1, fontSize: '0.85rem', color: s.enabled ? 'var(--text-primary)' : '#666' }}>
-                {s.deviceId || '전체 기기'} &nbsp;|&nbsp;
-                {s.onTime && `☀️ ${s.onTime}`} {s.offTime && `🌙 ${s.offTime}`} &nbsp;|&nbsp;
-                {s.days.split(',').map(Number).map(d => DAY_LABELS[d]).join(' ')}
-              </span>
-              <button onClick={() => toggleEnabled(s)} style={{ fontSize: '0.75rem', padding: '3px 8px', borderRadius: '4px', border: '1px solid var(--border)', background: 'transparent', color: s.enabled ? '#10B981' : '#666', cursor: 'pointer' }}>
-                {s.enabled ? '활성' : '비활성'}
-              </button>
-              <button onClick={() => startEdit(s)} style={{ fontSize: '0.75rem', padding: '3px 8px', borderRadius: '4px', border: '1px solid var(--border)', background: 'transparent', color: 'var(--text-secondary)', cursor: 'pointer' }}>수정</button>
-              <button onClick={() => remove(s.id)} style={{ fontSize: '0.75rem', padding: '3px 8px', borderRadius: '4px', border: '1px solid #EF4444', background: 'transparent', color: '#EF4444', cursor: 'pointer' }}>삭제</button>
-            </div>
-          ))}
+      {/* ── 스케줄 카드 목록 ── */}
+      {schedules.length === 0 && !isFormOpen && (
+        <div style={{ textAlign: 'center', padding: '32px 0', color: '#475569', fontSize: '0.88rem' }}>
+          <div style={{ fontSize: '2rem', marginBottom: '8px' }}>📅</div>
+          등록된 스케줄이 없습니다.<br />
+          <span style={{ color: '#3b82f6' }}>+ 새 스케줄</span> 버튼으로 추가하세요.
         </div>
       )}
 
-      {/* 스케줄 추가/수정 폼 */}
-      <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-        <div style={{ display: 'flex', gap: '10px', alignItems: 'center', flexWrap: 'wrap' }}>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
-            <label style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>켜는 시간</label>
-            <input type="time" value={draft.onTime} onChange={e => setDraft(p => ({ ...p, onTime: e.target.value }))} style={inputStyle} />
-          </div>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
-            <label style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>끄는 시간</label>
-            <input type="time" value={draft.offTime} onChange={e => setDraft(p => ({ ...p, offTime: e.target.value }))} style={inputStyle} />
-          </div>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
-            <label style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>기기 ID (비우면 전체)</label>
-            <input type="text" value={draft.deviceId} onChange={e => setDraft(p => ({ ...p, deviceId: e.target.value }))} placeholder="예: dev-101" style={{ ...inputStyle, width: '120px' }} />
-          </div>
-        </div>
+      {schedules.length > 0 && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', marginBottom: isFormOpen ? '20px' : '0' }}>
+          {schedules.map(s => {
+            const isEditing = editId === s.id;
+            // 수정 중인 카드는 draft 값을 실시간 반영
+            const liveOnTime  = isEditing ? draft.onTime  : s.onTime;
+            const liveOffTime = isEditing ? draft.offTime : s.offTime;
+            const liveDeviceId = isEditing ? draft.deviceId : s.deviceId;
+            const liveDays = (isEditing ? draft.days : s.days)
+              .split(',').filter(Boolean).map(Number);
+            return (
+              <div key={s.id} style={{ borderRadius: '10px', border: `1px solid ${isEditing ? '#f59e0b' : 'var(--border)'}`, background: isEditing ? 'rgba(245,158,11,0.06)' : s.enabled ? 'rgba(255,255,255,0.04)' : 'rgba(255,255,255,0.02)', overflow: 'hidden' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '10px 12px', minWidth: 0 }}>
 
-        {/* 요일 선택 */}
-        <div style={{ display: 'flex', gap: '6px' }}>
-          {DAY_LABELS.map((label, day) => (
-            <button key={day} onClick={() => toggleDay(day)}
-              style={{ width: '36px', height: '36px', borderRadius: '50%', border: '1px solid var(--border)', background: activeDays.includes(day) ? '#3B82F6' : 'transparent', color: activeDays.includes(day) ? '#fff' : 'var(--text-secondary)', fontSize: '0.8rem', cursor: 'pointer', fontWeight: activeDays.includes(day) ? 700 : 400 }}>
-              {label}
+                  {/* 활성 토글 */}
+                  <div onClick={() => toggleEnabled(s)} title={s.enabled ? '클릭하여 비활성화' : '클릭하여 활성화'}
+                    style={{ width: '36px', height: '20px', borderRadius: '10px', background: s.enabled ? '#10b981' : '#334155', cursor: 'pointer', position: 'relative', flexShrink: 0, transition: 'background 0.2s' }}>
+                    <div style={{ position: 'absolute', top: '3px', left: s.enabled ? '19px' : '3px', width: '14px', height: '14px', borderRadius: '50%', background: '#fff', transition: 'left 0.2s' }} />
+                  </div>
+
+                  {/* 시간 표시 */}
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '5px', marginBottom: '5px', flexWrap: 'wrap', minWidth: 0 }}>
+                      {liveOnTime  && <span style={{ fontSize: '0.95rem', fontWeight: 700, color: s.enabled ? '#fbbf24' : '#475569', flexShrink: 0 }}>☀️ {liveOnTime}</span>}
+                      {liveOnTime && liveOffTime && <span style={{ color: '#475569', fontSize: '0.75rem', flexShrink: 0 }}>→</span>}
+                      {liveOffTime && <span style={{ fontSize: '0.95rem', fontWeight: 700, color: s.enabled ? '#818cf8' : '#475569', flexShrink: 0 }}>🌙 {liveOffTime}</span>}
+                      {liveDeviceId
+                        ? <span style={{ fontSize: '0.68rem', color: '#60a5fa', background: 'rgba(96,165,250,0.1)', border: '1px solid rgba(96,165,250,0.2)', padding: '1px 6px', borderRadius: '4px', maxWidth: '120px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                            {devices.find(d => d.id === liveDeviceId)?.name || liveDeviceId}
+                          </span>
+                        : <span style={{ fontSize: '0.68rem', color: '#64748b' }}>전체 기기</span>
+                      }
+                    </div>
+                    {/* 요일 칩 */}
+                    <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap' }}>
+                      {DAY_LABELS.map((label, d) => (
+                        <span key={d} style={{ fontSize: '0.68rem', padding: '1px 6px', borderRadius: '4px', fontWeight: liveDays.includes(d) ? 700 : 400, background: liveDays.includes(d) ? (s.enabled ? 'rgba(59,130,246,0.2)' : 'rgba(100,116,139,0.15)') : 'transparent', color: liveDays.includes(d) ? (s.enabled ? '#93c5fd' : '#64748b') : '#334155', border: liveDays.includes(d) ? `1px solid ${s.enabled ? 'rgba(59,130,246,0.3)' : 'rgba(100,116,139,0.3)'}` : '1px solid transparent' }}>
+                          {label}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* 수정·삭제 */}
+                  <div style={{ display: 'flex', gap: '6px', flexShrink: 0 }}>
+                    <button
+                      onClick={() => { startEdit(s); setShowForm(true); }}
+                      disabled={isFormOpen}
+                      style={{ padding: '5px 10px', borderRadius: '6px', border: '1px solid var(--border)', background: 'transparent', color: isFormOpen ? '#334155' : 'var(--text-secondary)', fontSize: '0.75rem', cursor: isFormOpen ? 'not-allowed' : 'pointer', opacity: isFormOpen ? 0.4 : 1, transition: 'opacity 0.15s' }}>
+                      ✏️ 수정
+                    </button>
+                    <button
+                      onClick={() => remove(s.id)}
+                      disabled={isEditing}
+                      style={{ padding: '5px 10px', borderRadius: '6px', border: '1px solid rgba(239,68,68,0.4)', background: 'transparent', color: '#ef4444', fontSize: '0.75rem', cursor: isEditing ? 'not-allowed' : 'pointer', opacity: isEditing ? 0.3 : 1, transition: 'opacity 0.15s' }}>
+                      🗑
+                    </button>
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {/* ── 추가/수정 폼 패널 ── */}
+      {isFormOpen && (
+        <div style={{ borderRadius: '12px', border: `1px solid ${editId ? '#f59e0b66' : '#3b82f666'}`, background: editId ? 'rgba(245,158,11,0.05)' : 'rgba(59,130,246,0.05)', padding: '20px' }}>
+          <div style={{ fontSize: '0.85rem', fontWeight: 700, color: editId ? '#f59e0b' : '#60a5fa', marginBottom: '16px' }}>
+            {editId ? '✏️ 스케줄 수정' : '➕ 새 스케줄 추가'}
+          </div>
+
+          {/* 시간 */}
+          <div style={{ display: 'flex', gap: '16px', flexWrap: 'wrap', marginBottom: '16px', alignItems: 'flex-end' }}>
+            <div>
+              <label style={{ display: 'block', fontSize: '0.72rem', color: '#94a3b8', marginBottom: '6px' }}>☀️ 켜는 시간 <span style={{ color: '#64748b' }}>(24시)</span></label>
+              <TimeStepper value={draft.onTime} onChange={v => setDraft(p => ({ ...p, onTime: v }))} />
+            </div>
+            <div style={{ color: '#475569', fontSize: '1.4rem', paddingBottom: '6px' }}>→</div>
+            <div>
+              <label style={{ display: 'block', fontSize: '0.72rem', color: '#94a3b8', marginBottom: '6px' }}>🌙 끄는 시간 <span style={{ color: '#64748b' }}>(24시)</span></label>
+              <TimeStepper value={draft.offTime} onChange={v => setDraft(p => ({ ...p, offTime: v }))} />
+            </div>
+          </div>
+
+          {/* 기기 선택 */}
+          <div style={{ marginBottom: '16px' }}>
+            <label style={{ display: 'block', fontSize: '0.72rem', color: '#94a3b8', marginBottom: '8px' }}>📱 적용 기기</label>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
+              {/* 전체 기기 */}
+              {(() => {
+                const sel = draft.deviceId === '';
+                return (
+                  <button onClick={() => setDraft(p => ({ ...p, deviceId: '' }))}
+                    style={{ padding: '5px 12px', borderRadius: '6px', fontSize: '0.72rem', fontWeight: sel ? 700 : 400, cursor: 'pointer', border: sel ? '2px solid #3b82f6' : '1px solid var(--border)', background: sel ? '#3b82f6' : 'rgba(255,255,255,0.03)', color: sel ? '#fff' : '#64748b', transition: 'all 0.15s' }}>
+                    전체 기기
+                  </button>
+                );
+              })()}
+              {/* 개별 기기 칩 — deviceOrder 순서 적용 */}
+              {(() => {
+                const orderedIds = Object.values(deviceOrder).flat();
+                const sorted = orderedIds.length === 0 ? devices : [
+                  ...orderedIds.map(id => devices.find(d => d.id === id)).filter(Boolean),
+                  ...devices.filter(d => !orderedIds.includes(d.id)),
+                ];
+                return sorted.map(dev => {
+                  const sel = draft.deviceId === dev.id;
+                  const online = dev.status === 'online';
+                  return (
+                    <button key={dev.id} onClick={() => setDraft(p => ({ ...p, deviceId: sel ? '' : dev.id }))}
+                      style={{ display: 'flex', alignItems: 'center', gap: '5px', padding: '5px 10px', borderRadius: '6px', fontSize: '0.72rem', fontWeight: sel ? 700 : 400, cursor: 'pointer', border: sel ? '2px solid #3b82f6' : '1px solid var(--border)', background: sel ? 'rgba(59,130,246,0.18)' : 'rgba(255,255,255,0.03)', color: sel ? '#93c5fd' : '#64748b', transition: 'all 0.15s' }}>
+                      <span style={{ width: '6px', height: '6px', borderRadius: '50%', background: !online ? '#ef4444' : sel ? '#10b981' : '#334155', flexShrink: 0 }} />
+                      {dev.name}
+                    </button>
+                  );
+                });
+              })()}
+            </div>
+          </div>
+
+          {/* 요일 선택 */}
+          <div style={{ marginBottom: '20px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '8px' }}>
+              <label style={{ fontSize: '0.72rem', color: '#94a3b8' }}>반복 요일</label>
+              <label style={{ display: 'flex', alignItems: 'center', gap: '4px', cursor: 'pointer', fontSize: '0.68rem', color: activeDays.length === 7 ? '#3b82f6' : '#64748b', userSelect: 'none' }}>
+                <input
+                  type="checkbox"
+                  checked={activeDays.length === 7}
+                  onChange={() => setDraft(p => ({ ...p, days: activeDays.length === 7 ? '' : '0,1,2,3,4,5,6' }))}
+                  style={{ width: '12px', height: '12px', accentColor: '#3b82f6', cursor: 'pointer' }}
+                />
+                전체
+              </label>
+            </div>
+            <div style={{ display: 'flex', gap: '6px' }}>
+              {DAY_LABELS.map((label, day) => (
+                <button key={day} onClick={() => toggleDay(day)}
+                  style={{ flex: 1, height: '28px', borderRadius: '6px', border: activeDays.includes(day) ? '2px solid #3b82f6' : '1px solid var(--border)', background: activeDays.includes(day) ? '#3b82f6' : 'rgba(255,255,255,0.03)', color: activeDays.includes(day) ? '#fff' : '#64748b', fontSize: '0.72rem', cursor: 'pointer', fontWeight: activeDays.includes(day) ? 700 : 400, transition: 'all 0.15s' }}>
+                  {label}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* 저장·취소 */}
+          <div style={{ display: 'flex', gap: '8px' }}>
+            <button onClick={handleSave} disabled={saving}
+              style={{ flex: 1, padding: '7px', borderRadius: '7px', border: 'none', background: saving ? '#374151' : (editId ? '#f59e0b' : '#3b82f6'), color: '#fff', fontSize: '0.78rem', fontWeight: 700, cursor: saving ? 'default' : 'pointer' }}>
+              {saving ? '저장 중…' : editId ? '수정 저장' : '저장 및 전송'}
             </button>
-          ))}
-        </div>
-
-        <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' }}>
-          <button className="btn btn-primary" onClick={save} disabled={saving}
-            style={{ background: '#10B981', fontWeight: 700 }}>
-            {saving ? '저장 중…' : editId ? '✏️ 수정 저장 및 전송' : '💾 저장 및 기기 전송'}
-          </button>
-          {editId && (
-            <button className="btn" onClick={() => { setEditId(null); setDraft({ deviceId: '', onTime: '09:00', offTime: '22:00', days: '1,2,3,4,5', enabled: true }); }}
-              style={{ background: 'transparent', border: '1px solid var(--border)', color: 'var(--text-secondary)' }}>
+            <button onClick={closeForm}
+              style={{ padding: '7px 14px', borderRadius: '7px', border: '1px solid var(--border)', background: 'transparent', color: 'var(--text-secondary)', fontSize: '0.78rem', cursor: 'pointer' }}>
               취소
             </button>
-          )}
-          <span style={{ fontSize: '0.72rem', color: 'var(--text-secondary)' }}>
-            저장하면 기기에 즉시 전송됩니다
-          </span>
+          </div>
         </div>
-      </div>
+      )}
     </div>
   );
 }
 
-function SettingsTab({ onUnauth }) {
+function SettingsTab({ onUnauth, deviceOrder = {} }) {
   const [otaStatus, setOtaStatus] = useState(null);
   const [pushing, setPushing] = useState(false);
   const [adbRunning, setAdbRunning] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState(0);
+  const [pushResults, setPushResults] = useState(null); // { deviceId, success, label }[]
+  // 기기 목록 + 선택
+  const [allDevices, setAllDevices] = useState([]);
+  const [selectedIds, setSelectedIds] = useState(new Set());
+  // 기기별 다운로드/설치 진행률 { [deviceId]: { cur, total, pct, label } | null }
+  const [dlProgress, setDlProgress] = useState({});
   const adbControllerRef = useRef(null);
   const apkInputRef = useRef(null);
 
@@ -378,7 +659,104 @@ function SettingsTab({ onUnauth }) {
       .then(setOtaStatus)
       .catch(e => { if (e.message !== '401') setOtaStatus({ available: false }); });
 
-  useEffect(() => { refreshStatus(); }, []);
+  const refreshDevices = () =>
+    apiFetch(`${SOCKET_URL}/api/devices`)
+      .then(r => r.json())
+      .then(devs => {
+        setAllDevices(devs);
+        // 처음 로드 시 온라인 기기만 자동 선택 (설치 중일 땐 변경 안 함)
+        setSelectedIds(prev => {
+          if (prev.size === 0 && !pushing) return new Set(devs.filter(d => d.status === 'online').map(d => d.id));
+          return prev;
+        });
+      })
+      .catch(() => {});
+
+  // 페이지 복귀 시 서버 설치 상태 복원
+  const checkAdbStatus = () =>
+    apiFetch(`${SOCKET_URL}/api/update/adb-status`)
+      .then(r => r.json())
+      .then(s => {
+        if (s.running) {
+          setPushing(true);
+          setAdbRunning(true);
+          if (s.deviceIds?.length) setSelectedIds(new Set(s.deviceIds));
+        } else if (s.results) {
+          setPushResults(s.results.map(r => ({
+            id: r.deviceId, success: r.success,
+            label: r.success ? '✅ 완료' : '❌ 실패'
+          })));
+          if (s.deviceIds?.length) setSelectedIds(new Set(s.deviceIds));
+        }
+      })
+      .catch(() => {});
+
+  useEffect(() => {
+    refreshStatus();
+    refreshDevices();
+    checkAdbStatus();
+    const t = setInterval(refreshDevices, 10000);
+
+    // 소켓으로 기기 진행률 수신
+    const socket = io(SOCKET_URL);
+
+    // OTA: 기기가 서버에서 APK 다운로드하는 진행률
+    socket.on('device_status_update', (update) => {
+      setAllDevices(prev => prev.map(d =>
+        d.id === update.deviceId ? { ...d, status: update.status, dl: update.dl ?? null } : d
+      ));
+      setDlProgress(prev => {
+        const next = { ...prev };
+        if (update.dl) {
+          // OTA 다운로드 진행률 (isAdb 없음)
+          const isApk = update.dl.cur === 0 && update.dl.total === 0;
+          next[update.deviceId] = {
+            pct: update.dl.pct ?? 0,
+            label: isApk ? '자료전송중' : '다운로드중',
+            color: isApk ? '#8b5cf6' : '#3b82f6',
+          };
+        } else if (next[update.deviceId]?.isAdb) {
+          // ADB 설치 완료 후 기기가 다시 접속 → "PC 응답 대기"로 전환 (삭제 안 함)
+          if (update.status === 'online') {
+            next[update.deviceId] = { pct: 100, label: 'PC 응답 대기', color: '#475569', isAdb: true };
+          }
+          // 오프라인이면 현재 상태(기기 앱 시작 중) 유지
+        } else {
+          // OTA 항목이면 dl 없을 때 삭제
+          delete next[update.deviceId];
+        }
+        return next;
+      });
+    });
+
+    // ADB: 서버 PC에서 직접 adb install 하는 진행률
+    socket.on('adb_install_progress', ({ deviceId, stage, pct }) => {
+      setDlProgress(prev => {
+        const next = { ...prev };
+        if (stage === 'success') {
+          // 2초간 "설치 완료" 표시 후 → 기기가 돌아올 때까지 "기기 앱 시작 중" 유지
+          next[deviceId] = { pct: 100, label: '설치 완료', color: '#10b981', isAdb: true };
+          setTimeout(() => setDlProgress(p => p[deviceId]
+            ? { ...p, [deviceId]: { pct: 100, label: '기기 앱 시작 중', color: '#64748b', isAdb: true } }
+            : p
+          ), 2000);
+        } else if (stage === 'failed' || stage === 'cancelled') {
+          next[deviceId] = { pct: pct ?? 0, label: '설치 실패', color: '#ef4444', isAdb: true };
+          setTimeout(() => setDlProgress(p => { const n = { ...p }; delete n[deviceId]; return n; }), 5000);
+        } else if (stage === 'connecting') {
+          next[deviceId] = { pct: pct ?? 10, label: '기기 연결 중', color: '#64748b', isAdb: true };
+        } else if (stage === 'finalizing') {
+          next[deviceId] = { pct: pct ?? 85, label: '앱 실행 중', color: '#8b5cf6', isAdb: true };
+        } else {
+          // installing: ADB로 APK를 기기에 직접 설치하는 단계
+          next[deviceId] = { pct: pct ?? 30, label: 'APK 설치 중', color: '#f59e0b', isAdb: true };
+        }
+        return next;
+      });
+    });
+
+    return () => { clearInterval(t); socket.disconnect(); };
+  }, []);
 
   const handleApkUpload = (e) => {
     const file = e.target.files?.[0];
@@ -405,7 +783,7 @@ function SettingsTab({ onUnauth }) {
         try {
           const data = JSON.parse(xhr.responseText);
           // POST 응답으로 직접 갱신 (브라우저 GET 캐시 문제 방지)
-          setOtaStatus({ available: true, size: data.size, updatedAt: data.updatedAt });
+          setOtaStatus({ available: true, size: data.size, updatedAt: data.updatedAt, lastDeployedAt: null });
         } catch { refreshStatus(); }
       } else { alert('업로드 실패: ' + xhr.responseText); }
     };
@@ -413,43 +791,115 @@ function SettingsTab({ onUnauth }) {
     xhr.send(form);
   };
 
-  const pushUpdate = (deviceId = '') => {
-    if (!window.confirm(deviceId ? `${deviceId} 에 업데이트를 배포할까요?` : '전체 단말에 업데이트를 배포할까요?')) return;
+  // 선택된 기기 이름 목록
+  const selectedDevices = allDevices.filter(d => selectedIds.has(d.id));
+  const selectedLabel = selectedDevices.length === 0
+    ? '선택된 기기 없음'
+    : selectedDevices.length === allDevices.length
+      ? `전체 ${allDevices.length}대`
+      : `${selectedDevices.map(d => d.name).join(', ')} (${selectedDevices.length}대)`;
+
+  const toggleDevice = (id) =>
+    setSelectedIds(prev => { const s = new Set(prev); s.has(id) ? s.delete(id) : s.add(id); return s; });
+
+  const toggleAll = () =>
+    setSelectedIds(prev =>
+      prev.size === allDevices.length ? new Set() : new Set(allDevices.map(d => d.id))
+    );
+
+  const pushUpdate = async () => {
+    if (selectedIds.size === 0) { alert('배포할 기기를 선택하세요.'); return; }
+    if (!window.confirm(`${selectedLabel}에 OTA 업데이트를 배포할까요?`)) return;
+    const ids = [...selectedIds];
     setPushing(true);
-    apiFetch(`${SOCKET_URL}/api/update/push`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ deviceId })
-    })
-      .then(check401)
-      .then(r => r.json())
-      .then(d => alert(d.success ? `배포 완료 → ${d.pushed}` : `실패: ${d.error}`))
-      .catch(e => { if (e.message !== '401') alert('오류: ' + e.message); })
-      .finally(() => setPushing(false));
+    setPushResults(null);
+    // 선택된 모든 기기 → "알림 전송 중" 표시
+    setDlProgress(prev => {
+      const next = { ...prev };
+      ids.forEach(id => { next[id] = { pct: 0, label: '알림 전송 중', color: '#f97316' }; });
+      return next;
+    });
+    try {
+      const results = await Promise.all(
+        ids.map(async (id) => {
+          const dev = allDevices.find(d => d.id === id);
+          try {
+            const r = await apiFetch(`${SOCKET_URL}/api/update/push`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ deviceId: id })
+            }).then(check401).then(r => r.json());
+            // 푸시 전달 완료 → dlProgress 해제 (배지 표시, 기기가 다운로드 시작하면 다시 채워짐)
+            setDlProgress(prev => { const n = { ...prev }; delete n[id]; return n; });
+            return { id, name: dev?.name || id, success: r.success };
+          } catch (e) {
+            if (e.message === '401') throw e;
+            setDlProgress(prev => { const n = { ...prev }; delete n[id]; return n; });
+            return { id, name: dev?.name || id, success: false, error: e.message };
+          }
+        })
+      );
+      setPushResults(results);
+      // 배포 완료 → 배포 시각 갱신
+      if (results.some(r => r.success)) {
+        setOtaStatus(prev => prev ? { ...prev, lastDeployedAt: new Date().toISOString() } : prev);
+      }
+    } catch (e) {
+      if (e.message !== '401') alert('오류: ' + e.message);
+      setDlProgress(prev => {
+        const n = { ...prev };
+        ids.forEach(id => delete n[id]);
+        return n;
+      });
+    } finally {
+      setPushing(false);
+    }
   };
 
-  const adbInstall = (deviceId = '') => {
-    if (!window.confirm(deviceId ? `${deviceId}에 ADB 직접 설치할까요?` : '전체 단말에 ADB 직접 설치할까요?')) return;
+  const adbInstall = async () => {
+    if (selectedIds.size === 0) { alert('설치할 기기를 선택하세요.'); return; }
+    if (!window.confirm(`${selectedLabel}에 ADB 직접 설치할까요?`)) return;
     adbControllerRef.current = new AbortController();
     setPushing(true);
     setAdbRunning(true);
-    apiFetch(`${SOCKET_URL}/api/update/adb-install`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ deviceId }),
-      signal: adbControllerRef.current.signal
-    })
-      .then(check401)
-      .then(r => r.json())
-      .then(d => {
-        if (d.results && d.results.length > 0) {
-          alert(d.results.map(r => `[${r.deviceId}] ${r.success ? '✅ 성공' : '❌ 실패'}\n${r.output || r.error || ''}`).join('\n\n'));
-        } else {
-          alert(d.error || '결과 없음');
-        }
-      })
-      .catch(e => { if (e.name !== 'AbortError' && e.message !== '401') alert('오류: ' + e.message); })
-      .finally(() => { setPushing(false); setAdbRunning(false); });
+    setPushResults(null);
+    // 선택된 모든 기기를 즉시 "대기중"으로 표시 — 순차 설치 대기 상태 시각화
+    const ids = [...selectedIds];
+    setDlProgress(prev => {
+      const next = { ...prev };
+      ids.forEach(id => { next[id] = { pct: 0, label: '대기중', color: '#475569' }; });
+      return next;
+    });
+    try {
+      const d = await apiFetch(`${SOCKET_URL}/api/update/adb-install`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ deviceIds: ids }),
+        signal: adbControllerRef.current.signal
+      }).then(check401).then(r => r.json());
+
+      const mapped = (d.results || []).map(r => {
+        const dev = allDevices.find(dev => dev.id === r.deviceId);
+        return { id: r.deviceId, name: dev?.name || r.deviceId, success: r.success, output: r.output };
+      });
+      // dlProgress 클리어와 배지 표시를 동시에 — 공백 없이 바↔배지 교체
+      setDlProgress(prev => {
+        const next = { ...prev };
+        ids.forEach(id => delete next[id]);
+        return next;
+      });
+      setPushResults(mapped);
+      // ADB 설치 완료 → 배포 시각 갱신
+      if (mapped.some(r => r.success)) {
+        setOtaStatus(prev => prev ? { ...prev, lastDeployedAt: new Date().toISOString() } : prev);
+      }
+    } catch (e) {
+      if (e.name === 'AbortError') { /* 취소됨 */ }
+      else if (e.message !== '401') alert('오류: ' + e.message);
+    } finally {
+      setPushing(false);
+      setAdbRunning(false);
+    }
   };
 
   const cancelAdbInstall = () => {
@@ -457,6 +907,8 @@ function SettingsTab({ onUnauth }) {
     apiFetch(`${SOCKET_URL}/api/update/adb-cancel`, { method: 'POST' }).catch(() => {});
     setPushing(false);
     setAdbRunning(false);
+    setPushResults(null);
+    setDlProgress({});
   };
 
   return (
@@ -528,7 +980,11 @@ function SettingsTab({ onUnauth }) {
             <>
               <span style={{ color: '#10B981', fontSize: '0.85rem' }}>
                 ✅ APK 준비됨 — {(otaStatus.size / 1024 / 1024).toFixed(1)} MB
-                &nbsp;({new Date(otaStatus.updatedAt).toLocaleString('ko-KR')})
+                {otaStatus.lastDeployedAt
+                  ? <>&nbsp;<span style={{ color: '#64748b' }}>업로드 {new Date(otaStatus.updatedAt).toLocaleString('ko-KR')}</span>
+                      &nbsp;·&nbsp;<span style={{ color: '#10b981', fontWeight: 600 }}>마지막 배포 {new Date(otaStatus.lastDeployedAt).toLocaleString('ko-KR')}</span></>
+                  : <>&nbsp;({new Date(otaStatus.updatedAt).toLocaleString('ko-KR')})</>
+                }
               </span>
               <button
                 style={{ flexShrink: 0, padding: '4px 10px', fontSize: '0.78rem', background: '#EF4444', color: '#fff', border: 'none', borderRadius: '6px', cursor: 'pointer' }}
@@ -540,7 +996,7 @@ function SettingsTab({ onUnauth }) {
                     .catch(e => alert('오류: ' + e.message));
                 }}
               >
-                × 배포 취소
+                🗑 삭제
               </button>
             </>
           ) : (
@@ -550,21 +1006,117 @@ function SettingsTab({ onUnauth }) {
           )}
         </div>
 
-        <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap' }}>
+        {/* 기기 선택 */}
+        <div style={{ marginBottom: '16px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '10px' }}>
+            <span style={{ fontSize: '0.9rem', fontWeight: 600 }}>📱 배포 대상 기기</span>
+            <button
+              style={{ fontSize: '0.78rem', padding: '3px 10px', background: 'rgba(255,255,255,0.07)', border: '1px solid rgba(255,255,255,0.12)', borderRadius: '6px', color: '#e2e8f0', cursor: 'pointer' }}
+              onClick={toggleAll}
+            >
+              {selectedIds.size === allDevices.length ? '전체 해제' : '전체 선택'}
+            </button>
+          </div>
+          {allDevices.length === 0 ? (
+            <p style={{ fontSize: '0.82rem', color: '#64748b', padding: '10px 0' }}>기기 없음</p>
+          ) : (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+              {(() => {
+                const orderedIds = Object.values(deviceOrder).flat();
+                const sorted = orderedIds.length === 0 ? allDevices : [
+                  ...orderedIds.map(id => allDevices.find(d => d.id === id)).filter(Boolean),
+                  ...allDevices.filter(d => !orderedIds.includes(d.id)),
+                ];
+                return sorted;
+              })().map(dev => {
+                const isOnline = dev.status === 'online';
+                const checked = selectedIds.has(dev.id);
+                const result = pushResults?.find(r => r.id === dev.id);
+                return (
+                  <div key={dev.id}>
+                    <label
+                      style={{
+                        display: 'flex', alignItems: 'center', gap: '10px',
+                        padding: '9px 12px', borderRadius: '8px', cursor: 'pointer',
+                        background: checked ? 'rgba(249,115,22,0.08)' : 'rgba(255,255,255,0.03)',
+                        border: `1px solid ${checked ? 'rgba(249,115,22,0.35)' : 'rgba(255,255,255,0.07)'}`,
+                        transition: 'all 0.15s'
+                      }}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={checked}
+                        onChange={() => toggleDevice(dev.id)}
+                        style={{ width: '15px', height: '15px', accentColor: '#F97316', cursor: 'pointer' }}
+                      />
+                      <span style={{ width: '8px', height: '8px', borderRadius: '50%', background: isOnline ? '#10B981' : '#475569', flexShrink: 0 }} />
+                      <span style={{ flex: 1, fontSize: '0.88rem', color: isOnline ? '#e2e8f0' : '#94a3b8' }}>
+                        {dev.name}
+                      </span>
+                      {dev.appVersion && (
+                        <span style={{ fontSize: '0.75rem', color: '#64748b', fontFamily: 'monospace' }}>
+                          v{dev.appVersion}
+                        </span>
+                      )}
+                      <span style={{ fontSize: '0.75rem', color: isOnline ? '#10B981' : '#475569' }}>
+                        {isOnline ? '온라인' : '오프라인'}
+                      </span>
+                      {result && !dlProgress[dev.id] && (
+                        <span style={{ fontSize: '0.75rem', color: result.success ? '#10B981' : '#EF4444', fontWeight: 600 }}>
+                          {result.success ? '✅ 전송됨' : '❌ 실패'}
+                        </span>
+                      )}
+                    </label>
+                    {/* 다운로드/설치 진행률 바 (OTA + ADB 공용) */}
+                    {(() => {
+                      // dlProgress가 있으면 그걸 우선 사용
+                      const dp = dlProgress[dev.id];
+                      // 설치/배포 진행 중 + 이 기기가 선택돼 있고 + 아직 결과 없을 때 → 폴백 상태
+                      const otaPushing = pushing && !adbRunning;
+                      const isQueued = (adbRunning || otaPushing) && selectedIds.has(dev.id) && !result;
+                      if (!dp && !isQueued) return null;
+                      const pct   = dp?.pct   ?? 0;
+                      const color = dp?.color ?? '#475569';
+                      const label = dp?.label ?? (
+                        adbRunning
+                          ? (!isOnline ? '기기 앱 시작 중' : 'PC 전송 대기')
+                          : (!isOnline ? '기기 재시작 중'  : '알림 전송 중')
+                      );
+                      return (
+                        <div style={{ padding: '4px 12px 8px', marginTop: -4 }}>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.72rem', color, marginBottom: 3 }}>
+                            <span>{label}</span>
+                            {pct > 0 && <span style={{ fontWeight: 700 }}>{pct}%</span>}
+                          </div>
+                          <div style={{ height: 5, borderRadius: 3, background: 'rgba(255,255,255,0.08)' }}>
+                            <div style={{ height: '100%', borderRadius: 3, background: color, width: `${pct}%`, transition: 'width 0.3s' }} />
+                          </div>
+                        </div>
+                      );
+                    })()}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+
+        {/* 배포 버튼 */}
+        <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap', alignItems: 'center' }}>
           <button
             className="btn btn-primary"
-            disabled={pushing || !otaStatus?.available}
-            onClick={() => pushUpdate('')}
+            disabled={pushing || !otaStatus?.available || selectedIds.size === 0}
+            onClick={pushUpdate}
           >
-            {pushing && !adbRunning ? '배포 중…' : '🚀 OTA 푸시 (확인 필요할 수 있음)'}
+            {pushing && !adbRunning ? '배포 중…' : `🚀 OTA 푸시 (${selectedIds.size}대)`}
           </button>
           <button
             className="btn btn-primary"
             style={{ background: '#10B981' }}
-            disabled={pushing || !otaStatus?.available}
-            onClick={() => adbInstall('')}
+            disabled={pushing || !otaStatus?.available || selectedIds.size === 0}
+            onClick={adbInstall}
           >
-            {adbRunning ? '설치 중…' : '⚡ ADB 직접 설치 (확인 없음)'}
+            {adbRunning ? '설치 중…' : `⚡ ADB 설치 (${selectedIds.size}대)`}
           </button>
           {adbRunning && (
             <button
@@ -582,7 +1134,7 @@ function SettingsTab({ onUnauth }) {
         </p>
       </div>
 
-      <ScreenScheduleSection onUnauth={onUnauth} />
+      <ScreenScheduleSection onUnauth={onUnauth} deviceOrder={deviceOrder} />
     </div>
   );
 }
@@ -805,17 +1357,77 @@ function LoginScreen({ onLogin }) {
 function App() {
   const [authed, setAuthed] = useState(!!getToken());
   const [activeTab, setActiveTab] = useState('dashboard');
-  const [devices, setDevices] = useState([]);
-  const [groups, setGroups] = useState([]);
-  const [stores, setStores] = useState([]);
+  const [currentDateTime, setCurrentDateTime] = useState(new Date());
+
+  useEffect(() => {
+    const clockTimer = setInterval(() => {
+      setCurrentDateTime(new Date());
+    }, 1000);
+    return () => clearInterval(clockTimer);
+  }, []);
+  const [devices, setDevicesState] = useState(() => {
+    try {
+      const cached = JSON.parse(localStorage.getItem('SIGNAGE_DEVICES') || '[]');
+      // 초기 로드 시에는 혼선을 피하기 위해 시각적인 상태를 안전하게 오프라인 상태로 우선 복원합니다.
+      return cached.map(d => ({ ...d, status: 'offline' }));
+    } catch { return []; }
+  });
+
+  const [groups, setGroupsState] = useState(() => {
+    try { return JSON.parse(localStorage.getItem('SIGNAGE_GROUPS') || '[]'); } catch { return []; }
+  });
+
+  const [stores, setStoresState] = useState(() => {
+    try { return JSON.parse(localStorage.getItem('SIGNAGE_STORES') || '[]'); } catch { return []; }
+  });
+
+  const setDevices = useCallback((updater) => {
+    setDevicesState(prev => {
+      const next = typeof updater === 'function' ? updater(prev) : updater;
+      localStorage.setItem('SIGNAGE_DEVICES', JSON.stringify(next));
+      return next;
+    });
+  }, []);
+
+  const setGroups = useCallback((updater) => {
+    setGroupsState(prev => {
+      const next = typeof updater === 'function' ? updater(prev) : updater;
+      localStorage.setItem('SIGNAGE_GROUPS', JSON.stringify(next));
+      return next;
+    });
+  }, []);
+
+  const setStores = useCallback((updater) => {
+    setStoresState(prev => {
+      const next = typeof updater === 'function' ? updater(prev) : updater;
+      localStorage.setItem('SIGNAGE_STORES', JSON.stringify(next));
+      return next;
+    });
+  }, []);
+
+  // PC 스피커로 듣기 — deviceId Set (체크된 기기만 음소거 해제)
+  const [pcAudioSet, setPcAudioSet] = useState(new Set());
   const [selectedStoreId, setSelectedStoreId] = useState('');
-  const [gridLayout, setGridLayout] = useState('auto');
+  const [gridLayout, setGridLayout] = useState('5x1');
   const [deviceMeta, setDeviceMeta] = useState({});
+  // 음소거 전 볼륨 기억 — 음소거 해제 시 원래 볼륨으로 복원
+  const preMuteVol = useRef({});
   const [customGrid, setCustomGrid] = useState({ rows: 2, cols: 3 });
   const [apkAvailable, setApkAvailable] = useState(false);
   const [adbRunning, setAdbRunning] = useState(false);
   const [serverOnline, setServerOnline] = useState(null); // null=확인중, true=연결, false=끊김
   const [allSchedules, setAllSchedules] = useState([]);
+  // 기기 표시 순서 (그룹별 device id 배열, localStorage 영속)
+  const [deviceOrder, setDeviceOrderState] = useState(() => {
+    try { return JSON.parse(localStorage.getItem('SIGNAGE_DEVICE_ORDER') || '{}'); } catch { return {}; }
+  });
+  const setDeviceOrder = (updater) => {
+    setDeviceOrderState(prev => {
+      const next = typeof updater === 'function' ? updater(prev) : updater;
+      localStorage.setItem('SIGNAGE_DEVICE_ORDER', JSON.stringify(next));
+      return next;
+    });
+  };
 
   const onUnauth = useCallback(() => {
     localStorage.removeItem('SIGNAGE_TOKEN');
@@ -832,7 +1444,23 @@ function App() {
           groupName: d.group?.name || '미배정 기기',
           storeName: d.store?.name || '미배정 사업장'
         }));
-        setDevices(mappedDevices);
+        setDevices(prev => {
+          return mappedDevices.map(newDev => {
+            const oldDev = prev.find(d => d.id === newDev.id);
+            if (oldDev) {
+              return {
+                ...newDev,
+                ip: newDev.ip || oldDev.ip,               // IP가 null로 덮어써지면 🕐 블록 전체가 사라짐
+                deviceTime: newDev.deviceTime ?? oldDev.deviceTime,
+                vu: newDev.vu ?? oldDev.vu,
+                vol: newDev.vol ?? oldDev.vol,
+                dl: newDev.dl ?? oldDev.dl,
+                slide: newDev.slide ?? oldDev.slide
+              };
+            }
+            return newDev;
+          });
+        });
       })
       .catch(err => console.error('기기 목록 불러오기 실패:', err));
   }, [onUnauth]);
@@ -909,9 +1537,19 @@ function App() {
 
     const socket = io(SOCKET_URL);
 
-    socket.on('connect', () => setServerOnline(true));
-    socket.on('disconnect', () => setServerOnline(false));
-    socket.on('connect_error', () => setServerOnline(false));
+    socket.on('connect', () => {
+      setServerOnline(true);
+      // 재연결 시 DB 실제 상태로 동기화 (끊긴 동안 놓친 offline 이벤트 복구)
+      fetchDevices();
+    });
+    socket.on('disconnect', () => {
+      setServerOnline(false);
+      setDevices(prev => prev.map(d => ({ ...d, status: 'offline' })));
+    });
+    socket.on('connect_error', () => {
+      setServerOnline(false);
+      setDevices(prev => prev.map(d => ({ ...d, status: 'offline' })));
+    });
 
     socket.on('device_status_update', (update) => {
       setDevices(prev => {
@@ -919,7 +1557,7 @@ function App() {
         if (exists) {
           return prev.map(d =>
             d.id === update.deviceId
-              ? { ...d, status: update.status, cpuUsage: update.cpu || d.cpuUsage, memUsage: update.mem || d.memUsage, ip: update.ip || d.ip, appVersion: update.appVersion || d.appVersion }
+              ? { ...d, status: update.status, cpuUsage: update.cpu ?? d.cpuUsage, memUsage: update.mem ?? d.memUsage, ip: update.ip || d.ip, appVersion: update.appVersion || d.appVersion, dl: update.dl ?? null, vol: update.vol ?? d.vol, deviceTime: update.deviceTime ?? d.deviceTime, slide: update.slide ?? d.slide }
               : d
           );
         } else {
@@ -929,6 +1567,11 @@ function App() {
       });
     });
 
+    // VU 실시간 레벨 (300ms)
+    socket.on('device_vu_update', ({ deviceId, vu }) => {
+      setDevices(prev => prev.map(d => d.id === deviceId ? { ...d, vu } : d));
+    });
+
     socket.on('group_assignment_changed', () => {
       fetchDevices();
       fetchGroups();
@@ -936,15 +1579,29 @@ function App() {
 
     socket.on('screen_schedule', () => fetchSchedules());
 
-    return () => socket.disconnect();
+    // 폴백 폴링: Socket.io 이벤트 유실 대비 — 15초마다 DB 실제 상태로 강제 동기화
+    // 서버 GET /api/devices가 lastSeen 기반으로 실시간 재계산하므로 폴링만으로도 정확히 감지됨
+    const pollTimer = setInterval(() => fetchDevices(), 15_000);
+
+    return () => { socket.disconnect(); clearInterval(pollTimer); };
   }, []);
 
-  const filteredDevices = devices.filter(d => {
-    if (!d.groupId) return false;
-    if (selectedStoreId === 'all') return true;
-    if (selectedStoreId === 'unassigned') return !d.storeId;
-    return d.storeId === selectedStoreId;
-  });
+  const filteredDevices = (() => {
+    const base = devices.filter(d => {
+      if (!d.groupId) return false;
+      if (selectedStoreId === 'all') return true;
+      if (selectedStoreId === 'unassigned') return !d.storeId;
+      return d.storeId === selectedStoreId;
+    });
+    // 그룹별 저장된 순서 적용
+    const orderMap = deviceOrder; // { [groupId]: [id, id, ...] }
+    const orderedIds = Object.values(orderMap).flat();
+    if (orderedIds.length === 0) return base;
+    return [
+      ...orderedIds.map(id => base.find(d => d.id === id)).filter(Boolean),
+      ...base.filter(d => !orderedIds.includes(d.id)),
+    ];
+  })();
 
   if (!authed) return <LoginScreen onLogin={() => setAuthed(true)} />;
 
@@ -989,7 +1646,19 @@ function App() {
             <span>환경설정</span>
           </a>
         </nav>
-        <div style={{ padding: '16px', marginTop: 'auto' }}>
+        <div style={{ padding: '16px', marginTop: 'auto', display: 'flex', flexDirection: 'column', gap: '10px' }}>
+          {/* Dashboard Version & Last Updated Date/Time display */}
+          <div style={{ padding: '10px', borderRadius: '8px', background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.06)', display: 'flex', flexDirection: 'column', gap: '6px' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.7rem', color: '#64748b', alignItems: 'center' }}>
+              <span>대시보드 버전</span>
+              <span style={{ fontWeight: 600, color: '#3b82f6', fontFamily: 'monospace' }}>v{__APP_VERSION__}</span>
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '2px', fontSize: '0.68rem', color: '#64748b', borderTop: '1px solid rgba(255,255,255,0.05)', paddingTop: '6px', marginTop: '2px' }}>
+              <span style={{ color: '#475569', fontSize: '0.62rem', fontWeight: 600, textTransform: 'uppercase' }}>빌드 날짜</span>
+              <span style={{ color: 'var(--text-secondary)', fontFamily: 'monospace', fontWeight: 600 }}>{__BUILD_DATE__}</span>
+            </div>
+          </div>
+
           <button
             onClick={() => {
               apiFetch(`${SOCKET_URL}/api/auth/logout`, { method: 'POST' }).catch(() => {});
@@ -1037,7 +1706,9 @@ function App() {
                   <option value="2x2">2 x 2</option>
                   <option value="3x2">3 x 2</option>
                   <option value="3x3">3 x 3</option>
+                  <option value="4x1">4 x 1</option>
                   <option value="4x3">4 x 3</option>
+                  <option value="5x1">5 x 1</option>
                   <option value="custom">직접 입력</option>
                 </select>
                 {gridLayout === 'custom' && (
@@ -1067,10 +1738,6 @@ function App() {
                     </div>
                   </div>
                 )}
-                <button className="btn btn-primary" style={{ marginLeft: '12px' }} onClick={() => setActiveTab('groups')}>
-                  <Plus size={18} />
-                  기기 추가
-                </button>
               </div>
             </header>
 
@@ -1091,8 +1758,33 @@ function App() {
                   <div
                     key={device.id}
                     className="glass-card device-card animate-fade-in"
-                    style={{ animationDelay: `${index * 0.1}s` }}
+                    style={{ animationDelay: `${index * 0.1}s`, position: 'relative' }}
                   >
+                    {/* 서버 오프라인 오버레이 레이어 추가 */}
+                    {serverOnline !== true && (
+                      <div style={{
+                        position: 'absolute', top: 0, left: 0, right: 0, bottom: 0,
+                        background: 'rgba(15, 23, 42, 0.78)', // 어두운 반투명 색상
+                        backdropFilter: 'blur(3px)', // 흐림 효과
+                        borderRadius: '16px', // 기기 카드 둥근 모서리 맞춤
+                        display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
+                        zIndex: 10, gap: '10px',
+                        border: '1px solid rgba(239, 68, 68, 0.2)',
+                        padding: '16px', textAlign: 'center'
+                      }}>
+                        <div style={{
+                          width: '38px', height: '38px', borderRadius: '50%', background: 'rgba(239, 68, 68, 0.15)',
+                          display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#EF4444', fontWeight: 'bold', fontSize: '1.1rem'
+                        }}>
+                          ⚠️
+                        </div>
+                        <div style={{ fontWeight: 700, fontSize: '0.88rem', color: '#EF4444' }}>서버 통신 차단</div>
+                        <div style={{ fontSize: '0.7rem', color: '#94a3b8', lineHeight: '1.3' }}>
+                          대시보드 서버가 가동 상태가 아니므로<br />기기 실시간 모니터링을 진행할 수 없습니다.
+                        </div>
+                      </div>
+                    )}
+
                     {/* PiP 화면 영역 */}
                     <div className="thumbnail-wrapper">
                       <div className="device-thumbnail">
@@ -1105,6 +1797,9 @@ function App() {
                             groupId={device.groupId}
                             deviceId={device.id}
                             onUpdate={(meta) => setDeviceMeta(prev => ({ ...prev, [device.id]: meta }))}
+                            pcAudio={pcAudioSet.has(device.id)}
+                            devVol={device.vol ?? 8}
+                            liveSlide={device.slide ?? null}
                           />
                         ) : (
                           <div style={{ width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#666', background: '#111' }}>
@@ -1112,6 +1807,7 @@ function App() {
                           </div>
                         )}
                       </div>
+
                     </div>
 
                     <div className="device-header">
@@ -1120,9 +1816,14 @@ function App() {
                         <div className="device-group" style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>
                           {device.storeName} &gt; {device.groupName}
                         </div>
-                        {device.ip && (
-                          <div style={{ fontSize: '0.7rem', color: 'var(--text-secondary)', fontFamily: 'monospace', marginTop: '2px' }}>
-                            {device.ip}
+                        {(device.ip || device.deviceTime) && (
+                          <div style={{ fontSize: '0.7rem', color: 'var(--text-secondary)', fontFamily: 'monospace', marginTop: '2px', display: 'flex', gap: '6px', alignItems: 'center', flexWrap: 'nowrap', overflow: 'hidden' }}>
+                            {device.ip && <span style={{ flexShrink: 0 }}>{device.ip}</span>}
+                            {device.deviceTime && (
+                              <span style={{ color: '#475569', fontFamily: 'monospace', flexShrink: 0, whiteSpace: 'nowrap' }} title="기기 현재 시각 (KST 기준으로 스케줄 적용됨)">
+                                🕐 {new Date(device.deviceTime).toLocaleTimeString('ko-KR', { timeZone: 'Asia/Seoul', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false })}
+                              </span>
+                            )}
                           </div>
                         )}
                         {(() => {
@@ -1130,25 +1831,26 @@ function App() {
                           if (!sched.length) return null;
                           const s = sched[0];
                           return (
-                            <div style={{ fontSize: '0.72rem', color: '#38bdf8', marginTop: '4px', display: 'flex', gap: '8px', flexWrap: 'wrap', overflow: 'visible' }}>
-                              {s.onTime ? <span>☀️ {s.onTime}</span> : null}
-                              {s.offTime ? <span>🌙 {s.offTime}</span> : null}
+                            <div style={{ fontSize: '0.72rem', color: '#38bdf8', marginTop: '3px', display: 'flex', gap: '8px', flexWrap: 'nowrap', overflow: 'hidden' }}>
+                              {s.onTime  ? <span style={{ flexShrink: 0, whiteSpace: 'nowrap' }}>☀️ {s.onTime}</span>  : null}
+                              {s.offTime ? <span style={{ flexShrink: 0, whiteSpace: 'nowrap' }}>🌙 {s.offTime}</span> : null}
                             </div>
                           );
                         })()}
                         {deviceMeta[device.id] && (
                           <div style={{ marginTop: '4px' }}>
                             <div style={{ display: 'flex', alignItems: 'center', gap: '4px', marginBottom: '2px', overflow: 'hidden' }}>
-                              <Film size={10} style={{ color: 'var(--text-secondary)' }} />
+                              <Film size={10} style={{ color: 'var(--text-secondary)', flexShrink: 0 }} />
                               <span style={{ fontSize: '0.65rem', color: 'var(--text-primary)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
                                 {deviceMeta[device.id].filename}
                               </span>
                             </div>
-                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                            {/* 시간 / 전환타입 — 항상 한 줄 (whiteSpace:nowrap으로 강제) */}
+                            <div style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', marginTop: '1px' }}>
                               <span style={{ fontFamily: 'monospace', fontSize: '0.65rem', color: 'var(--text-secondary)' }}>
                                 {formatTime(deviceMeta[device.id].currentTime)} / {formatTime(deviceMeta[device.id].duration)}
                               </span>
-                              <span style={{ fontSize: '0.6rem', color: '#60a5fa', fontWeight: 600, textTransform: 'uppercase' }}>
+                              <span style={{ marginLeft: '6px', fontSize: '0.58rem', color: '#60a5fa', fontWeight: 700, textTransform: 'uppercase', background: 'rgba(96,165,250,0.1)', padding: '1px 4px', borderRadius: 3 }}>
                                 {deviceMeta[device.id].transType}
                               </span>
                             </div>
@@ -1160,24 +1862,147 @@ function App() {
                           <span className="status-dot"></span>
                           {device.status === 'online' ? '온라인' : '오프라인'}
                         </div>
-                        {device.appVersion ? (
-                          <span style={{
-                            fontSize: '0.65rem', fontFamily: 'monospace',
-                            color: (standardVersion && device.appVersion !== standardVersion) ? '#f59e0b' : 'var(--text-secondary)',
-                            fontWeight: (standardVersion && device.appVersion !== standardVersion) ? 700 : 400,
-                          }}
-                            title={(standardVersion && device.appVersion !== standardVersion) ? `기준 버전: v${standardVersion}` : ''}
-                          >
-                            {(standardVersion && device.appVersion !== standardVersion) ? '⚠ ' : ''}v{device.appVersion}
-                          </span>
-                        ) : (
-                          <span style={{ fontSize: '0.65rem', color: '#f59e0b', fontWeight: 700 }} title="앱 버전 미확인">
+                        {device.appVersion ? (() => {
+                          const isOutdated = standardVersion && device.appVersion !== standardVersion;
+                          // "0.4.0 (2026-05-27 12:50)" → verNum="0.4.0", verDate="2026-05-27 12:50"
+                          const parenIdx = device.appVersion.indexOf(' (');
+                          const verNum  = parenIdx >= 0 ? device.appVersion.slice(0, parenIdx) : device.appVersion;
+                          const verDate = parenIdx >= 0 ? device.appVersion.slice(parenIdx + 2).replace(/\)$/, '') : null;
+                          return (
+                            <div style={{
+                              display: 'flex',
+                              flexDirection: 'column',
+                              alignItems: 'flex-end',
+                              textAlign: 'right',
+                              lineHeight: 1.3
+                            }}>
+                              <span
+                                style={{ fontSize: '0.65rem', fontFamily: 'monospace', whiteSpace: 'nowrap',
+                                  color: isOutdated ? '#f59e0b' : 'var(--text-secondary)',
+                                  fontWeight: isOutdated ? 700 : 400 }}
+                                title={`v${device.appVersion}${isOutdated ? `  (기준: v${standardVersion})` : ''}`}
+                              >
+                                {isOutdated ? '⚠ ' : ''}v{verNum}
+                              </span>
+                              {verDate && (
+                                <span style={{ fontSize: '0.6rem', fontFamily: 'monospace', whiteSpace: 'nowrap', color: '#64748b' }}>
+                                  {verDate}
+                                </span>
+                              )}
+                            </div>
+                          );
+                        })() : (
+                          <span style={{ fontSize: '0.65rem', color: '#f59e0b', fontWeight: 700, whiteSpace: 'nowrap' }} title="앱 버전 미확인">
                             ⚠ 버전 미확인
                           </span>
                         )}
                       </div>
                     </div>
 
+                    {/* 볼륨 + 그라디언트 레벨미터 (Option C) */}
+                    {(() => {
+                      const vol = device.vol;
+                      const volPct = vol != null ? Math.round(vol / 15 * 100) : null;
+                      const isMuted = vol === 0;
+                      // 비디오 재생 중일 때만 활성 — 이미지 전용이거나 오프라인이면 비활성
+                      const isVideo = /\.(mp4|mov|avi|mkv|webm|m4v)$/i.test(deviceMeta[device.id]?.filename || '');
+                      const canAudio = device.status === 'online' && isVideo;
+                      const sendVol = (level) => {
+                        if (!canAudio) return;
+                        setDevices(prev => prev.map(d => d.id === device.id ? { ...d, vol: level } : d));
+                        apiFetch(`${SOCKET_URL}/api/devices/${device.id}/volume`, {
+                          method: 'POST',
+                          headers: { 'Content-Type': 'application/json' },
+                          body: JSON.stringify({ level })
+                        });
+                      };
+                      return (
+                        <div style={{ padding: '4px 8px 6px', opacity: canAudio ? 1 : 0.28, pointerEvents: canAudio ? 'auto' : 'none' }}>
+                          {/* 상단: 볼륨 라벨+퍼센트  |  우측: L/R 레벨미터 */}
+                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', marginBottom: 5 }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
+                              <span style={{ fontSize: '0.6rem', color: '#475569' }}>볼륨</span>
+                              {vol == null
+                                ? <span style={{ fontSize: '0.6rem', color: '#334155' }}>미확인</span>
+                                : isMuted
+                                  ? <span style={{ fontSize: '0.63rem', color: '#ef4444', fontWeight: 700 }}>🔇 음소거</span>
+                                  : <span style={{ fontSize: '0.7rem', color: '#3b82f6', fontWeight: 700, fontFamily: 'monospace' }}>{volPct}%</span>
+                              }
+                            </div>
+                            {/* 우측 컴팩트 L/R 레벨미터 */}
+                            <GradientLevelMeter vu={device.vu} />
+                          </div>
+                          {/* 슬라이더 + 음소거 */}
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                            <label title="음소거" style={{ display: 'flex', alignItems: 'center', gap: 2, cursor: 'pointer', flexShrink: 0 }}>
+                              <input
+                                type="checkbox"
+                                checked={isMuted}
+                                onChange={e => {
+                                  if (e.target.checked) {
+                                    // 음소거: 현재 볼륨 기억 후 0으로
+                                    preMuteVol.current[device.id] = vol ?? 8;
+                                    sendVol(0);
+                                  } else {
+                                    // 음소거 해제: 기억된 볼륨 복원 (없으면 8)
+                                    sendVol(preMuteVol.current[device.id] ?? 8);
+                                  }
+                                }}
+                                style={{ accentColor: '#ef4444', cursor: 'pointer', width: 13, height: 13 }}
+                              />
+                              <span style={{ fontSize: '0.65rem', userSelect: 'none' }}>🔇</span>
+                            </label>
+                            <div style={{ flex: 1 }}>
+                              <input
+                                type="range" min={0} max={15} step={1}
+                                value={vol ?? 8}
+                                style={{ width: '100%', accentColor: '#3b82f6', cursor: 'pointer', display: 'block' }}
+                                onChange={e => {
+                                  const level = Number(e.target.value);
+                                  setDevices(prev => prev.map(d => d.id === device.id ? { ...d, vol: level } : d));
+                                }}
+                                onMouseUp={e => sendVol(Number(e.target.value))}
+                              />
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })()}
+
+                    {/* PC 스피커로 듣기 — 볼륨 연동 */}
+                    {(() => {
+                      const isVideo = /\.(mp4|mov|avi|mkv|webm|m4v)$/i.test(deviceMeta[device.id]?.filename || '');
+                      const canAudio = device.status === 'online' && isVideo;
+                      return (
+                    <label style={{ display: 'flex', alignItems: 'center', gap: 5,
+                      cursor: canAudio ? 'pointer' : 'default',
+                      padding: '3px 8px', marginBottom: 6,
+                      background: 'transparent', border: 'none',
+                      opacity: canAudio ? 1 : 0.28,
+                      pointerEvents: canAudio ? 'auto' : 'none',
+                      transition: 'all 0.2s'
+                    }}>
+                      <input
+                        type="checkbox"
+                        checked={pcAudioSet.has(device.id)}
+                        onChange={e => {
+                          setPcAudioSet(prev => {
+                            const next = new Set(prev);
+                            if (e.target.checked) next.add(device.id);
+                            else next.delete(device.id);
+                            return next;
+                          });
+                        }}
+                        style={{ accentColor: '#3b82f6', cursor: 'pointer', width: 12, height: 12 }}
+                      />
+                      <span style={{ fontSize: '0.6rem', color: pcAudioSet.has(device.id) ? '#3b82f6' : '#475569',
+                        userSelect: 'none', fontWeight: pcAudioSet.has(device.id) ? 600 : 400 }}>
+                        🖥️ PC 스피커로 듣기
+                      </span>
+                    </label>
+                      ); })()}
+
+                    {/* CPU / 메모리 */}
                     {device.status === 'online' && (
                       <div className="metrics-container">
                         <div className="metric-box">
@@ -1202,6 +2027,30 @@ function App() {
                         </div>
                       </div>
                     )}
+
+                    {/* 다운로드 / APK 업데이트 진행바 */}
+                    {device.dl && (() => {
+                      const isApk = device.dl.cur === 0 && device.dl.total === 0;
+                      const label = isApk
+                        ? '📦 APK 업데이트'
+                        : `📥 미디어 (${device.dl.cur}/${device.dl.total})`;
+                      const barColor = isApk ? '#8b5cf6' : '#3b82f6';
+                      const bgColor  = isApk ? 'rgba(139,92,246,0.08)' : 'rgba(59,130,246,0.07)';
+                      const bdColor  = isApk ? 'rgba(139,92,246,0.25)' : 'rgba(59,130,246,0.2)';
+                      return (
+                        <div style={{ margin: '6px 0 2px', padding: '5px 8px', background: bgColor, borderRadius: 6, border: `1px solid ${bdColor}` }}>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.65rem', color: '#64748b', marginBottom: 4 }}>
+                            <span>{label}</span>
+                            <span style={{ color: barColor, fontWeight: 700 }}>{device.dl.pct}%</span>
+                          </div>
+                          <div style={{ height: 4, background: '#1e293b', borderRadius: 2, overflow: 'hidden' }}>
+                            <div style={{ height: '100%', width: `${device.dl.pct}%`, background: barColor, borderRadius: 2, transition: 'width 0.4s ease' }} />
+                          </div>
+                        </div>
+                      );
+                    })()}
+
+                    {/* APK 업데이트 / 재부팅 버튼 */}
                     <div style={{ marginTop: '8px', display: 'flex', justifyContent: 'flex-end', gap: '6px', flexWrap: 'wrap' }}>
                       {apkAvailable && (device.appVersion !== standardVersion) && (
                         <button
@@ -1218,18 +2067,27 @@ function App() {
                         </button>
                       )}
                       <button
+                        disabled={device.status !== 'online'}
+                        title={device.status !== 'online' ? '오프라인 기기는 재부팅할 수 없습니다' : '기기 재부팅'}
                         style={{
                           fontSize: '0.7rem', padding: '3px 10px',
-                          background: 'transparent', border: '1px solid var(--border)',
-                          borderRadius: '4px', color: 'var(--text-secondary)',
-                          cursor: 'pointer'
+                          background: 'transparent',
+                          border: `1px solid ${device.status !== 'online' ? '#1e293b' : 'var(--border)'}`,
+                          borderRadius: '4px',
+                          color: device.status !== 'online' ? '#334155' : 'var(--text-secondary)',
+                          cursor: device.status !== 'online' ? 'not-allowed' : 'pointer',
+                          opacity: device.status !== 'online' ? 0.4 : 1,
                         }}
                         onClick={() => {
+                          if (device.status !== 'online') return;
                           if (!window.confirm(`${device.name || device.id} 기기를 재부팅할까요?`)) return;
                           apiFetch(`${SOCKET_URL}/api/devices/${device.id}/reboot`, { method: 'POST' })
                             .then(r => r.json())
-                            .then(r => alert(r.ok ? '재부팅 명령을 전송했습니다.' : `오류: ${r.error}`))
-                            .catch(() => alert('요청 실패'));
+                            .then(r => {
+                              if (r.ok) alert('재부팅 명령을 전송했습니다.');
+                              else alert(`재부팅 실패\n\n${r.error}`);
+                            })
+                            .catch(() => alert('서버 요청 실패'));
                         }}
                       >
                         🔄 재부팅
@@ -1267,11 +2125,13 @@ function App() {
               fetchGroups={fetchGroups}
               selectedStoreId={selectedStoreId}
               setSelectedStoreId={setSelectedStoreId}
+              deviceOrder={deviceOrder}
+              onDeviceOrderChange={setDeviceOrder}
             />
           </div>
         )}
         {activeTab === 'settings' && (
-          <SettingsTab onUnauth={onUnauth} />
+          <SettingsTab onUnauth={onUnauth} deviceOrder={deviceOrder} />
         )}
       </main>
     </div>

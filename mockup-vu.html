@@ -1,0 +1,220 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: #0b0e14; color: #fff; font-family: 'Segoe UI', sans-serif;
+         display: flex; gap: 24px; padding: 32px; flex-wrap: wrap; }
+
+  .card { background: #11141d; border: 1px solid rgba(255,255,255,0.07);
+          border-radius: 12px; padding: 16px; width: 300px; }
+  .title { font-size: 0.7rem; color: #64748b; margin-bottom: 12px; letter-spacing: 0.05em; text-transform: uppercase; }
+
+  /* ── Option A: 수평 스펙트럼 ── */
+  .spectrum-wrap { display: flex; flex-direction: column; gap: 2px; margin-bottom: 10px; }
+  .spec-bar-row { display: flex; gap: 2px; align-items: center; }
+  .spec-label { font-size: 0.5rem; color: #334155; width: 18px; text-align: right; flex-shrink: 0; }
+  .spec-track { flex: 1; height: 8px; background: #0f172a; border-radius: 2px; overflow: hidden; position: relative; }
+  .spec-fill { height: 100%; border-radius: 2px; transition: width 0.1s; }
+
+  /* ── Option B: 세로 컬럼 (심플 네온) ── */
+  .neon-wrap { display: flex; gap: 4px; align-items: flex-end; justify-content: center;
+               background: #080c14; border-radius: 8px; padding: 10px 8px; margin-bottom: 10px; }
+  .neon-col { display: flex; flex-direction: column-reverse; gap: 3px; }
+  .neon-seg { width: 18px; height: 6px; border-radius: 2px; }
+
+  /* ── Option C: 그라디언트 단일 바 ── */
+  .grad-wrap { margin-bottom: 10px; }
+  .grad-track { height: 16px; border-radius: 8px; background: #0f172a;
+                overflow: hidden; position: relative; box-shadow: inset 0 1px 3px rgba(0,0,0,0.5); }
+  .grad-fill { height: 100%; border-radius: 8px;
+               background: linear-gradient(to right, #22c55e 0%, #84cc16 45%, #eab308 65%, #f97316 80%, #ef4444 100%);
+               transition: width 0.1s; position: relative; }
+  .grad-peak { position: absolute; right: 0; top: 0; width: 3px; height: 100%;
+               background: #fff; border-radius: 2px; opacity: 0.8; }
+  .grad-labels { display: flex; justify-content: space-between;
+                 font-size: 0.48rem; color: #334155; margin-top: 3px; padding: 0 2px; }
+
+  /* Volume control (shared) */
+  .vol-row { display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; }
+  .vol-label { font-size: 0.62rem; color: #475569; display: flex; align-items: center; gap: 4px; }
+  .vol-pct { font-size: 0.72rem; color: #3b82f6; font-weight: 700; font-family: monospace; }
+  .vol-slider-row { display: flex; align-items: center; gap: 8px; }
+  .mute-label { display: flex; align-items: center; gap: 3px; cursor: pointer; flex-shrink: 0; }
+  .mute-label input { accent-color: #ef4444; width: 13px; height: 13px; }
+  .mute-label span { font-size: 0.65rem; }
+  .slider-wrap { flex: 1; display: flex; justify-content: center; }
+  input[type=range] { width: 80%; accent-color: #3b82f6; cursor: pointer; }
+
+  /* PC 오디오 체크박스 */
+  .pc-audio { display: flex; align-items: center; gap: 6px; padding: 5px 8px;
+              background: rgba(59,130,246,0.07); border: 1px solid rgba(59,130,246,0.2);
+              border-radius: 6px; margin-bottom: 10px; cursor: pointer; }
+  .pc-audio input { accent-color: #3b82f6; }
+  .pc-audio span { font-size: 0.62rem; color: #64748b; }
+  .pc-audio span b { color: #3b82f6; }
+
+  .divider { border: none; border-top: 1px solid rgba(255,255,255,0.05); margin: 8px 0; }
+</style>
+</head>
+<body>
+
+<!-- Option A: 수평 주파수 바 -->
+<div class="card">
+  <div class="title">🅐 수평 스펙트럼</div>
+
+  <div class="spectrum-wrap" id="specA">
+    <!-- JS로 채움 -->
+  </div>
+
+  <hr class="divider">
+  <div class="vol-row">
+    <span class="vol-label">🔊 볼륨</span>
+    <span class="vol-pct">73%</span>
+  </div>
+  <div class="vol-slider-row">
+    <label class="mute-label"><input type="checkbox"><span>🔇</span></label>
+    <div class="slider-wrap"><input type="range" min="0" max="15" value="11"></div>
+  </div>
+</div>
+
+<!-- Option B: 세로 네온 컬럼 (심플) -->
+<div class="card">
+  <div class="title">🅑 세로 네온 바</div>
+
+  <div class="neon-wrap" id="neonB">
+    <!-- JS로 채움 -->
+  </div>
+
+  <hr class="divider">
+  <div class="vol-row">
+    <span class="vol-label">🔊 볼륨</span>
+    <span class="vol-pct">73%</span>
+  </div>
+  <div class="vol-slider-row">
+    <label class="mute-label"><input type="checkbox"><span>🔇</span></label>
+    <div class="slider-wrap"><input type="range" min="0" max="15" value="11"></div>
+  </div>
+</div>
+
+<!-- Option C: 컴팩트 우측정렬 L/R 레벨미터 -->
+<div class="card">
+  <div class="title">🅒 컴팩트 L/R 레벨미터 (확정 디자인)</div>
+
+  <!-- 볼륨 라벨+퍼센트 (좌) | L/R 바 (우) -->
+  <div style="display:flex;justify-content:space-between;align-items:flex-end;margin-bottom:8px">
+    <div style="display:flex;align-items:center;gap:6px">
+      <span class="vol-label">🎚 볼륨</span>
+      <span class="vol-pct">73%</span>
+    </div>
+    <!-- 우측 컴팩트 L/R 미터 -->
+    <div style="display:flex;flex-direction:column;gap:3px">
+      <div style="display:flex;align-items:center;gap:3px">
+        <span style="font-size:0.45rem;color:#334155;width:6px;text-align:right;flex-shrink:0">L</span>
+        <div style="width:72px;height:7px;background:#0c111e;border-radius:2px;overflow:hidden;position:relative;box-shadow:inset 0 1px 2px rgba(0,0,0,0.6)">
+          <div class="grad-fill" id="gradL" style="width:72%;border-radius:2px">
+            <div class="grad-peak"></div>
+          </div>
+        </div>
+      </div>
+      <div style="display:flex;align-items:center;gap:3px">
+        <span style="font-size:0.45rem;color:#334155;width:6px;text-align:right;flex-shrink:0">R</span>
+        <div style="width:72px;height:7px;background:#0c111e;border-radius:2px;overflow:hidden;position:relative;box-shadow:inset 0 1px 2px rgba(0,0,0,0.6)">
+          <div class="grad-fill" id="gradR" style="width:58%;border-radius:2px">
+            <div class="grad-peak"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 슬라이더 + 음소거 -->
+  <div class="vol-slider-row">
+    <label class="mute-label"><input type="checkbox"><span>🔇</span></label>
+    <div class="slider-wrap"><input type="range" min="0" max="15" value="11"></div>
+  </div>
+
+  <hr class="divider">
+  <!-- PC 오디오 -->
+  <label class="pc-audio">
+    <input type="checkbox">
+    <span>🖥️ <b>PC 스피커</b>로 듣기</span>
+  </label>
+</div>
+
+<script>
+  // Option A — 수평 스펙트럼 바 (8밴드)
+  const specWrap = document.getElementById('specA');
+  const freqLabels = ['63','125','250','500','1k','2k','4k','8k'];
+  const levelsA = [0.55, 0.72, 0.88, 0.76, 0.65, 0.5, 0.38, 0.25];
+  freqLabels.forEach((lbl, i) => {
+    const pct = levelsA[i] * 100;
+    const color = pct > 80 ? '#ef4444' : pct > 60 ? '#f97316' : pct > 40 ? '#eab308' : '#22c55e';
+    const row = document.createElement('div');
+    row.className = 'spec-bar-row';
+    row.innerHTML = `<span class="spec-label">${lbl}</span>
+      <div class="spec-track">
+        <div class="spec-fill" style="width:${pct}%;background:${color}"></div>
+      </div>`;
+    specWrap.appendChild(row);
+  });
+
+  // Option B — 세로 네온 (6컬럼)
+  const neonWrap = document.getElementById('neonB');
+  const SEGS = 14, COLS = 6;
+  const colLevels = [0.75, 0.55, 0.90, 0.70, 0.60, 0.45];
+  for (let c = 0; c < COLS; c++) {
+    const filled = Math.round(colLevels[c] * SEGS);
+    const col = document.createElement('div');
+    col.className = 'neon-col';
+    for (let i = 0; i < SEGS; i++) {
+      const seg = document.createElement('div');
+      seg.className = 'neon-seg';
+      if (i < filled) {
+        const color = i < 7 ? '#22c55e' : i < 10 ? '#eab308' : i < 12 ? '#f97316' : '#ef4444';
+        seg.style.background = color;
+        seg.style.boxShadow = `0 0 6px ${color}99`;
+      } else {
+        seg.style.background = 'rgba(255,255,255,0.04)';
+      }
+      col.appendChild(seg);
+    }
+    neonWrap.appendChild(col);
+  }
+
+  // 애니메이션
+  function animate() {
+    // A
+    specWrap.querySelectorAll('.spec-fill').forEach((el, i) => {
+      const v = levelsA[i] + (Math.random()*0.2 - 0.1);
+      const pct = Math.max(0.1, Math.min(1, v)) * 100;
+      const color = pct > 80 ? '#ef4444' : pct > 60 ? '#f97316' : pct > 40 ? '#eab308' : '#22c55e';
+      el.style.width = pct + '%';
+      el.style.background = color;
+    });
+    // B
+    neonWrap.querySelectorAll('.neon-col').forEach((col, c) => {
+      const v = colLevels[c] + (Math.random()*0.3 - 0.15);
+      const filled = Math.round(Math.max(0, Math.min(1, v)) * SEGS);
+      col.querySelectorAll('.neon-seg').forEach((seg, i) => {
+        if (i < filled) {
+          const color = i < 7 ? '#22c55e' : i < 10 ? '#eab308' : i < 12 ? '#f97316' : '#ef4444';
+          seg.style.background = color;
+          seg.style.boxShadow = `0 0 6px ${color}99`;
+        } else {
+          seg.style.background = 'rgba(255,255,255,0.04)';
+          seg.style.boxShadow = 'none';
+        }
+      });
+    });
+    // C — 컴팩트 L/R 바만
+    const lv = 0.68 + (Math.random()*0.2 - 0.1);
+    const rv = 0.62 + (Math.random()*0.2 - 0.1);
+    document.getElementById('gradL').style.width = (Math.max(0,Math.min(1,lv))*100)+'%';
+    document.getElementById('gradR').style.width = (Math.max(0,Math.min(1,rv))*100)+'%';
+  }
+  setInterval(animate, 150);
+</script>
+</body>
+</html>

@@ -2,7 +2,9 @@
   "permissions": {
     "allow": [
       "Bash(Get-ChildItem -Path \"c:\\\\WorkSpace\\\\signagepro\" -Recurse -Depth 2)",
-      "Bash(Select-Object FullName)"
+      "Bash(Select-Object FullName)",
+      "Bash(\"C:/Users/amore/AppData/Local/Android/Sdk/build-tools/35.0.0/aapt.exe\" dump *)",
+      "Bash(Select-String -Pattern \"package:|activity|launchable\")"
     ]
   }
 }

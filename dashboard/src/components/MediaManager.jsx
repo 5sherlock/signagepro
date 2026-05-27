@@ -1,6 +1,39 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { SOCKET_URL, apiFetch } from '../config';
 import {
+  DndContext,
+  closestCenter,
+  PointerSensor,
+  useSensor,
+  useSensors,
+  DragOverlay,
+} from '@dnd-kit/core';
+
+/**
+ * 커스텀 센서: 포인터 다운이 .device-row-v4 내부에서 시작된 경우에만 dnd-kit 드래그 활성화.
+ * 라이브러리 아이템(HTML5 draggable)에서 시작된 드래그는 무시 → 충돌 방지.
+ */
+class DeviceRowPointerSensor extends PointerSensor {
+  static activators = [
+    {
+      eventName: 'onPointerDown',
+      handler({ nativeEvent: event }) {
+        // 기본 HTML5 draggable 요소에서 시작 → dnd-kit 비활성화
+        if (event.target.closest('[draggable="true"]')) return false;
+        // .device-row-v4 안에서만 dnd-kit 활성화 (행 재정렬 전용)
+        return !!event.target.closest('.device-row-v4');
+      },
+    },
+  ];
+}
+import {
+  SortableContext,
+  verticalListSortingStrategy,
+  useSortable,
+  arrayMove,
+} from '@dnd-kit/sortable';
+import { CSS } from '@dnd-kit/utilities';
+import {
   Plus,
   Trash2,
   Upload,
@@ -17,7 +50,8 @@ import {
   ArrowLeft,
   ArrowRight,
   ArrowUp,
-  ArrowDown
+  ArrowDown,
+  GripVertical
 } from 'lucide-react';
 import './PreviewModal.css';
 import './MediaManager.css';
@@ -517,6 +551,9 @@ const MediaItemV4 = ({ item, onRemove, onChange }) => {
   const { media, duration = 10 } = item;
   return (
     <div className="media-card-v4">
+      <div className="media-card-grip" title="드래그하여 순서 변경">
+        <GripVertical size={14} color="#475569" />
+      </div>
       <div className="media-card-thumb">
         <MediaThumb path={media?.path} style={{ width: '100%', height: '100%' }} />
         <button className="media-card-del" onClick={onRemove} title="삭제">
@@ -568,24 +605,46 @@ const TransitionBridgeV4 = ({ item, isLoop, onChange, onPreview }) => {
   );
 };
 
-// ── [V4] 기기 고정형 행 ──────────────────────────────────────
-const DeviceRowV4 = ({ device, items, isDirty, onDrop, onRemoveItem, onChangeItem, onDeleteDevice, onPreview, onTransitionPreview }) => {
-  const [dragOver, setDragOver] = useState(false);
+// ── [V4] 기기 고정형 행 (dnd-kit sortable) ───────────────────
+const DeviceRowV4 = ({ device, items, isDirty, onDrop, onRemoveItem, onChangeItem, onDeleteDevice, onPreview, onTransitionPreview, onReorder, libDragOver = false }) => {
+  const [reorderDragIdx, setReorderDragIdx] = useState(null);
+  const [reorderOverIdx, setReorderOverIdx] = useState(null);
+
+  const isReorderDrag = (e) => e.dataTransfer.types.includes('timeline-index');
+
+  const {
+    attributes,
+    listeners,
+    setNodeRef,
+    transform,
+    transition,
+    isDragging,
+  } = useSortable({ id: device.id });
+
+  const style = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+    opacity: isDragging ? 0.4 : 1,
+  };
+
   return (
-    <div className="device-row-v4">
+    <div ref={setNodeRef} style={style} className="device-row-v4">
       <div className={`device-card-v4 ${items.length > 0 ? 'has-media' : ''}`}>
-        <Trash2 
-          size={14} 
+        <Trash2
+          size={14}
           className="device-card-del-icon"
           onClick={() => onDeleteDevice(device.id, device.name)}
         />
+        {/* 드래그 핸들 — 좌상단 고정 */}
+        <div className="row-drag-handle" {...attributes} {...listeners} title="드래그하여 순서 변경">
+          <GripVertical size={15} />
+        </div>
         <div className="device-card-header">
           <span className={`device-dot ${device.status === 'online' ? 'online' : 'offline'}`} />
           <span className="device-name">{device.name}</span>
         </div>
         {isDirty && <div className="device-card-pending">(배포 대기)</div>}
-        
-        {/* 중간 여백을 채워 버튼을 아래로 밀어냄 */}
+
         <div style={{ flex: 1, minHeight: '20px' }}></div>
 
         {items.length > 0 && (
@@ -597,23 +656,64 @@ const DeviceRowV4 = ({ device, items, isDirty, onDrop, onRemoveItem, onChangeIte
       </div>
 
       <div
-        className={`device-timeline-v4 ${dragOver ? 'drag-over' : ''}`}
-        onDragOver={e => { e.preventDefault(); setDragOver(true); }}
-        onDragLeave={() => setDragOver(false)}
-        onDrop={e => {
-          e.preventDefault();
-          setDragOver(false);
-          const mediaJson = e.dataTransfer.getData('application/json');
-          if (mediaJson) onDrop(JSON.parse(mediaJson));
-        }}
+        className={`device-timeline-v4 ${libDragOver ? 'drag-over' : ''}`}
+        data-device-id={device.id}
       >
         {items.length === 0 && <div className="timeline-empty">미디어를 드래그하여 추가하세요</div>}
         {items.map((item, idx) => {
           const isLast = idx === items.length - 1;
           const nextItem = items.length > 1 ? items[(idx + 1) % items.length] : null;
+          const isDraggedOver = reorderOverIdx === idx && reorderDragIdx !== idx;
+          const isDragging = reorderDragIdx === idx;
+
           return (
             <React.Fragment key={item._key || idx}>
-              <MediaItemV4 item={item} onRemove={() => onRemoveItem(idx)} onChange={upd => onChangeItem(idx, upd)} />
+              <div
+                draggable
+                className={`reorder-item-wrapper${isDragging ? ' reorder-dragging' : ''}${isDraggedOver ? ' reorder-over' : ''}`}
+                onDragStart={e => {
+                  e.dataTransfer.setData('timeline-index', String(idx));
+                  e.dataTransfer.effectAllowed = 'move';
+                  setReorderDragIdx(idx);
+                }}
+                onDragEnd={() => {
+                  setReorderDragIdx(null);
+                  setReorderOverIdx(null);
+                }}
+                onDragOver={e => {
+                  if (e.dataTransfer.types.includes('device-row-id')) return;
+                  e.preventDefault();
+                  if (isReorderDrag(e)) {
+                    // 타임라인 내 순서 변경 드래그만 여기서 처리
+                    e.stopPropagation();
+                    if (reorderDragIdx !== idx) {
+                      setReorderOverIdx(idx);
+                      setDragOver(false);
+                    }
+                  }
+                  // 라이브러리 드래그: stopPropagation 안 함 → 부모 device-timeline-v4가 dragOver 상태 표시
+                }}
+                onDragLeave={e => {
+                  if (isReorderDrag(e)) e.stopPropagation();
+                  if (reorderOverIdx === idx) setReorderOverIdx(null);
+                }}
+                onDrop={e => {
+                  if (isReorderDrag(e)) {
+                    // 타임라인 내 순서 변경: 여기서 처리하고 전파 중단
+                    e.preventDefault();
+                    e.stopPropagation();
+                    const fromIdx = Number(e.dataTransfer.getData('timeline-index'));
+                    if (!isNaN(fromIdx) && fromIdx !== idx) {
+                      onReorder(fromIdx, idx);
+                    }
+                  }
+                  // 라이브러리 드롭: stopPropagation 안 함 → 부모 device-timeline-v4의 onDrop이 처리
+                  setReorderDragIdx(null);
+                  setReorderOverIdx(null);
+                }}
+              >
+                <MediaItemV4 item={item} onRemove={() => onRemoveItem(idx)} onChange={upd => onChangeItem(idx, upd)} />
+              </div>
               {(nextItem || (isLast && items.length > 0)) && (
                 <TransitionBridgeV4
                   item={item}
@@ -631,18 +731,40 @@ const DeviceRowV4 = ({ device, items, isDirty, onDrop, onRemoveItem, onChangeIte
 };
 
 // ── 메인 MediaManager ─────────────────────────────────────
-const MediaManager = ({ stores = [], groups = [], devices = [], selectedStoreId, setSelectedStoreId, fetchDevices }) => {
+const MediaManager = ({ stores = [], groups = [], devices = [], selectedStoreId, setSelectedStoreId, fetchDevices, deviceOrder = {}, onDeviceOrderChange }) => {
   const [mediaList, setMediaList] = useState([]);
+  const [showArchived, setShowArchived] = useState(false); // 보관함(미사용) 표시 여부
+  const [usedMediaIds, setUsedMediaIds] = useState(new Set()); // 저장 후 사용 중인 ID
+  const [archiveSort, setArchiveSort] = useState('date-desc'); // 'date-desc' | 'date-asc' | 'ext' | 'size-desc'
+  const [collapsedExts, setCollapsedExts] = useState(new Set()); // 접힌 확장자 그룹 키
   const [selectedGroupId, setSelectedGroupId] = useState('');
   const [lanes, setLanes] = useState({});
   const [savedState, setSavedState] = useState({});
   const [saving, setSaving] = useState(false);
   const [previewData, setPreviewData] = useState(null);
   const [transPreview, setTransPreview] = useState(null);
+  const [uploadProgress, setUploadProgress] = useState(null); // null | { name, pct }
+  const [deployPanel, setDeployPanel] = useState(null); // null | 'saving' | 'deploying'
+  const deployHasSeenDl = useRef(false); // 기기 다운로드가 한 번이라도 감지됐는지
   const fileRef = useRef();
 
+  // 라이브러리 → 타임라인 포인터 드래그 (crxMouse 제스처 충돌 방지)
+  const libDragMediaRef = useRef(null);   // 드래그 중인 미디어 객체
+  const handleDropRef = useRef(null);     // handleDrop 최신 참조
+  const [libDragPos, setLibDragPos] = useState(null);   // { x, y } 드래그 중 좌표
+  const [libDragOverId, setLibDragOverId] = useState(null); // 현재 hover 중인 deviceId
+
   const storeGroups = groups.filter(g => g.storeId === selectedStoreId);
-  const groupDevices = devices.filter(d => d.groupId === selectedGroupId);
+  const rawGroupDevices = devices.filter(d => d.groupId === selectedGroupId);
+
+  // 그룹별 저장된 순서 적용
+  const groupOrder = deviceOrder[selectedGroupId] || [];
+  const groupDevices = groupOrder.length > 0
+    ? [
+        ...groupOrder.map(id => rawGroupDevices.find(d => d.id === id)).filter(Boolean),
+        ...rawGroupDevices.filter(d => !groupOrder.includes(d.id)),
+      ]
+    : rawGroupDevices;
 
   useEffect(() => {
     setSelectedGroupId('');
@@ -682,6 +804,8 @@ const MediaManager = ({ stores = [], groups = [], devices = [], selectedStoreId,
       });
       setLanes(newLanes);
       setSavedState(JSON.parse(JSON.stringify(newLanes)));
+      // 플레이리스트에 배정된 미디어 ID → 라이브러리에서 숨김 처리
+      setUsedMediaIds(new Set(medias.map(pm => pm.mediaId)));
     } catch (e) { console.error(e); }
   }, [selectedGroupId, groupDevices.length]);
 
@@ -691,6 +815,23 @@ const MediaManager = ({ stores = [], groups = [], devices = [], selectedStoreId,
     else { setLanes({}); setSavedState({}); }
   }, [selectedGroupId]);
 
+  // 배포 패널 자동 닫기: 기기 dl 감지 후 모두 완료되면 2초 후 닫음
+  useEffect(() => {
+    if (deployPanel !== 'deploying') { deployHasSeenDl.current = false; return; }
+    const anyDl = groupDevices.some(gd => devices.find(x => x.id === gd.id)?.dl != null);
+    if (anyDl) { deployHasSeenDl.current = true; return; }
+    if (!deployHasSeenDl.current) return; // 아직 다운로드 시작 전
+    const t = setTimeout(() => setDeployPanel(null), 2000);
+    return () => clearTimeout(t);
+  }, [deployPanel, devices, groupDevices]);
+
+  // 15초 안에 dl 감지 없으면 캐시된 파일로 간주하고 자동 닫음
+  useEffect(() => {
+    if (deployPanel !== 'deploying') return;
+    const t = setTimeout(() => { if (!deployHasSeenDl.current) setDeployPanel(null); }, 15000);
+    return () => clearTimeout(t);
+  }, [deployPanel]);
+
   const handleDrop = (deviceId, media) => {
     const newItem = { mediaId: media.id, media, duration: 10, transition: 'fade', transitionTime: 1000, slideDirection: 'right', _key: `${media.id}-${Date.now()}` };
     setLanes(prev => {
@@ -699,6 +840,35 @@ const MediaManager = ({ stores = [], groups = [], devices = [], selectedStoreId,
       return updated;
     });
   };
+  // 항상 최신 handleDrop 참조 유지
+  handleDropRef.current = handleDrop;
+
+  // 포인터 이벤트 기반 라이브러리 드래그 (HTML5 draggable 대체 — crxMouse 충돌 방지)
+  useEffect(() => {
+    if (!libDragPos) return;
+    const handleMove = (e) => {
+      setLibDragPos({ x: e.clientX, y: e.clientY });
+      const els = document.elementsFromPoint(e.clientX, e.clientY);
+      const tl = els.find(el => el.dataset?.deviceId);
+      setLibDragOverId(tl ? tl.dataset.deviceId : null);
+    };
+    const handleUp = (e) => {
+      const els = document.elementsFromPoint(e.clientX, e.clientY);
+      const tl = els.find(el => el.dataset?.deviceId);
+      if (tl?.dataset.deviceId && libDragMediaRef.current) {
+        handleDropRef.current(tl.dataset.deviceId, libDragMediaRef.current);
+      }
+      libDragMediaRef.current = null;
+      setLibDragPos(null);
+      setLibDragOverId(null);
+    };
+    window.addEventListener('pointermove', handleMove);
+    window.addEventListener('pointerup', handleUp);
+    return () => {
+      window.removeEventListener('pointermove', handleMove);
+      window.removeEventListener('pointerup', handleUp);
+    };
+  }, [!!libDragPos]);
 
   const handleRemoveItem = (deviceId, idx) => {
     setLanes(prev => {
@@ -716,6 +886,18 @@ const MediaManager = ({ stores = [], groups = [], devices = [], selectedStoreId,
     });
   };
 
+  const handleReorder = (deviceId, fromIdx, toIdx) => {
+    if (fromIdx === toIdx) return;
+    setLanes(prev => {
+      const updated = { ...prev };
+      const l = [...(updated[deviceId] || [])];
+      const [removed] = l.splice(fromIdx, 1);
+      l.splice(toIdx, 0, removed);
+      updated[deviceId] = l;
+      return updated;
+    });
+  };
+
   const handleDeleteDevice = async (deviceId, deviceName) => {
     if (!window.confirm(`'${deviceName}' 기기를 그룹에서 해제하시겠습니까?`)) return;
     try {
@@ -727,6 +909,7 @@ const MediaManager = ({ stores = [], groups = [], devices = [], selectedStoreId,
   const handleSave = async () => {
     if (!selectedGroupId || !isDirty) return;
     setSaving(true);
+    setDeployPanel('saving');
     try {
       const allItems = [];
       const seen = new Set();
@@ -737,21 +920,48 @@ const MediaManager = ({ stores = [], groups = [], devices = [], selectedStoreId,
         });
       });
       await apiFetch(`${API}/api/groups/${selectedGroupId}/playlist`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ items: allItems }), });
-      setSavedState(JSON.parse(JSON.stringify(lanes)));
-      alert('배포 완료!');
-    } catch (e) { alert('저장 실패'); }
+      // 서버 저장 후 서버 상태를 다시 불러와 타임라인과 라이브러리를 정확히 동기화
+      await fetchPlaylist();
+      setShowArchived(false);
+      setDeployPanel('deploying'); // 기기 다운로드 단계로 전환
+    } catch (e) {
+      setDeployPanel(null);
+      alert('저장 실패');
+    }
     finally { setSaving(false); }
   };
 
+  const uploadOneFile = (file) => new Promise((resolve, reject) => {
+    const form = new FormData();
+    form.append('file', file);
+    form.append('storeId', selectedStoreId);
+    const xhr = new XMLHttpRequest();
+    xhr.open('POST', `${API}/api/media`);
+    const token = localStorage.getItem('SIGNAGE_TOKEN') || '';
+    if (token) xhr.setRequestHeader('Authorization', `Bearer ${token}`);
+    xhr.upload.onprogress = (ev) => {
+      if (ev.lengthComputable) {
+        setUploadProgress({ name: file.name, pct: Math.round((ev.loaded / ev.total) * 100) });
+      }
+    };
+    xhr.onload = () => xhr.status < 400 ? resolve() : reject(new Error(`업로드 실패 (${xhr.status})`));
+    xhr.onerror = () => reject(new Error('네트워크 오류'));
+    xhr.send(form);
+  });
+
   const handleUpload = async (e) => {
-    for (const file of [...e.target.files]) {
-      const form = new FormData();
-      form.append('file', file);
-      form.append('storeId', selectedStoreId);
-      await apiFetch(`${API}/api/media`, { method: 'POST', body: form });
-    }
-    fetchMedia();
+    const files = [...e.target.files];
     e.target.value = '';
+    for (const file of files) {
+      setUploadProgress({ name: file.name, pct: 0 });
+      try {
+        await uploadOneFile(file);
+      } catch (err) {
+        alert(`${file.name}\n${err.message}`);
+      }
+    }
+    setUploadProgress(null);
+    fetchMedia();
   };
 
   const handleDeleteMedia = async (id, filename) => {
@@ -769,8 +979,98 @@ const MediaManager = ({ stores = [], groups = [], devices = [], selectedStoreId,
 
   const isDirty = JSON.stringify(lanes) !== JSON.stringify(savedState);
 
+  // 파일 크기 포맷
+  const formatSize = (bytes) => {
+    if (!bytes) return '';
+    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)}KB`;
+    return `${(bytes / (1024 * 1024)).toFixed(1)}MB`;
+  };
+
+  // 확장자 그룹 접기/펼치기
+  const toggleExtGroup = (key) => {
+    setCollapsedExts(prev => {
+      const next = new Set(prev);
+      next.has(key) ? next.delete(key) : next.add(key);
+      return next;
+    });
+  };
+
+  // 보관함: 날짜 → 확장자별 그룹화 (정렬 방향 반영)
+  const getArchivedGroups = (list, sort) => {
+    const byDate = {};
+    list.forEach(media => {
+      const d = new Date(media.createdAt);
+      const dateKey = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+      if (!byDate[dateKey]) byDate[dateKey] = {};
+      const ext = media.filename.includes('.') ? media.filename.split('.').pop().toLowerCase() : 'unknown';
+      if (!byDate[dateKey][ext]) byDate[dateKey][ext] = [];
+      byDate[dateKey][ext].push(media);
+    });
+    return Object.entries(byDate)
+      .sort(([a], [b]) => sort === 'date-asc' ? a.localeCompare(b) : b.localeCompare(a))
+      .map(([dateKey, byExt]) => ({
+        dateKey,
+        exts: Object.entries(byExt)
+          .sort(([a], [b]) => a.localeCompare(b))
+          .map(([ext, items]) => ({ ext, items }))
+      }));
+  };
+
+  const renderLibraryItem = (media, showSize = false) => (
+    <div
+      key={media.id}
+      className="library-item"
+      style={{
+        cursor: libDragPos && libDragMediaRef.current?.id === media.id ? 'grabbing' : 'grab',
+        userSelect: 'none',
+        touchAction: 'none',
+      }}
+      onPointerDown={e => {
+        if (e.button !== 0) return; // 왼쪽 버튼만
+        e.preventDefault();
+        libDragMediaRef.current = media;
+        setLibDragPos({ x: e.clientX, y: e.clientY });
+      }}
+    >
+      <div className="library-item-thumb">
+        <MediaThumb path={media.path} style={{ width: '100%', height: '100%', pointerEvents: 'none' }} />
+      </div>
+      <span className="library-item-name">
+        {showSize && media.size ? <span className="item-size-badge">{formatSize(media.size)}</span> : null}
+        {media.filename}
+      </span>
+      <button
+        className="library-item-del"
+        onPointerDown={e => e.stopPropagation()} // 삭제 버튼 클릭 시 드래그 시작 방지
+        onClick={() => handleDeleteMedia(media.id, media.filename)}
+        title="삭제"
+      >
+        <Trash2 size={11} />
+      </button>
+    </div>
+  );
+
   return (
-    <div className="mm-root">
+    <div className="mm-root" style={{ cursor: libDragPos ? 'grabbing' : undefined }}>
+      {/* 포인터 드래그 고스트 */}
+      {libDragPos && libDragMediaRef.current && (
+        <div style={{
+          position: 'fixed',
+          left: libDragPos.x - 30,
+          top: libDragPos.y - 30,
+          width: 60,
+          height: 60,
+          borderRadius: 8,
+          border: '2px solid #3b82f6',
+          overflow: 'hidden',
+          pointerEvents: 'none',
+          zIndex: 99999,
+          opacity: 0.85,
+          boxShadow: '0 4px 16px rgba(0,0,0,0.5)',
+        }}>
+          <MediaThumb path={libDragMediaRef.current.path} style={{ width: '100%', height: '100%' }} />
+        </div>
+      )}
       <div className="mm-header">
         <div className="mm-title-group">
           <Monitor size={20} color="#3b82f6" />
@@ -790,32 +1090,168 @@ const MediaManager = ({ stores = [], groups = [], devices = [], selectedStoreId,
         </div>
       </div>
 
+      {/* 배포 진행 패널 */}
+      {deployPanel && (
+        <div className="deploy-panel">
+          <div className="deploy-panel-header">
+            <span className="deploy-panel-title">
+              {deployPanel === 'saving'
+                ? <><span className="deploy-spinner" /> 서버에 저장 중…</>
+                : <>✅ 서버 저장 완료 — 기기 동기화 중</>}
+            </span>
+            <button className="deploy-close-btn" onClick={() => setDeployPanel(null)}>✕</button>
+          </div>
+          {deployPanel === 'deploying' && (
+            <div className="deploy-devices">
+              {groupDevices.map(gd => {
+                const d = devices.find(x => x.id === gd.id);
+                const dl = d?.dl;
+                const online = d?.status === 'online';
+                return (
+                  <div key={gd.id} className="deploy-device-row">
+                    <span className="deploy-dot" style={{ color: online ? '#22c55e' : '#ef4444' }}>●</span>
+                    <span className="deploy-device-name">{gd.name || gd.id}</span>
+                    {!online ? (
+                      <span className="deploy-badge offline">오프라인</span>
+                    ) : dl ? (
+                      <div className="deploy-dl-wrap">
+                        <div className="deploy-dl-bar">
+                          <div className="deploy-dl-fill" style={{ width: `${dl.pct}%` }} />
+                        </div>
+                        <span className="deploy-dl-text" title="현재 다운로드 중인 파일의 진행률">
+                          파일 {dl.cur}/{dl.total} 다운로드 중 · {dl.pct}%
+                        </span>
+                      </div>
+                    ) : (
+                      <span className="deploy-badge done">✔ 준비됨</span>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      )}
+
       <div className="mm-body">
         <div className="mm-library">
           <div className="mm-library-header">
             <span className="mm-library-title">에셋 라이브러리</span>
             <div style={{ display: 'flex', gap: 6 }}>
-              <button className="icon-btn" onClick={() => fileRef.current?.click()} title="업로드"><Upload size={14} /></button>
-              <button className="icon-btn icon-btn-danger" onClick={handleDeleteAllMedia} disabled={mediaList.length === 0} title="전체 삭제"><Trash2 size={14} /></button>
+              <button className="icon-btn" onClick={() => fileRef.current?.click()} title="업로드" disabled={!!uploadProgress}><Upload size={14} /></button>
+              <button className="icon-btn icon-btn-danger" onClick={handleDeleteAllMedia} disabled={mediaList.length === 0 || !!uploadProgress} title="전체 삭제"><Trash2 size={14} /></button>
             </div>
-            <input ref={fileRef} type="file" multiple accept="image/*,video/*" style={{ display: 'none' }} onChange={handleUpload} />
+            <input ref={fileRef} type="file" multiple accept="image/*,video/*,.mov,.avi,.mkv" style={{ display: 'none' }} onChange={handleUpload} />
           </div>
-          <div className="mm-library-list">
-            {mediaList.map(media => (
-              <div key={media.id} className="library-item" draggable onDragStart={e => e.dataTransfer.setData('application/json', JSON.stringify(media))}>
-                <div className="library-item-thumb"><MediaThumb path={media.path} style={{ width: '100%', height: '100%' }} /></div>
-                <span className="library-item-name">{media.filename}</span>
-                <button
-                  className="library-item-del"
-                  draggable={false}
-                  onClick={() => handleDeleteMedia(media.id, media.filename)}
-                  title="삭제"
-                >
-                  <Trash2 size={13} />
-                </button>
+          {uploadProgress && (
+            <div className="upload-progress-bar-wrap">
+              <div className="upload-progress-filename">{uploadProgress.name}</div>
+              <div className="upload-progress-track">
+                <div className="upload-progress-fill" style={{ width: `${uploadProgress.pct}%` }} />
               </div>
-            ))}
+              <span className="upload-progress-pct">{uploadProgress.pct}%</span>
+            </div>
+          )}
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '4px 8px', fontSize: '0.72rem', background: '#1e293b', borderBottom: '1px solid #334155' }}>
+            <span style={{ color: '#94a3b8' }}>
+              {usedMediaIds.size > 0 && !showArchived
+                ? `사용 중 ${usedMediaIds.size}개 / 전체 ${mediaList.length}개`
+                : `전체 ${mediaList.length}개`}
+            </span>
+            <button
+              onClick={() => setShowArchived(v => !v)}
+              style={{ fontSize: '0.7rem', padding: '2px 8px', borderRadius: 4, border: '1px solid #475569', background: 'transparent', color: showArchived ? '#f59e0b' : '#64748b', cursor: 'pointer' }}
+            >
+              {showArchived ? '📂 보관함 숨기기' : '📦 보관함 보기'}
+            </button>
           </div>
+          {showArchived ? (
+            <div className="mm-library-list archive-mode">
+              {/* 정렬 버튼 */}
+              <div className="archive-sort-bar">
+                <button className={`sort-btn ${archiveSort === 'date-desc' ? 'active' : ''}`} onClick={() => setArchiveSort('date-desc')}>최신순</button>
+                <button className={`sort-btn ${archiveSort === 'date-asc' ? 'active' : ''}`} onClick={() => setArchiveSort('date-asc')}>오래된순</button>
+                <button className={`sort-btn ${archiveSort === 'ext' ? 'active' : ''}`} onClick={() => setArchiveSort('ext')}>확장자별</button>
+                <button className={`sort-btn ${archiveSort === 'size-desc' ? 'active' : ''}`} onClick={() => setArchiveSort('size-desc')}>용량순</button>
+              </div>
+
+              {archiveSort === 'size-desc' ? (
+                /* 용량순: 플랫 그리드 */
+                <div className="archive-ext-grid" style={{ padding: '6px' }}>
+                  {[...mediaList]
+                    .sort((a, b) => (b.size || 0) - (a.size || 0))
+                    .map(media => renderLibraryItem(media, true))}
+                </div>
+              ) : archiveSort === 'ext' ? (
+                /* 확장자별 그룹 (날짜 무관) */
+                (() => {
+                  const byExt = {};
+                  mediaList.forEach(media => {
+                    const ext = media.filename.includes('.') ? media.filename.split('.').pop().toLowerCase() : 'unknown';
+                    if (!byExt[ext]) byExt[ext] = [];
+                    byExt[ext].push(media);
+                  });
+                  return Object.entries(byExt)
+                    .sort(([a], [b]) => a.localeCompare(b))
+                    .map(([ext, items]) => {
+                      const groupKey = `ext-${ext}`;
+                      const isCollapsed = collapsedExts.has(groupKey);
+                      return (
+                        <div key={ext} className="archive-ext-group">
+                          <div className="archive-ext-label" onClick={() => toggleExtGroup(groupKey)}>
+                            <span className="ext-badge">.{ext}</span>
+                            <span className="ext-count">{items.length}개</span>
+                            <span className="ext-chevron">{isCollapsed ? '▶' : '▼'}</span>
+                          </div>
+                          {!isCollapsed && (
+                            <div className="archive-ext-grid">
+                              {items.map(media => renderLibraryItem(media))}
+                            </div>
+                          )}
+                        </div>
+                      );
+                    });
+                })()
+              ) : (
+                /* 날짜별 그룹 */
+                getArchivedGroups(mediaList, archiveSort).map(({ dateKey, exts }) => (
+                  <div key={dateKey} className="archive-date-group">
+                    <div className="archive-date-label">📅 {dateKey}</div>
+                    {exts.map(({ ext, items }) => {
+                      const groupKey = `${dateKey}-${ext}`;
+                      const isCollapsed = collapsedExts.has(groupKey);
+                      return (
+                        <div key={ext} className="archive-ext-group">
+                          <div className="archive-ext-label" onClick={() => toggleExtGroup(groupKey)}>
+                            <span className="ext-badge">.{ext}</span>
+                            <span className="ext-count">{items.length}개</span>
+                            <span className="ext-chevron">{isCollapsed ? '▶' : '▼'}</span>
+                          </div>
+                          {!isCollapsed && (
+                            <div className="archive-ext-grid">
+                              {items.map(media => renderLibraryItem(media))}
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                ))
+              )}
+
+              {mediaList.length === 0 && (
+                <div style={{ padding: 16, color: '#475569', fontSize: '0.75rem', textAlign: 'center' }}>
+                  업로드된 미디어가 없습니다
+                </div>
+              )}
+            </div>
+          ) : (
+            <div className="mm-library-list">
+              {mediaList
+                .filter(media => usedMediaIds.size === 0 || usedMediaIds.has(media.id))
+                .map(media => renderLibraryItem(media))}
+            </div>
+          )}
         </div>
 
         <div className="mm-timeline-area">
@@ -823,27 +1259,44 @@ const MediaManager = ({ stores = [], groups = [], devices = [], selectedStoreId,
             <span className="mm-timeline-title">재생목록 타임라인</span>
           </div>
 
-          <div className="mm-lanes">
-            {groupDevices.map(device => (
-              <DeviceRowV4
-                key={device.id}
-                device={device}
-                items={lanes[device.id] || []}
-                isDirty={JSON.stringify(lanes[device.id] || []) !== JSON.stringify(savedState[device.id] || [])}
-                onDrop={media => handleDrop(device.id, media)}
-                onRemoveItem={idx => handleRemoveItem(device.id, idx)}
-                onChangeItem={(idx, upd) => handleChangeItem(device.id, idx, upd)}
-                onDeleteDevice={handleDeleteDevice}
-                onPreview={() => setPreviewData({ items: lanes[device.id] || [], deviceName: device.name })}
-                onTransitionPreview={(item, next, idx) => setTransPreview({ 
-                  currentItem: item, 
-                  nextItem: next, 
-                  laneIdx: device.id, 
-                  itemIdx: idx 
-                })}
-              />
-            ))}
-          </div>
+          <DndContext
+            sensors={useSensors(useSensor(DeviceRowPointerSensor, { activationConstraint: { distance: 8 } }))}
+            collisionDetection={closestCenter}
+            onDragEnd={({ active, over }) => {
+              if (!over || active.id === over.id) return;
+              const oldOrder = groupDevices.map(d => d.id);
+              const oldIdx = oldOrder.indexOf(active.id);
+              const newIdx = oldOrder.indexOf(over.id);
+              const newOrder = arrayMove(oldOrder, oldIdx, newIdx);
+              onDeviceOrderChange?.(prev => ({ ...prev, [selectedGroupId]: newOrder }));
+            }}
+          >
+            <SortableContext items={groupDevices.map(d => d.id)} strategy={verticalListSortingStrategy}>
+              <div className="mm-lanes">
+                {groupDevices.map(device => (
+                  <DeviceRowV4
+                    key={device.id}
+                    device={device}
+                    items={lanes[device.id] || []}
+                    isDirty={JSON.stringify(lanes[device.id] || []) !== JSON.stringify(savedState[device.id] || [])}
+                    onDrop={media => handleDrop(device.id, media)}
+                    onRemoveItem={idx => handleRemoveItem(device.id, idx)}
+                    onChangeItem={(idx, upd) => handleChangeItem(device.id, idx, upd)}
+                    onDeleteDevice={handleDeleteDevice}
+                    onReorder={(fromIdx, toIdx) => handleReorder(device.id, fromIdx, toIdx)}
+                    onPreview={() => setPreviewData({ items: lanes[device.id] || [], deviceName: device.name })}
+                    onTransitionPreview={(item, next, idx) => setTransPreview({
+                      currentItem: item,
+                      nextItem: next,
+                      laneIdx: device.id,
+                      itemIdx: idx
+                    })}
+                    libDragOver={libDragOverId === device.id}
+                  />
+                ))}
+              </div>
+            </SortableContext>
+          </DndContext>
         </div>
       </div>
 

@@ -2,7 +2,7 @@ const { app, BrowserWindow } = require('electron');
 const path = require('path');
 const { spawn } = require('child_process');
 const fs = require('fs');
-const isDev = !app.isPackaged;
+const isDev = process.env.NODE_ENV === 'development';
 
 let mainWindow;
 let serverProcess;
@@ -35,6 +35,7 @@ function startServer() {
 
   const envVars = {
     ...process.env,
+    PORT: process.env.PORT || '3300',
     NODE_ENV: isDev ? 'development' : 'production',
     DATABASE_URL: isDev
       ? `file:${path.resolve(serverDir, 'prisma/dev.db')}`
@@ -131,3 +132,4 @@ app.on('activate', () => {
     createWindow();
   }
 });
+
