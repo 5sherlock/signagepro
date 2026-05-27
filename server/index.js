@@ -6,6 +6,7 @@ const { PrismaClient } = require('@prisma/client');
 const http = require('http');
 const { Server } = require('socket.io');
 const multer = require('multer');
+const Busboy = require('busboy');
 const path = require('path');
 const fs = require('fs');
 const crypto = require('crypto');
@@ -658,18 +659,60 @@ app.get('/update/apk', (req, res) => {
 });
 
 // APK 배포 상태 확인
-// APK 업로드 (대시보드에서 직접 업로드)
-app.post('/api/update/apk', (req, res, next) => {
-  uploadApk.single('apk')(req, res, (err) => {
-    if (err) {
-      console.error('[OTA] APK 업로드 에러:', err.message);
-      return res.status(400).json({ error: err.message });
+// APK 업로드 (대시보드에서 직접 업로드) — busboy 직접 사용 (multer+Express5 호환 이슈 우회)
+app.post('/api/update/apk', (req, res) => {
+  let bb;
+  try {
+    bb = Busboy({ headers: req.headers, limits: { fileSize: 500 * 1024 * 1024 } });
+  } catch (e) {
+    return res.status(400).json({ error: '잘못된 요청입니다: ' + e.message });
+  }
+
+  const destPath = path.join(updateDir, 'app.apk');
+  let fileWritten = false;
+  let writeError = null;
+
+  bb.on('file', (fieldname, file, info) => {
+    const { filename, mimeType } = info;
+    const ok = (filename || '').toLowerCase().endsWith('.apk')
+      || mimeType === 'application/vnd.android.package-archive'
+      || mimeType === 'application/octet-stream';
+
+    if (!ok) {
+      file.resume(); // 스트림 소비
+      writeError = 'APK 파일만 업로드 가능합니다.';
+      return;
     }
-    if (!req.file) return res.status(400).json({ error: '파일이 없습니다.' });
-    const stat = fs.statSync(req.file.path);
-    console.log(`[OTA] APK 업로드 완료: ${(stat.size / 1024 / 1024).toFixed(1)} MB`);
-    res.json({ ok: true, size: stat.size, updatedAt: stat.mtime });
+
+    const dest = fs.createWriteStream(destPath);
+    file.pipe(dest);
+
+    dest.on('finish', () => { fileWritten = true; });
+    dest.on('error', (err) => { writeError = err.message; });
   });
+
+  bb.on('finish', () => {
+    if (writeError) {
+      return res.status(400).json({ error: writeError });
+    }
+    if (!fileWritten) {
+      return res.status(400).json({ error: '파일이 없습니다.' });
+    }
+    try {
+      const stat = fs.statSync(destPath);
+      console.log(`[OTA] APK 업로드 완료: ${(stat.size / 1024 / 1024).toFixed(1)} MB`);
+      res.json({ ok: true, size: stat.size, updatedAt: stat.mtime });
+    } catch (e) {
+      res.status(500).json({ error: '파일 저장 확인 실패: ' + e.message });
+    }
+  });
+
+  bb.on('error', (err) => {
+    console.error('[OTA] APK 업로드 에러:', err.message);
+    if (!res.headersSent) res.status(500).json({ error: err.message });
+  });
+
+  req.pipe(bb);
 });
 
 let lastDeployedAt = loadDeployMeta(); // 마지막 배포(OTA 푸시 or ADB 설치) 완료 시각 — 재시작 후에도 유지
