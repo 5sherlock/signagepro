@@ -669,45 +669,62 @@ app.post('/api/update/apk', (req, res) => {
   }
 
   const destPath = path.join(updateDir, 'app.apk');
-  let fileWritten = false;
-  let writeError = null;
+  const tmpPath  = destPath + '.tmp';
+  let writePromise = null; // 디스크 쓰기 완료 Promise
+  let hasFile = false;
+  let filterError = null;
 
   bb.on('file', (fieldname, file, info) => {
-    const { filename, mimeType } = info;
-    const ok = (filename || '').toLowerCase().endsWith('.apk')
+    const { filename = '', mimeType = '' } = info;
+    const ok = filename.toLowerCase().endsWith('.apk')
       || mimeType === 'application/vnd.android.package-archive'
       || mimeType === 'application/octet-stream';
 
     if (!ok) {
-      file.resume(); // 스트림 소비
-      writeError = 'APK 파일만 업로드 가능합니다.';
+      file.resume();
+      filterError = 'APK 파일만 업로드 가능합니다.';
       return;
     }
 
-    const dest = fs.createWriteStream(destPath);
+    hasFile = true;
+    // 임시 파일에 먼저 쓰고, 완료 후 rename → 기존 APK 손상 방지
+    const dest = fs.createWriteStream(tmpPath);
     file.pipe(dest);
 
-    dest.on('finish', () => { fileWritten = true; });
-    dest.on('error', (err) => { writeError = err.message; });
+    writePromise = new Promise((resolve, reject) => {
+      dest.on('finish', resolve);
+      dest.on('error', reject);
+      file.on('error', reject);
+    });
   });
 
   bb.on('finish', () => {
-    if (writeError) {
-      return res.status(400).json({ error: writeError });
-    }
-    if (!fileWritten) {
-      return res.status(400).json({ error: '파일이 없습니다.' });
-    }
-    try {
-      const stat = fs.statSync(destPath);
-      console.log(`[OTA] APK 업로드 완료: ${(stat.size / 1024 / 1024).toFixed(1)} MB`);
-      res.json({ ok: true, size: stat.size, updatedAt: stat.mtime });
-    } catch (e) {
-      res.status(500).json({ error: '파일 저장 확인 실패: ' + e.message });
-    }
+    if (filterError) return res.status(400).json({ error: filterError });
+    if (!hasFile)    return res.status(400).json({ error: '파일이 없습니다.' });
+
+    // busboy 'finish'는 디스크 쓰기 완료보다 먼저 올 수 있으므로 Promise 대기
+    Promise.resolve(writePromise)
+      .then(() => {
+        // 임시 파일 → 최종 파일로 rename (원자적 교체)
+        try {
+          fs.renameSync(tmpPath, destPath);
+        } catch (_) {
+          fs.copyFileSync(tmpPath, destPath);
+          try { fs.unlinkSync(tmpPath); } catch (_) {}
+        }
+        const stat = fs.statSync(destPath);
+        console.log(`[OTA] APK 업로드 완료: ${(stat.size / 1024 / 1024).toFixed(1)} MB`);
+        if (!res.headersSent) res.json({ ok: true, size: stat.size, updatedAt: stat.mtime });
+      })
+      .catch(err => {
+        try { fs.unlinkSync(tmpPath); } catch (_) {}
+        console.error('[OTA] APK 저장 실패:', err.message);
+        if (!res.headersSent) res.status(500).json({ error: '저장 실패: ' + err.message });
+      });
   });
 
   bb.on('error', (err) => {
+    try { fs.unlinkSync(tmpPath); } catch (_) {}
     console.error('[OTA] APK 업로드 에러:', err.message);
     if (!res.headersSent) res.status(500).json({ error: err.message });
   });
