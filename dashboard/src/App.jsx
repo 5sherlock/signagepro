@@ -347,23 +347,8 @@ function ScreenScheduleSection({ onUnauth, deviceOrder = {} }) {
   const [draft, setDraft] = useState({ deviceId: '', onTime: '09:00', offTime: '22:00', days: '1,2,3,4,5', enabled: true });
   const [editId, setEditId] = useState(null);
   const [showForm, setShowForm] = useState(false); // 추가 폼 열림/닫힘
-  // 서버 현재 시각 (스케줄 cron은 서버 Asia/Seoul 기준으로 실행됨)
-  const [serverNow, setServerNow] = useState(null);
-  useEffect(() => {
-    let base = null; // 서버 epochMs 기준점
-    let baseLocal = null; // 기준점 수신 시 로컬 Date.now()
-    const sync = () =>
-      fetch(`${SOCKET_URL}/api/time`, { cache: 'no-store' })
-        .then(r => r.ok ? r.json() : null)
-        .then(d => { if (d?.epochMs) { base = d.epochMs; baseLocal = Date.now(); } })
-        .catch(() => {});
-    sync();
-    const syncId = setInterval(sync, 30000); // 30초마다 서버와 재동기화
-    const tickId = setInterval(() => {
-      if (base !== null) setServerNow(base + (Date.now() - baseLocal));
-    }, 1000);
-    return () => { clearInterval(syncId); clearInterval(tickId); };
-  }, []);
+  // 기기 현재 시각 — 온라인 기기의 deviceTime 기준으로 1초 tick
+  const [deviceNow, setDeviceNow] = useState(null);
 
   const showToast = (msg, ok = true) => {
     setToast({ msg, ok });
@@ -380,8 +365,25 @@ function ScreenScheduleSection({ onUnauth, deviceOrder = {} }) {
   useEffect(() => { load(); }, []);
 
   useEffect(() => {
-    apiFetch(`${SOCKET_URL}/api/devices`)
-      .then(r => r.json()).then(setDevices).catch(() => {});
+    let baseDeviceTime = null;
+    let baseLocal = null;
+
+    const fetchDevices = () =>
+      apiFetch(`${SOCKET_URL}/api/devices`)
+        .then(r => r.json())
+        .then(devList => {
+          setDevices(devList);
+          const onlineDev = devList.find(d => d.status === 'online' && d.deviceTime);
+          if (onlineDev) { baseDeviceTime = onlineDev.deviceTime; baseLocal = Date.now(); }
+        })
+        .catch(() => {});
+
+    fetchDevices();
+    const pollId = setInterval(fetchDevices, 10000); // 10초마다 갱신
+    const tickId = setInterval(() => {
+      if (baseDeviceTime !== null) setDeviceNow(baseDeviceTime + (Date.now() - baseLocal));
+    }, 1000);
+    return () => { clearInterval(pollId); clearInterval(tickId); };
   }, []);
 
   const toggleDay = (day) => {
@@ -443,10 +445,10 @@ function ScreenScheduleSection({ onUnauth, deviceOrder = {} }) {
       {/* ── 헤더 ── */}
       <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '20px' }}>
         <h2 style={{ margin: 0, fontSize: '1.15rem', flex: 1 }}>🕐 화면 스케줄</h2>
-        {serverNow && (
+        {deviceNow && (
           <span style={{ fontSize: '0.72rem', color: '#64748b', fontFamily: 'monospace', background: 'rgba(255,255,255,0.04)', padding: '3px 8px', borderRadius: '6px', border: '1px solid var(--border)', flexShrink: 0 }}
-            title="서버 시각 — 스케줄은 이 시각(KST) 기준으로 실행됩니다">
-            🖥 서버 {new Date(serverNow).toLocaleTimeString('ko-KR', { timeZone: 'Asia/Seoul', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false })}
+            title="기기 현재 시각 (KST) — 스케줄은 이 시각 기준으로 실행됩니다">
+            🕐 기기 {new Date(deviceNow).toLocaleTimeString('ko-KR', { timeZone: 'Asia/Seoul', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false })}
           </span>
         )}
         {!isFormOpen && (
@@ -1408,7 +1410,7 @@ function App() {
   // PC 스피커로 듣기 — deviceId Set (체크된 기기만 음소거 해제)
   const [pcAudioSet, setPcAudioSet] = useState(new Set());
   const [selectedStoreId, setSelectedStoreId] = useState('');
-  const [gridLayout, setGridLayout] = useState('5x1');
+  const [gridLayout, setGridLayout] = useState('auto');
   const [deviceMeta, setDeviceMeta] = useState({});
   // 음소거 전 볼륨 기억 — 음소거 해제 시 원래 볼륨으로 복원
   const preMuteVol = useRef({});
