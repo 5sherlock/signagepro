@@ -269,6 +269,16 @@ class MediaRenderer(
         imageOf(active).setImageBitmap(null)
     }
 
+    /** 재부팅/종료 전 호출: 두 레이어를 300ms 페이드아웃 → 검은 화면 */
+    fun showBlack() {
+        active.animate().cancel()
+        standby.animate().cancel()
+        active.animate().alpha(0f).setDuration(300).start()
+        standby.animate().alpha(0f).setDuration(300).start()
+        player.stop()
+        player.clearMediaItems()
+    }
+
     private fun videoOf(layer: FrameLayout): PlayerView =
         layer.findViewWithTag("video") as PlayerView
 

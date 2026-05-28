@@ -526,6 +526,13 @@ class PlayerCoordinator(
                 val scaled = (level.toFloat() / 15 * max).toInt().coerceIn(0, max)
                 audioManager.setStreamVolume(AudioManager.STREAM_MUSIC, scaled, 0)
                 Log.i(TAG, "볼륨 설정: $level/15 → $scaled/$max")
+            },
+            onPrepareReboot = {
+                // ADB reboot 전에 루프 중단 + 검은 화면 → 일그러짐 방지
+                loopJob?.cancel()
+                scope.launch(kotlinx.coroutines.Dispatchers.Main) {
+                    renderer.showBlack()
+                }
             }
         ).also { it.start() }
     }
