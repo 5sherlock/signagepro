@@ -1124,7 +1124,7 @@ async function handleTcpMessage(socket, msg) {
       });
       const screenOff = deviceLiveStateCache.get(deviceId)?.screenOff ?? false;
       io.emit('device_status_update', { deviceId, status: 'online', cpu, mem, ip: normalizeIp(socket.remoteAddress), appVersion: ver, dl, vol, deviceTime, slide, screenOff });
-      socket.write('ok:\n');
+      socket.write(`ok:${Date.now()}\n`);
     } catch (err) {
       console.error('[TCP] DB 에러:', err);
     }

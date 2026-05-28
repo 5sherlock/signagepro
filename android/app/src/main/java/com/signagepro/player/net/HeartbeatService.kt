@@ -24,7 +24,7 @@ import java.net.Socket
  *   1. 클라이언트 → auth:<deviceId>:<secret>\n
  *   2. 서버    → auth:ok\n
  *   3. 클라이언트 → status:<deviceId>/cpu:<n>/mem:<n>/ver:<v>/vol:<n>\n  (10초)
- *   4. 서버    → ok:\n
+ *   4. 서버    → ok:<serverEpochMs>\n  (RTT 보정 시각 동기화)
  *   5. 클라이언트 → vu:<deviceId>/<level>\n  (300ms, ack 없음)
  */
 class HeartbeatService(
@@ -40,6 +40,8 @@ class HeartbeatService(
     private val dlStatusProvider: (() -> String?)? = null,
     /** 현재 볼륨 레벨 (0~15) 반환 */
     private val volumeProvider: (() -> Int?)? = null,
+    /** NTP 보정된 현재 epoch ms. null이면 System.currentTimeMillis() 사용 */
+    private val timeProvider: (() -> Long)? = null,
     /** 실제 오디오 출력 레벨 (0~100) — Visualizer 측정값 */
     private val vuProvider: (() -> Int)? = null,
     /**
@@ -51,7 +53,12 @@ class HeartbeatService(
      * 화면 상태 반환. "on" 또는 "off". null이면 heartbeat에 포함하지 않음.
      * 스케줄에 의해 화면이 꺼지면 "off", 켜지면 "on" 반환.
      */
-    private val screenStateProvider: (() -> String)? = null
+    private val screenStateProvider: (() -> String)? = null,
+    /**
+     * 서버 ACK에서 파싱한 서버 epoch(ms)와 heartbeat 전송 시점의 elapsedRealtime을 전달.
+     * NtpClient.syncFromHeartbeatAck()에 연결해 RTT 보정된 시각 동기화에 사용.
+     */
+    private val onServerEpoch: ((serverEpochMs: Long, sentAtElapsed: Long) -> Unit)? = null
 ) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var job: Job? = null
@@ -118,16 +125,20 @@ class HeartbeatService(
                     val mem = "%.1f".format(metrics.memUsage())
                     val dlPart = dlStatusProvider?.invoke()?.let { "/dl:$it" } ?: ""
                     val volPart = volumeProvider?.invoke()?.let { "/vol:$it" } ?: ""
-                    val timePart = "/time:${System.currentTimeMillis()}"
+                    val timePart = "/time:${timeProvider?.invoke() ?: System.currentTimeMillis()}"
                     // slide: "1|5|filename.jpg" 형식 — '|' 구분자로 '/' 충돌 방지
                     val slidePart = slideProvider?.invoke()?.let { "/slide:$it" } ?: ""
                     val screenPart = screenStateProvider?.invoke()?.let { "/screen:$it" } ?: ""
+                    val sentAt = android.os.SystemClock.elapsedRealtime()
                     writeMutex.withLock {
                         out.write("status:$deviceId/cpu:$cpu/mem:$mem/ver:$appVersion$dlPart$volPart$timePart$slidePart$screenPart\n")
                         out.flush()
                     }
                     val ack = input.readLine() ?: throw IOException("EOF on heartbeat")
                     if (!ack.startsWith("ok")) throw IOException("ACK 오류: $ack")
+                    // ok:<epochMs> — 서버 시각으로 RTT 보정 동기화
+                    ack.substringAfter("ok:").toLongOrNull()
+                        ?.let { onServerEpoch?.invoke(it, sentAt) }
                     delay(intervalMs)
                 }
             } finally {

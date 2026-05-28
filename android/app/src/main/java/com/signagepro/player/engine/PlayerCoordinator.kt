@@ -60,7 +60,7 @@ class PlayerCoordinator(
     private val onDebug: (String) -> Unit = {}
 ) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
-    private val ntp = NtpClient()
+    private val ntp = NtpClient(context)
     private val cache = MediaCacheRepo(context)
     private val store = PlaylistStore(context)
     private val metrics = SystemMetrics(context)
@@ -180,20 +180,8 @@ class PlayerCoordinator(
         scheduleManager.onScreenStateChange = { on -> screenOn = on }
         startHeartbeat(serverUrl, deviceId, secret)
         startControlChannel(serverUrl, deviceId)
-        startTimeSyncLoop(serverUrl)
         scheduleManager.start(scope)
         if (DEBUG_OVERLAY) startDebugLoop(deviceId)
-    }
-
-    /** 주기적 시각 재동기 */
-    private fun startTimeSyncLoop(serverUrl: String) {
-        scope.launch {
-            while (isActive) {
-                delay(RESYNC_INTERVAL_MS)
-                val ok = ntp.sync(serverUrl)
-                Log.i(TAG, "시각 재동기: ${if (ok) ntp.sourceLabel else "실패"}")
-            }
-        }
     }
 
     /** 진단 오버레이 */
@@ -468,29 +456,29 @@ class PlayerCoordinator(
                 val file = cache.cachedFile(slot.item.media)
                 var animMs = 0L
                 if (file != null) {
-                    // 이미지는 IO 스레드에서 미리 디코딩 — Main 스레드 차단을 방지해
-                    // waitMs 계산 정확도를 높이고 애니메이션 프레임 누락을 예방.
-                    if (slot.item.media.type.lowercase() == "image") {
-                        withContext(Dispatchers.IO) {
-                            renderer.preloadImage(slot.item, file)
-                        }
-                    }
-                    // show()는 실제 실행된 전환 애니메이션 지속 시간(ms)을 반환.
-                    // prevItem.transitionTime 기준이므로 slot.item.transitionTime과 다를 수 있음.
+                    // preloadImage는 이전 대기 중에 백그라운드로 완료됨.
+                    // 미리 로드되지 않은 경우 MediaRenderer 내부 폴백(Main 스레드 디코딩)으로 처리.
                     animMs = renderer.show(slot.item, file)
-                    // 현재 재생 슬라이드 정보를 heartbeat에 포함 — 대시보드 실시간 미리보기용
                     currentSlideInfo = "${slot.index + 1}|${slot.total}|${slot.item.media.filename}"
                 } else {
                     Log.w(TAG, "캐시에 없음: ${slot.item.media.filename}")
                 }
 
-                // 최소 대기 = 실제 실행된 전환 애니메이션 시간 + 200ms 버퍼.
-                // ⚠ 이전 코드는 slot.item.transitionTime(다음 슬라이드 값)을 사용했으나
-                //   애니메이션은 prevItem.transitionTime으로 실행되어, 두 값이 다르면
-                //   fadeToBlack 도중 다음 show()가 호출되어 화면이 블랙이 되는 버그 발생.
-                // → show() 반환값(animMs) 사용으로 항상 올바른 최솟값 보장.
-                val minWaitMs = animMs + 200L
-                val waitMs = (slot.nextSlotEpochMs - ntp.now()).coerceAtLeast(minWaitMs)
+                // ── 다음 슬라이드 선제 로드 ────────────────────────────────────────
+                // show() 직후 대기 시간(평균 8~9초) 동안 다음 슬라이드를 IO 스레드에서 미리
+                // 디코딩. waitMs 만료 시 renderer.show()가 IO 없이 즉시 실행되어
+                // 기기 간 전환 시작 시각이 수십 ms 이내로 일치함.
+                eng.nextItem()?.let { nextItem ->
+                    cache.cachedFile(nextItem.media)?.let { nextFile ->
+                        scope.launch(Dispatchers.IO) {
+                            renderer.preloadImage(nextItem, nextFile)
+                        }
+                    }
+                }
+
+                // 최소 대기 = 애니메이션 시간 + 100ms 스케줄러 지연 여유.
+                // (IO 선제 로드로 200ms 버퍼 불필요 → 100ms로 단축)
+                val waitMs = (slot.nextSlotEpochMs - ntp.now()).coerceAtLeast(animMs + 100L)
                 delay(waitMs)
             }
         }
@@ -517,7 +505,9 @@ class PlayerCoordinator(
                 if (max > 0) (cur.toFloat() / max * 15).toInt() else null
             },
             vuProvider = { getVuLevel() },
-            screenStateProvider = { if (screenOn) "on" else "off" }
+            timeProvider = { ntp.now() },
+            screenStateProvider = { if (screenOn) "on" else "off" },
+            onServerEpoch = { epochMs, sentAt -> ntp.syncFromHeartbeatAck(epochMs, sentAt) }
         ).also { it.start() }
     }
 
@@ -554,6 +544,5 @@ class PlayerCoordinator(
     companion object {
         private const val TAG = "PlayerCoordinator"
         private const val DEBUG_OVERLAY = true
-        private const val RESYNC_INTERVAL_MS = 5 * 60 * 1000L
     }
 }
