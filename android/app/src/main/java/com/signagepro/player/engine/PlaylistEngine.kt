@@ -33,6 +33,14 @@ class PlaylistEngine(
             .sortedBy { it.order }
     }
 
+    /** 현재 슬롯 다음에 올 아이템 — 대기 시간 중 미리 로드용. */
+    fun nextItem(): PlaylistItemDto? {
+        val list = items
+        if (list.isEmpty()) return null
+        val c = current() ?: return null
+        return list[(c.index + 1) % list.size]
+    }
+
     fun current(): SlotState? {
         val list = items
         if (list.isEmpty()) return null

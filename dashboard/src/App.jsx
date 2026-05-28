@@ -69,7 +69,7 @@ function DevicePreview({ groupId, deviceId, onUpdate, pcAudio = false, devVol = 
     if (!muted) el.volume = Math.max(0, Math.min(1, devVol / 15));
   }, [pcAudio, devVol]);
 
-  // ── 플레이리스트 + NTP 오프셋 로드 ──────────────────────────────────────
+  // ── 플레이리스트 + NTP 오프셋 로드 + 주기적 재동기 ──────────────────────────────────────
   useEffect(() => {
     if (!groupId) return;
 
@@ -95,11 +95,17 @@ function DevicePreview({ groupId, deviceId, onUpdate, pcAudio = false, devVol = 
     };
 
     load();
+    // 10초마다 NTP 재동기 — 기기 heartbeat 주기(10초)와 동일 → 타임라인 항상 최신
+    const resyncTimer = setInterval(load, 10_000);
+
     const socket = io(SOCKET_URL);
     socket.on('playlist_updated', ({ groupId: gid }) => {
       if (gid === groupId) load();
     });
-    return () => socket.disconnect();
+    return () => {
+      clearInterval(resyncTimer);
+      socket.disconnect();
+    };
   }, [groupId, deviceId]);
 
   // liveSlide ref — effect 의존성에 추가하지 않고 최신값을 tick 내부에서 참조
@@ -145,9 +151,12 @@ function DevicePreview({ groupId, deviceId, onUpdate, pcAudio = false, devVol = 
 
   const activeItem = playlist[currentIndex];
   const prevItem = prevIndex !== -1 ? playlist[prevIndex] : null;
+  // 애니메이션 CSS: 전환 중엔 나가는 슬라이드(prevItem)의 효과 사용
   const transType = (prevItem ?? activeItem)?.transition?.toLowerCase() || 'fade';
   const transTime = (prevItem ?? activeItem)?.transitionTime || 1000;
   const duration = activeItem?.duration || 10;
+  // 라벨 표시: 항상 현재 슬라이드(activeItem)의 전환 효과 — "이 슬라이드가 나갈 때 쓸 효과"
+  const labelTransType = activeItem?.transition?.toLowerCase() || 'fade';
 
   // 기기 실제 보고값으로 미리보기 중인지 여부
   const isLiveSync = liveSlide && liveSlide.index > 0 && liveSlide.index <= playlist.length;
@@ -161,11 +170,11 @@ function DevicePreview({ groupId, deviceId, onUpdate, pcAudio = false, devVol = 
       filename: activeItem?.media?.filename || 'No Media',
       currentTime,
       duration,
-      transType,
+      transType: labelTransType,
       transTime,
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeItem, currentTime, transType, transTime, duration]);
+  }, [activeItem, currentTime, labelTransType, transTime, duration]);
 
   if (!playlist.length) {
     return (
@@ -1842,11 +1851,16 @@ function App() {
                         {(device.ip || device.deviceTime) && (
                           <div style={{ fontSize: '0.7rem', color: 'var(--text-secondary)', fontFamily: 'monospace', marginTop: '2px', display: 'flex', gap: '6px', alignItems: 'center', flexWrap: 'nowrap', overflow: 'hidden' }}>
                             {device.ip && <span style={{ flexShrink: 0 }}>{device.ip}</span>}
-                            {device.deviceTime && (
-                              <span style={{ color: '#475569', fontFamily: 'monospace', flexShrink: 0, whiteSpace: 'nowrap' }} title="기기 현재 시각 (KST 기준으로 스케줄 적용됨)">
-                                🕐 {new Date(device.deviceTime).toLocaleTimeString('ko-KR', { timeZone: 'Asia/Seoul', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false })}
-                              </span>
-                            )}
+                            {device.deviceTime && (() => {
+                              // lastSeen 기준으로 보정: 마지막 하트비트 후 경과 시간만큼 더해 현재 추정 시각 표시
+                              const lastSeenMs = device.lastSeen ? new Date(device.lastSeen).getTime() : null;
+                              const adjTime = lastSeenMs ? device.deviceTime + (Date.now() - lastSeenMs) : device.deviceTime;
+                              return (
+                                <span style={{ color: '#475569', fontFamily: 'monospace', flexShrink: 0, whiteSpace: 'nowrap' }} title="기기 현재 시각 (KST 기준으로 스케줄 적용됨)">
+                                  🕐 {new Date(adjTime).toLocaleTimeString('ko-KR', { timeZone: 'Asia/Seoul', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false })}
+                                </span>
+                              );
+                            })()}
                           </div>
                         )}
                         {(() => {

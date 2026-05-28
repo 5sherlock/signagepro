@@ -747,6 +747,7 @@ const MediaManager = ({ stores = [], groups = [], devices = [], selectedStoreId,
   const [deployPanel, setDeployPanel] = useState(null); // null | 'saving' | 'deploying'
   const deployHasSeenDl = useRef(false); // 기기 다운로드가 한 번이라도 감지됐는지
   const fileRef = useRef();
+  const groupDevicesRef = useRef([]); // fetchPlaylist 스테일 클로저 방지용 ref
 
   // 라이브러리 → 타임라인 포인터 드래그 (crxMouse 제스처 충돌 방지)
   const libDragMediaRef = useRef(null);   // 드래그 중인 미디어 객체
@@ -765,6 +766,9 @@ const MediaManager = ({ stores = [], groups = [], devices = [], selectedStoreId,
         ...rawGroupDevices.filter(d => !groupOrder.includes(d.id)),
       ]
     : rawGroupDevices;
+
+  // 렌더마다 최신 groupDevices를 ref에 동기화 — fetchPlaylist 스테일 클로저 방지
+  groupDevicesRef.current = groupDevices;
 
   useEffect(() => {
     setSelectedGroupId('');
@@ -785,35 +789,40 @@ const MediaManager = ({ stores = [], groups = [], devices = [], selectedStoreId,
   }, [selectedStoreId]);
 
   const fetchPlaylist = useCallback(async () => {
-    if (!selectedGroupId || groupDevices.length === 0) return;
+    const devs = groupDevicesRef.current;
+    if (!selectedGroupId || devs.length === 0) return;
     try {
       const res = await apiFetch(`${API}/api/groups/${selectedGroupId}/playlist`);
       const data = await res.json();
       const medias = data.medias || [];
       const newLanes = {};
-      groupDevices.forEach(d => { newLanes[d.id] = []; });
+      devs.forEach(d => { newLanes[d.id] = []; });
       medias.forEach((pm, idx) => {
         const item = { ...pm, _key: `${pm.mediaId}-${idx}` };
-        if (pm.targetDeviceId && newLanes[pm.targetDeviceId] !== undefined) {
-          newLanes[pm.targetDeviceId].push(item);
-        } else {
-          groupDevices.forEach(d => {
+        if (!pm.targetDeviceId) {
+          // targetDeviceId 없는 아이템 = 그룹 전체 공통 아이템
+          devs.forEach(d => {
             newLanes[d.id].push({ ...item, _key: `${pm.mediaId}-${idx}-${d.id}` });
           });
+        } else if (newLanes[pm.targetDeviceId] !== undefined) {
+          newLanes[pm.targetDeviceId].push(item);
         }
+        // else: targetDeviceId가 현재 그룹에 없는 기기 → 무시 (오염 방지)
       });
       setLanes(newLanes);
       setSavedState(JSON.parse(JSON.stringify(newLanes)));
       // 플레이리스트에 배정된 미디어 ID → 라이브러리에서 숨김 처리
       setUsedMediaIds(new Set(medias.map(pm => pm.mediaId)));
     } catch (e) { console.error(e); }
-  }, [selectedGroupId, groupDevices.length]);
+  }, [selectedGroupId]);
 
   useEffect(() => { fetchMedia(); }, [fetchMedia]);
+  // groupDevices.length 가 0→N 으로 바뀔 때 (devices 로딩 완료 후) 재fetch
   useEffect(() => {
-    if (selectedGroupId) fetchPlaylist();
+    if (selectedGroupId && groupDevices.length > 0) fetchPlaylist();
     else { setLanes({}); setSavedState({}); }
-  }, [selectedGroupId]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedGroupId, groupDevices.length]);
 
   // 배포 패널 자동 닫기: 기기 dl 감지 후 모두 완료되면 2초 후 닫음
   useEffect(() => {
