@@ -915,6 +915,10 @@ app.post('/api/devices/:id/reboot', async (req, res) => {
   const target = `${device.ip}:5555`;
   const adbPath = process.env.ADB_PATH || 'adb';
   try {
+    // 1. 앱에 검은 화면 준비 명령 → 렌더링 루프 중단 (일그러짐 방지)
+    io.to(`device:${device.id}`).emit('prepare_reboot', { deviceId: device.id });
+    // 2. 300ms(검은 화면 페이드) + 500ms 여유 후 ADB 재부팅
+    await new Promise(r => setTimeout(r, 800));
     await adbExec(adbPath, ['connect', target], { timeout: 8000 });
     execFile(adbPath, ['-s', target, 'shell', 'reboot'], { timeout: 10000, windowsHide: true }, () => {}); // 연결 끊김이 정상
     console.log(`[ADB] 재부팅 명령 전송: ${device.id} (${target})`);
