@@ -269,14 +269,21 @@ class MediaRenderer(
         imageOf(active).setImageBitmap(null)
     }
 
-    /** 재부팅/종료 전 호출: 두 레이어를 300ms 페이드아웃 → 검은 화면 */
+    /** 재부팅/종료 전 호출: 두 레이어를 즉시 숨기고 검은 화면으로 전환 */
     fun showBlack() {
         active.animate().cancel()
         standby.animate().cancel()
-        active.animate().alpha(0f).setDuration(300).start()
-        standby.animate().alpha(0f).setDuration(300).start()
+        // SurfaceView는 View 알파 컴포지터를 우회하므로 alpha 애니메이션만으로는
+        // 비디오 표면이 화면에서 사라지지 않음 → player 분리 + visibility=GONE 으로
+        // SurfaceView 홀을 즉시 닫아야 한다 (특히 Android 5.1.1에서 필수)
         player.stop()
         player.clearMediaItems()
+        videoOf(active).apply { this.player = null; visibility = View.GONE }
+        videoOf(standby).apply { this.player = null; visibility = View.GONE }
+        imageOf(active).setImageBitmap(null)
+        imageOf(standby).setImageBitmap(null)
+        active.alpha = 0f
+        standby.alpha = 0f
     }
 
     private fun videoOf(layer: FrameLayout): PlayerView =

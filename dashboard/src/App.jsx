@@ -108,25 +108,15 @@ function DevicePreview({ groupId, deviceId, onUpdate, pcAudio = false, devVol = 
     };
   }, [groupId, deviceId]);
 
-  // liveSlide ref — effect 의존성에 추가하지 않고 최신값을 tick 내부에서 참조
-  const liveSlideRef = useRef(liveSlide);
-  useEffect(() => { liveSlideRef.current = liveSlide; }, [liveSlide]);
-
   // ── 200ms 마다 슬라이드 위치 재계산 ──────────────────────────────────────
-  // 우선순위: 기기가 보고한 실제 슬라이드 인덱스(liveSlide) > NTP 계산값
+  // NTP epoch 기반 순수 계산 — 기기의 PlaylistEngine과 동일한 알고리즘
+  // liveSlide(하트비트) 오버라이드 제거: 최대 10초 지연 + stale 값에 의한 오싱크 원인
   useEffect(() => {
     if (!playlist.length) return;
 
     const tick = () => {
       const nowMs = Date.now() + ntpOffset;
-      const { idx: ntpIdx, elapsed } = computeNtpPosition(playlist, nowMs);
-
-      // 기기 실제 보고값(1-based → 0-based 변환) 우선 사용
-      const live = liveSlideRef.current;
-      const liveIdx = (live && live.index > 0 && live.index <= playlist.length)
-        ? live.index - 1
-        : null;
-      const idx = liveIdx !== null ? liveIdx : ntpIdx;
+      const { idx, elapsed } = computeNtpPosition(playlist, nowMs);
 
       // 인덱스가 바뀌면 전환 애니메이션 트리거
       if (prevIdxRef.current !== -1 && prevIdxRef.current !== idx) {

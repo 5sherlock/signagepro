@@ -27,6 +27,9 @@ class ScreenScheduleManager(private val context: Context) {
      */
     var onScreenStateChange: ((Boolean) -> Unit)? = null
 
+    /** 마지막으로 적용된 화면 상태 — 불필요한 중복 호출 방지 */
+    @Volatile private var lastScreenOn: Boolean? = null
+
     private val powerManager = context.getSystemService(Context.POWER_SERVICE) as PowerManager
     private val dpm = context.getSystemService(Context.DEVICE_POLICY_SERVICE) as DevicePolicyManager
     private val adminComponent = ComponentName(context, SignageDeviceAdmin::class.java)
@@ -70,13 +73,49 @@ class ScreenScheduleManager(private val context: Context) {
 
             if (s.onTime != null && s.onTime == currentTime) {
                 Log.i(TAG, "화면 켜기 실행: $currentTime")
-                turnScreenOn()
+                applyScreenState(on = true)
             }
             if (s.offTime != null && s.offTime == currentTime) {
                 Log.i(TAG, "화면 끄기 실행: $currentTime")
-                turnScreenOff()
+                applyScreenState(on = false)
             }
         }
+    }
+
+    /**
+     * 현재 시각이 OFF 구간인지 판단해 즉시 화면 상태를 반영.
+     * 스케줄 변경/재연결 시 호출 — 다음 분 체크를 기다리지 않고 즉시 적용.
+     */
+    fun evaluateNow() {
+        val cal = Calendar.getInstance(java.util.TimeZone.getTimeZone("Asia/Seoul"))
+        val dayOfWeek = cal.get(Calendar.DAY_OF_WEEK) - 1
+        val currentTime = "%02d:%02d".format(
+            cal.get(Calendar.HOUR_OF_DAY), cal.get(Calendar.MINUTE)
+        )
+        var shouldBeOff = false
+        for (s in schedules) {
+            if (!s.enabled) continue
+            val days = s.days.split(",").mapNotNull { it.trim().toIntOrNull() }
+            if (dayOfWeek !in days) continue
+            val offTime = s.offTime ?: continue
+            val onTime  = s.onTime  ?: continue
+            // offTime < onTime: 당일 구간 (예: 12:00~13:00 점심 휴식)
+            // offTime > onTime: 야간 구간 (예: 22:00~08:00)
+            val inOffWindow = if (offTime < onTime) {
+                currentTime >= offTime && currentTime < onTime
+            } else {
+                currentTime >= offTime || currentTime < onTime
+            }
+            if (inOffWindow) { shouldBeOff = true; break }
+        }
+        applyScreenState(on = !shouldBeOff)
+    }
+
+    /** 중복 호출 방지: 상태가 바뀔 때만 실제 시스템 호출 */
+    private fun applyScreenState(on: Boolean) {
+        if (lastScreenOn == on) return
+        lastScreenOn = on
+        if (on) turnScreenOn() else turnScreenOff()
     }
 
     @Suppress("DEPRECATION")
