@@ -1,202 +1,219 @@
-﻿# ============================================================
-# SignagePro -- 새 PC 서버 구축 스크립트
-# USB의 signagepro_backup 폴더 안에서 실행:
-#   PowerShell -ExecutionPolicy Bypass -File .\setup_from_usb.ps1
+# ============================================================
+# SignagePro -- 새 PC 서버 구축 스크립트 v2
+# USB에서 setup_from_usb.bat 더블클릭으로 실행 (관리자 권한)
 # ============================================================
 
-$ErrorActionPreference = "Stop"
+$ErrorActionPreference = "Continue"
+
+$USB  = $PSScriptRoot
+$DEST = "C:\signagepro"
+
+function Write-Step { param($msg) Write-Host "`n[$msg]" -ForegroundColor Cyan }
+function Write-Ok   { param($msg) Write-Host "  [OK] $msg" -ForegroundColor Green }
+function Write-Warn { param($msg) Write-Host "  [!!] $msg" -ForegroundColor Yellow }
+function Write-Fail { param($msg) Write-Host "  [XX] $msg" -ForegroundColor Red }
 
 Write-Host ""
 Write-Host "============================================" -ForegroundColor Cyan
-Write-Host "  SignagePro 새 PC 구축 스크립트" -ForegroundColor Cyan
+Write-Host "  SignagePro 서버 구축 스크립트 v2" -ForegroundColor Cyan
 Write-Host "============================================" -ForegroundColor Cyan
 Write-Host ""
 
-# ── 0. 경로 설정 ─────────────────────────────────────────────
-$USB   = $PSScriptRoot                        # 이 스크립트가 있는 폴더 (USB)
-$DEST  = "C:\WorkSpace\signagepro"            # 설치 대상 경로
+# ── 0. 관리자 권한 확인 ──────────────────────────────────────
+if (-not ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
+    Write-Fail "관리자 권한으로 실행하세요. (우클릭 → 관리자 권한으로 실행)"
+    Read-Host "엔터를 누르면 종료합니다"
+    exit 1
+}
 
-# ── 1. Git 저장소 클론 확인 ──────────────────────────────────
-Write-Host "[Step 1] 프로젝트 폴더 확인" -ForegroundColor Cyan
+# ── 1. Node.js 확인 ──────────────────────────────────────────
+Write-Step "Node.js 확인"
+$nodeVer = node --version 2>$null
+if ($nodeVer) {
+    Write-Ok "Node.js $nodeVer 설치됨"
+} else {
+    Write-Warn "Node.js 없음. 다운로드 및 설치 중..."
+    $nodeInstaller = "$env:TEMP\node-installer.msi"
+    Invoke-WebRequest -Uri "https://nodejs.org/dist/v20.19.0/node-v20.19.0-x64.msi" -OutFile $nodeInstaller -UseBasicParsing
+    Start-Process msiexec -ArgumentList "/i `"$nodeInstaller`" /quiet /norestart" -Wait
+    $env:Path = [System.Environment]::GetEnvironmentVariable("Path","Machine") + ";" + [System.Environment]::GetEnvironmentVariable("Path","User")
+    Write-Ok "Node.js 설치 완료"
+}
 
-if (-not (Test-Path "$DEST\.git")) {
-    Write-Host "  저장소가 없습니다. Git 클론을 먼저 하세요." -ForegroundColor Yellow
-    Write-Host ""
-    Write-Host "  git clone https://github.com/5sherlock/signagepro.git C:\WorkSpace\signagepro" -ForegroundColor White
-    Write-Host ""
-    $ans = Read-Host "  클론 완료 후 Enter, 또는 S 입력 시 건너뜀"
-    if ($ans -ne "S" -and $ans -ne "s") {
-        if (-not (Test-Path "$DEST\.git")) {
-            Write-Host "  [ERROR] 폴더를 찾을 수 없습니다: $DEST" -ForegroundColor Red
-            exit 1
-        }
+# ── 2. 폴더 생성 ─────────────────────────────────────────────
+Write-Step "폴더 구조 생성"
+New-Item -ItemType Directory -Path "$DEST\server\prisma"       -Force | Out-Null
+New-Item -ItemType Directory -Path "$DEST\server\uploads"      -Force | Out-Null
+New-Item -ItemType Directory -Path "$DEST\server\update"       -Force | Out-Null
+New-Item -ItemType Directory -Path "$DEST\dashboard\dist"      -Force | Out-Null
+Write-Ok "폴더 생성 완료 ($DEST)"
+
+# ── 3. 파일 복사 ─────────────────────────────────────────────
+Write-Step "USB → 서버 파일 복사"
+
+# 서버 소스 (node_modules, uploads, update, prisma, .env 제외)
+$serverExcludes = @("node_modules","uploads","update","prisma",".env")
+Get-ChildItem "$USB\server" -ErrorAction SilentlyContinue |
+    Where-Object { $_.Name -notin $serverExcludes } |
+    ForEach-Object { Copy-Item $_.FullName "$DEST\server\" -Recurse -Force }
+Write-Ok "서버 소스코드"
+
+# Prisma 스키마 (dev.db 제외)
+Get-ChildItem "$USB\server\prisma" -ErrorAction SilentlyContinue |
+    Where-Object { $_.Name -ne "dev.db" } |
+    ForEach-Object { Copy-Item $_.FullName "$DEST\server\prisma\" -Recurse -Force }
+Write-Ok "Prisma 스키마"
+
+# 대시보드 빌드 결과물 (dist/)
+if (Test-Path "$USB\dashboard\dist") {
+    Copy-Item "$USB\dashboard\dist\*" "$DEST\dashboard\dist\" -Recurse -Force
+    Write-Ok "대시보드 빌드 파일 (dist/)"
+} else {
+    Write-Warn "dashboard/dist 없음 — USB에 빌드 파일을 포함시켜야 합니다"
+}
+
+# DB 복사 (기존 DB 있으면 덮지 않음)
+if (-not (Test-Path "$DEST\server\prisma\dev.db")) {
+    if (Test-Path "$USB\server\prisma\dev.db") {
+        Copy-Item "$USB\server\prisma\dev.db" "$DEST\server\prisma\dev.db" -Force
+        Write-Ok "데이터베이스 (dev.db)"
+    } else {
+        Write-Warn "dev.db 없음 — 새 DB로 초기화됩니다"
     }
 } else {
-    Write-Host "  [OK] 저장소 확인됨: $DEST" -ForegroundColor Green
+    Write-Ok "데이터베이스 — 기존 DB 유지 (덮어쓰기 안 함)"
 }
 
-New-Item -ItemType Directory -Path "$DEST\server\prisma"  -Force | Out-Null
-New-Item -ItemType Directory -Path "$DEST\server\uploads" -Force | Out-Null
-New-Item -ItemType Directory -Path "$DEST\server\update"  -Force | Out-Null
-New-Item -ItemType Directory -Path "$DEST\android\app"    -Force | Out-Null
-
-# ── 2. USB → 프로젝트 파일 복사 ─────────────────────────────
-Write-Host ""
-Write-Host "[Step 2] USB에서 파일 복사" -ForegroundColor Cyan
-
-function Copy-Safe([string]$Src, [string]$Dst, [string]$Label = "") {
-    $name = if ($Label) { $Label } else { Split-Path $Src -Leaf }
-    if (Test-Path $Src) {
-        $dir = Split-Path $Dst -Parent
-        if (-not (Test-Path $dir)) { New-Item -ItemType Directory -Path $dir -Force | Out-Null }
-        Copy-Item $Src $Dst -Force -Recurse
-        Write-Host "  [OK] $name" -ForegroundColor Green
-    } else {
-        Write-Host "  [--] 없음 (건너뜀): $name" -ForegroundColor Yellow
-    }
-}
-
-# DB
-Copy-Safe "$USB\server\prisma\dev.db"   "$DEST\server\prisma\dev.db"   "dev.db (데이터베이스)"
-
-# 환경변수
-Copy-Safe "$USB\server\.env"            "$DEST\server\.env"             ".env (환경변수)"
-
-# 미디어 파일
-Write-Host "  uploads 복사 중 (시간이 걸릴 수 있습니다)..." -NoNewline
+# 미디어 파일 (uploads/)
 if (Test-Path "$USB\server\uploads") {
-    $ud = "$DEST\server\uploads"
     Get-ChildItem "$USB\server\uploads" | ForEach-Object {
-        Copy-Item $_.FullName $ud -Force
+        Copy-Item $_.FullName "$DEST\server\uploads\" -Force
     }
-    $cnt = (Get-ChildItem $ud).Count
-    $mb  = [math]::Round((Get-ChildItem $ud | Measure-Object Length -Sum).Sum / 1MB, 1)
-    Write-Host "`r  [OK] uploads ($cnt 개, $mb MB)          " -ForegroundColor Green
+    $cnt = (Get-ChildItem "$DEST\server\uploads" -ErrorAction SilentlyContinue).Count
+    Write-Ok "미디어 파일 ($cnt 개)"
 }
 
 # OTA APK
-Copy-Safe "$USB\server\update\app.apk"  "$DEST\server\update\app.apk"  "app.apk (OTA 배포용)"
-
-# 서명 키
-Copy-Safe "$USB\android\signagepro.keystore" "$DEST\android\app\signagepro.keystore" "signagepro.keystore (서명 키)"
-
-# ── 3. Android 빌드 환경 설정 ────────────────────────────────
-Write-Host ""
-Write-Host "[Step 3] Android 빌드 환경 설정" -ForegroundColor Cyan
-
-# local.properties — Android SDK 경로 (PC마다 다를 수 있음)
-$sdkPath = "$env:LOCALAPPDATA\Android\Sdk"
-if (Test-Path $sdkPath) {
-    $escaped = $sdkPath.Replace("\", "\\")
-    "sdk.dir=$escaped" | Out-File "$DEST\android\local.properties" -Encoding ascii
-    Write-Host "  [OK] local.properties (sdk.dir=$sdkPath)" -ForegroundColor Green
-} else {
-    Write-Host "  [!!] Android SDK를 찾을 수 없습니다." -ForegroundColor Yellow
-    Write-Host "       Android Studio 설치 후 아래 파일을 직접 작성하세요:" -ForegroundColor Yellow
-    Write-Host "       $DEST\android\local.properties" -ForegroundColor White
-    Write-Host "       내용: sdk.dir=C:\\Users\\<사용자명>\\AppData\\Local\\Android\\Sdk" -ForegroundColor White
+if (Test-Path "$USB\server\update\app.apk") {
+    Copy-Item "$USB\server\update\app.apk" "$DEST\server\update\app.apk" -Force
+    Write-Ok "OTA APK"
 }
 
-# gradle.properties — Java 경로
-$javaPath = ""
-@(
-    "C:\Program Files\Java\jdk-21.0.11",
-    "C:\Program Files\Eclipse Adoptium\jdk-21*",
-    "C:\Program Files\Microsoft\jdk-21*"
-) | ForEach-Object {
-    if (-not $javaPath) {
-        $found = Get-Item $_ -ErrorAction SilentlyContinue | Select-Object -First 1
-        if ($found) { $javaPath = $found.FullName }
+# ── 4. .env 생성 ─────────────────────────────────────────────
+Write-Step ".env 환경변수 설정"
+
+# USB의 .env를 참조해 DEVICE_SECRET, ADMIN_PASSWORD 읽기
+$usbEnv = @{}
+if (Test-Path "$USB\server\.env") {
+    Get-Content "$USB\server\.env" | ForEach-Object {
+        if ($_ -match '^([^#=]+)=(.*)$') {
+            $usbEnv[$Matches[1].Trim()] = $Matches[2].Trim().Trim('"')
+        }
     }
 }
 
-$gradleProps = "$DEST\android\gradle.properties"
-if ($javaPath) {
-    $content = Get-Content $gradleProps -Raw -ErrorAction SilentlyContinue
-    $escaped  = $javaPath.Replace("\", "\\")
-    if ($content -notmatch "org.gradle.java.home") {
-        "`norg.gradle.java.home=$escaped" | Add-Content $gradleProps -Encoding utf8
-    }
-    Write-Host "  [OK] gradle.properties (java.home=$javaPath)" -ForegroundColor Green
-} else {
-    Write-Host "  [!!] Java 21을 찾을 수 없습니다." -ForegroundColor Yellow
-    Write-Host "       https://www.oracle.com/java 에서 JDK 21 설치 후" -ForegroundColor Yellow
-    Write-Host "       android\gradle.properties 에 추가:" -ForegroundColor Yellow
-    Write-Host "       org.gradle.java.home=C:\\Program Files\\Java\\jdk-21.0.11" -ForegroundColor White
-}
+$deviceSecret = if ($usbEnv["DEVICE_SECRET"]) { $usbEnv["DEVICE_SECRET"] } else { "signagepro-secret-2026" }
+$adminPw      = if ($usbEnv["ADMIN_PASSWORD"] -or $usbEnv["adminPassword"]) {
+                    $usbEnv["ADMIN_PASSWORD"] ?? $usbEnv["adminPassword"]
+                } else { "" }
 
-# ── 4. 서버 npm install + DB 초기화 ─────────────────────────
-Write-Host ""
-Write-Host "[Step 4] 서버 패키지 설치 및 DB 초기화" -ForegroundColor Cyan
+# 절대경로 DATABASE_URL (따옴표 없이) — dotenvx 호환
+$envContent = @"
+DATABASE_URL=file:C:/signagepro/server/prisma/dev.db
+DEVICE_SECRET="$deviceSecret"
+ADMIN_PASSWORD="$adminPw"
+"@
 
+Set-Content -Path "$DEST\server\.env" -Value $envContent -Encoding UTF8
+Write-Ok ".env 생성 (DATABASE_URL 절대경로)"
+
+# ── 5. npm install (서버만) ───────────────────────────────────
+Write-Step "서버 패키지 설치 (npm install)"
 Set-Location "$DEST\server"
+npm install --silent 2>&1 | Out-Null
+Write-Ok "npm install 완료"
 
-Write-Host "  npm install 중..."
-npm install --silent
-Write-Host "  [OK] npm install 완료" -ForegroundColor Green
+# ── 6. Prisma 초기화 ─────────────────────────────────────────
+Write-Step "Prisma 초기화"
+$env:DATABASE_URL = "file:C:/signagepro/server/prisma/dev.db"
+npx prisma generate 2>&1 | Out-Null
+npx prisma db push --skip-generate --accept-data-loss 2>&1 | Out-Null
+Write-Ok "Prisma DB 초기화 완료"
 
-Write-Host "  prisma generate 중..."
-npx prisma generate --silent 2>$null
-Write-Host "  [OK] prisma generate 완료" -ForegroundColor Green
+# ── 7. PM2 설치 및 서버 시작 ─────────────────────────────────
+Write-Step "PM2 설치 및 서버 등록"
 
-Write-Host "  prisma db push 중..."
-npx prisma db push --skip-generate 2>&1 | Out-Null
-Write-Host "  [OK] DB 초기화 완료" -ForegroundColor Green
-
-# ── 5. 대시보드 npm install ──────────────────────────────────
-Write-Host ""
-Write-Host "[Step 5] 대시보드 패키지 설치" -ForegroundColor Cyan
-
-Set-Location "$DEST\dashboard"
-Write-Host "  npm install 중..."
-npm install --silent
-Write-Host "  [OK] npm install 완료" -ForegroundColor Green
-
-# ── 6. PM2 설치 + 서버 시작 ─────────────────────────────────
-Write-Host ""
-Write-Host "[Step 6] PM2 설치 및 서버 시작" -ForegroundColor Cyan
-
-Set-Location "$DEST"
-
-$pm2 = Get-Command pm2 -ErrorAction SilentlyContinue
-if (-not $pm2) {
-    Write-Host "  PM2 설치 중..."
-    npm install -g pm2 --silent
-    Write-Host "  [OK] PM2 설치 완료" -ForegroundColor Green
+$pm2Ver = pm2 --version 2>$null | Select-Object -Last 1
+if ($pm2Ver) {
+    Write-Ok "PM2 $pm2Ver 이미 설치됨"
 } else {
-    Write-Host "  [OK] PM2 이미 설치됨" -ForegroundColor Green
+    npm install -g pm2 --silent 2>&1 | Out-Null
+    Write-Ok "PM2 설치 완료"
 }
 
-# 기존 프로세스 정리 후 재시작
-pm2 delete signagepro 2>$null
-pm2 delete dashboard  2>$null
+# 포트 충돌 방지
+foreach ($port in @(3300, 10080)) {
+    $conn = Get-NetTCPConnection -LocalPort $port -State Listen -ErrorAction SilentlyContinue
+    if ($conn) {
+        $conn | Select-Object -ExpandProperty OwningProcess | ForEach-Object {
+            Stop-Process -Id $_ -Force -ErrorAction SilentlyContinue
+        }
+    }
+}
+Start-Sleep -Seconds 1
 
-pm2 start "$DEST\server\index.js" --name signagepro --cwd "$DEST\server"
-pm2 start node --name dashboard -- "$DEST\dashboard\node_modules\vite\bin\vite.js" --cwd "$DEST\dashboard"
-pm2 save
+# 기존 pm2 프로세스 정리 후 재시작
+pm2 delete signagepro-server 2>$null | Out-Null
+pm2 start "$DEST\server\index.js" --name signagepro-server --cwd "$DEST\server" --restart-delay=3000 2>&1 | Out-Null
+pm2 save 2>&1 | Out-Null
+Write-Ok "PM2 signagepro-server 등록 완료"
 
-Write-Host "  [OK] 서버 시작됨" -ForegroundColor Green
+# ── 8. 부팅 자동 시작 (작업 스케줄러) ───────────────────────
+Write-Step "부팅 시 자동 시작 등록"
+
+# 배치 파일 생성
+$batContent = "@echo off`r`ncd /d C:\signagepro\server`r`npm2 resurrect`r`n"
+Set-Content -Path "C:\signagepro\start-server.bat" -Value $batContent -Encoding ASCII
+
+schtasks /delete /tn "SignagePro Server" /f 2>$null | Out-Null
+schtasks /create /tn "SignagePro Server" /tr "C:\signagepro\start-server.bat" /sc onstart /ru SYSTEM /f 2>&1 | Out-Null
+Write-Ok "작업 스케줄러 등록 완료 (부팅 시 자동 시작)"
+
+# ── 9. Windows 방화벽 규칙 ───────────────────────────────────
+Write-Step "Windows 방화벽 포트 개방"
+
+$rules = @(
+    @{ Name="SignagePro API";      Port=3300  },
+    @{ Name="SignagePro TCP";      Port=10080 }
+)
+foreach ($r in $rules) {
+    netsh advfirewall firewall delete rule name=$r.Name 2>$null | Out-Null
+    netsh advfirewall firewall add rule name=$r.Name dir=in action=allow protocol=TCP localport=$r.Port | Out-Null
+    Write-Ok "$($r.Name) (TCP $($r.Port)) 개방"
+}
 
 # ── 완료 ─────────────────────────────────────────────────────
+$localIp = (Get-NetIPAddress -AddressFamily IPv4 |
+    Where-Object { $_.IPAddress -notmatch "^127\." -and $_.PrefixOrigin -eq "Dhcp" } |
+    Select-Object -First 1).IPAddress
+
 Write-Host ""
 Write-Host "============================================" -ForegroundColor Green
 Write-Host "  구축 완료!" -ForegroundColor Green
 Write-Host "============================================" -ForegroundColor Green
 Write-Host ""
-
-# 이 PC의 IP 주소 출력
-$ip = (Get-NetIPAddress -AddressFamily IPv4 |
-       Where-Object { $_.IPAddress -notmatch "^127\." -and $_.PrefixOrigin -eq "Dhcp" } |
-       Select-Object -First 1).IPAddress
-
-Write-Host "  대시보드  : http://localhost:5173" -ForegroundColor White
-Write-Host "  API 서버  : http://localhost:3000" -ForegroundColor White
-if ($ip) {
-    Write-Host "  이 PC IP  : $ip" -ForegroundColor White
-    Write-Host "  기기 서버 : http://${ip}:3000" -ForegroundColor Yellow
+Write-Host "  대시보드  : http://localhost:3300" -ForegroundColor White
+if ($localIp) {
+    Write-Host "  이 PC IP  : $localIp" -ForegroundColor White
+    Write-Host "  기기 서버 : http://${localIp}:3300" -ForegroundColor Yellow
 }
 Write-Host ""
-Write-Host "  Android 빌드가 필요하면:" -ForegroundColor Cyan
-Write-Host "    cd $DEST\android" -ForegroundColor White
-Write-Host "    .\gradlew.bat assembleDebug" -ForegroundColor White
+Write-Host "  PM2 명령어:" -ForegroundColor Cyan
+Write-Host "    pm2 status                    # 상태 확인" -ForegroundColor Gray
+Write-Host "    pm2 logs signagepro-server    # 서버 로그" -ForegroundColor Gray
+Write-Host "    pm2 restart signagepro-server # 서버 재시작" -ForegroundColor Gray
 Write-Host ""
+Write-Host "  ※ 공인 IP로 외부 접속 시 공유기 포트포워딩 필요:" -ForegroundColor Yellow
+Write-Host "    3300 (HTTP/대시보드), 10080 (기기 TCP) → $localIp" -ForegroundColor Yellow
+Write-Host ""
+Read-Host "엔터를 누르면 종료합니다"
