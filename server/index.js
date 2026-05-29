@@ -915,12 +915,18 @@ app.post('/api/devices/:id/reboot', async (req, res) => {
   const target = `${device.ip}:5555`;
   const adbPath = process.env.ADB_PATH || 'adb';
   try {
-    // 1. 앱에 검은 화면 준비 명령 → 렌더링 루프 중단 (일그러짐 방지)
+    // 1. 앱에 검은 화면 준비 명령 → 렌더링 루프 중단
     io.to(`device:${device.id}`).emit('prepare_reboot', { deviceId: device.id });
-    // 2. 300ms(검은 화면 페이드) + 500ms 여유 후 ADB 재부팅
-    await new Promise(r => setTimeout(r, 800));
+    await new Promise(r => setTimeout(r, 600));
+
     await adbExec(adbPath, ['connect', target], { timeout: 8000 });
-    execFile(adbPath, ['-s', target, 'shell', 'reboot'], { timeout: 10000, windowsHide: true }, () => {}); // 연결 끊김이 정상
+
+    // 2. 기기 쉘에서 한 번에: HDMI 끄기 → 2초 대기 → reboot
+    //    네트워크 왕복 없이 기기 내에서 타이밍 보장
+    //    (RK3229 U4X+CM: /sys/class/display/HDMI/enable = -rw-rw-rw-, su 불필요)
+    execFile(adbPath, ['-s', target, 'shell',
+      'echo 0 > /sys/class/display/HDMI/enable; sleep 3; reboot'
+    ], { timeout: 15000, windowsHide: true }, () => {});
     console.log(`[ADB] 재부팅 명령 전송: ${device.id} (${target})`);
     res.json({ ok: true });
   } catch (e) {
@@ -1302,6 +1308,14 @@ async function reloadCrons() {
 
 // 서버 시작 시 스케줄 로드
 reloadCrons();
+
+// 대시보드 정적 파일 서빙 (vite build 결과물)
+const dashboardDist = path.join(__dirname, '../dashboard/dist');
+if (fs.existsSync(dashboardDist)) {
+  app.use(express.static(dashboardDist));
+  app.get('*', (req, res) => res.sendFile(path.join(dashboardDist, 'index.html')));
+  console.log('[Express] 대시보드 정적 파일 서빙 활성화');
+}
 
 // 서버 실행
 const HTTP_PORT = process.env.PORT || 3300;
