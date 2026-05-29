@@ -1313,7 +1313,7 @@ reloadCrons();
 const dashboardDist = path.join(__dirname, '../dashboard/dist');
 if (fs.existsSync(dashboardDist)) {
   app.use(express.static(dashboardDist));
-  app.get('*', (req, res) => res.sendFile(path.join(dashboardDist, 'index.html')));
+  app.get('/{*splat}', (req, res) => res.sendFile(path.join(dashboardDist, 'index.html')));
   console.log('[Express] 대시보드 정적 파일 서빙 활성화');
 }
 
