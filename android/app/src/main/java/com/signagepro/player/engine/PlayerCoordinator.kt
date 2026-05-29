@@ -170,6 +170,8 @@ class PlayerCoordinator(
                 } else if (loopJob?.isActive != true) {
                     onStatus("재생 가능한 미디어가 없습니다.")
                 }
+                // 부팅 시 스케줄 즉시 평가 — 다음 분 체크를 기다리지 않고 OFF 구간이면 화면 끄기
+                scheduleManager.evaluateNow()
             } catch (e: Exception) {
                 Log.w(TAG, "서버 갱신 실패 — 캐시로 계속 재생", e)
             }
@@ -268,6 +270,8 @@ class PlayerCoordinator(
                 //  화면이 잠깐 갱신됐다가 다시 블랙으로 보이는 문제를 유발했음)
                 startLoop()
                 onStatus("")   // 재생 시작 → 상태 문구 제거
+                // 스케줄 변경/재연결 시 현재 시각 기준으로 화면 상태 즉시 반영
+                scheduleManager.evaluateNow()
             }
         }
     }

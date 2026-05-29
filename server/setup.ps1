@@ -109,8 +109,8 @@ Write-Step "서버 PM2 등록"
 # 기존 프로세스 중지
 pm2 delete signagepro 2>$null | Out-Null
 
-# 포트 3000 충돌 방지
-$portInUse = Get-NetTCPConnection -LocalPort 3000 -State Listen -ErrorAction SilentlyContinue
+# 포트 3300 충돌 방지
+$portInUse = Get-NetTCPConnection -LocalPort 3300 -State Listen -ErrorAction SilentlyContinue
 if ($portInUse) {
     $portInUse | Select-Object -ExpandProperty OwningProcess | ForEach-Object { Stop-Process -Id $_ -Force -ErrorAction SilentlyContinue }
     Start-Sleep -Seconds 1
@@ -146,8 +146,8 @@ Write-Host "==========================================" -ForegroundColor Green
 Write-Host "   설치 완료!" -ForegroundColor Green
 Write-Host "==========================================" -ForegroundColor Green
 Write-Host ""
-Write-Host "  서버 주소 : http://localhost:3000" -ForegroundColor White
-Write-Host "  대시보드  : http://localhost:3000  (브라우저에서 열기)" -ForegroundColor White
+Write-Host "  서버 주소 : http://localhost:3300" -ForegroundColor White
+Write-Host "  대시보드  : http://localhost:5173  (cd dashboard && npm run dev)" -ForegroundColor White
 Write-Host ""
 Write-Host "  PM2 명령어:" -ForegroundColor White
 Write-Host "    pm2 status              # 상태 확인" -ForegroundColor Gray

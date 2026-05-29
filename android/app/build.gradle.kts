@@ -14,8 +14,8 @@ android {
         applicationId = "com.signagepro.player"
         minSdk = 22                // Android 5.1.1 (RK3229 U4X+ CM)
         targetSdk = 34             // 동일 디바이스에서 targetSdk 36도 설치 확인됨
-        versionCode = 6
-        versionName = "0.4.2"
+        versionCode = 9
+        versionName = "0.4.5"
 
         // 빌드 날짜를 BuildConfig에 자동 삽입 (관제 화면 버전 표시용)
         val buildDate = SimpleDateFormat("yyyy-MM-dd HH:mm").format(Date())
