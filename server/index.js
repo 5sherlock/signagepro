@@ -516,6 +516,7 @@ app.get('/api/diagnostics/logs', (req, res) => {
   const logDir = path.join(os.homedir(), '.pm2', 'logs');
   const outLogPath = path.join(logDir, 'signagepro-out.log');
   const errorLogPath = path.join(logDir, 'signagepro-error.log');
+  const limit = parseInt(req.query.limit) || 300;
 
   const readLastLines = (filePath, maxLines = 100) => {
     try {
@@ -529,8 +530,8 @@ app.get('/api/diagnostics/logs', (req, res) => {
   };
 
   res.json({
-    outLog: readLastLines(outLogPath),
-    errorLog: readLastLines(errorLogPath)
+    outLog: readLastLines(outLogPath, limit),
+    errorLog: readLastLines(errorLogPath, limit)
   });
 });
 
