@@ -4,7 +4,16 @@
       "Bash(Get-ChildItem -Path \"c:\\\\WorkSpace\\\\signagepro\" -Recurse -Depth 2)",
       "Bash(Select-Object FullName)",
       "Bash(\"C:/Users/amore/AppData/Local/Android/Sdk/build-tools/35.0.0/aapt.exe\" dump *)",
-      "Bash(Select-String -Pattern \"package:|activity|launchable\")"
+      "Bash(Select-String -Pattern \"package:|activity|launchable\")",
+      "Bash(node -e ' *)",
+      "Bash(git checkout *)",
+      "Bash(git branch *)",
+      "Bash(git push *)",
+      "Bash(npm run *)",
+      "Bash(git commit -m 'deploy: dashboard dist 포함 — 서버 빌드 없이 바로 배포 가능 *)",
+      "Bash(git add *)",
+      "Bash(git commit -m 'fix\\(build\\): 원격 서버 자동 APK 업로드 + 경로 PSScriptRoot로 수정 *)",
+      "Bash(git commit -m 'feat\\(build\\): APK 파일명에 버전 포함 \\(signagepro-0.4.5.apk\\) — 대시보드 버전 배지 자동 표시 *)"
     ]
   }
 }
