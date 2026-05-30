@@ -162,7 +162,7 @@ const uploadApk = multer({
 });
 
 const httpServer = http.createServer(app);
-const io = new Server(httpServer, { cors: { origin: '*' }, pingInterval: 5000, pingTimeout: 5000 });
+const io = new Server(httpServer, { cors: { origin: '*' }, pingInterval: 10000, pingTimeout: 10000 });
 
 // --- Socket.io 웹 플레이어 연결 처리 ---
 io.on('connection', (socket) => {
