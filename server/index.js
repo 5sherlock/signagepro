@@ -637,15 +637,15 @@ const deployMetaPath = path.join(updateDir, 'deploy-meta.json');
 function loadDeployMeta() {
   try {
     if (fs.existsSync(deployMetaPath)) {
-      const data = JSON.parse(fs.readFileSync(deployMetaPath, 'utf8'));
-      return data.lastDeployedAt ? new Date(data.lastDeployedAt) : null;
+      return JSON.parse(fs.readFileSync(deployMetaPath, 'utf8'));
     }
   } catch (e) { console.warn('[OTA] deploy-meta.json 읽기 실패:', e.message); }
-  return null;
+  return {};
 }
-function saveDeployMeta(date) {
+function saveDeployMeta(data) {
   try {
-    fs.writeFileSync(deployMetaPath, JSON.stringify({ lastDeployedAt: date?.toISOString() ?? null }), 'utf8');
+    const current = loadDeployMeta();
+    fs.writeFileSync(deployMetaPath, JSON.stringify({ ...current, ...data }), 'utf8');
   } catch (e) { console.warn('[OTA] deploy-meta.json 저장 실패:', e.message); }
 }
 
@@ -673,9 +673,11 @@ app.post('/api/update/apk', (req, res) => {
   let writePromise = null; // 디스크 쓰기 완료 Promise
   let hasFile = false;
   let filterError = null;
+  let origName = '';
 
   bb.on('file', (fieldname, file, info) => {
     const { filename = '', mimeType = '' } = info;
+    origName = filename;
     const ok = filename.toLowerCase().endsWith('.apk')
       || mimeType === 'application/vnd.android.package-archive'
       || mimeType === 'application/octet-stream';
@@ -714,7 +716,10 @@ app.post('/api/update/apk', (req, res) => {
         }
         const stat = fs.statSync(destPath);
         console.log(`[OTA] APK 업로드 완료: ${(stat.size / 1024 / 1024).toFixed(1)} MB`);
-        if (!res.headersSent) res.json({ ok: true, size: stat.size, updatedAt: stat.mtime });
+        const verMatch = (origName || '').match(/(\d+\.\d+\.\d+(?:\.\d+)?)/);
+        const apkVersion = verMatch ? verMatch[1] : null;
+        if (apkVersion) saveDeployMeta({ apkVersion });
+        if (!res.headersSent) res.json({ ok: true, size: stat.size, updatedAt: stat.mtime, apkVersion });
       })
       .catch(err => {
         try { fs.unlinkSync(tmpPath); } catch (_) {}
@@ -732,7 +737,8 @@ app.post('/api/update/apk', (req, res) => {
   req.pipe(bb);
 });
 
-let lastDeployedAt = loadDeployMeta(); // 마지막 배포(OTA 푸시 or ADB 설치) 완료 시각 — 재시작 후에도 유지
+let deployMeta = loadDeployMeta();
+let lastDeployedAt = deployMeta.lastDeployedAt ? new Date(deployMeta.lastDeployedAt) : null;
 
 app.get('/api/update/status', (req, res) => {
   const apkPath = path.join(updateDir, 'app.apk');
@@ -740,7 +746,8 @@ app.get('/api/update/status', (req, res) => {
     return res.json({ available: false });
   }
   const stat = fs.statSync(apkPath);
-  res.json({ available: true, size: stat.size, updatedAt: stat.mtime, lastDeployedAt });
+  const meta = loadDeployMeta();
+  res.json({ available: true, size: stat.size, updatedAt: stat.mtime, lastDeployedAt, apkVersion: meta.apkVersion || null });
 });
 
 // APK 삭제 (배포 취소)
