@@ -6,7 +6,7 @@
 #   2. server/update/app.apk 로 자동 복사 → 대시보드에서 바로 OTA 배포 가능
 # ─────────────────────────────────────────────────────────────────────────────
 
-$ROOT    = "C:\Users\amore\WorkSpace\signagepro"
+$ROOT    = $PSScriptRoot
 $ANDROID = "$ROOT\android"
 $APK_SRC = "$ANDROID\app\build\outputs\apk\release\app-release.apk"
 $APK_DST = "$ROOT\server\update\app.apk"
@@ -49,4 +49,26 @@ Write-Host ""
 Write-Host "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" -ForegroundColor Cyan
 Write-Host "  대시보드 → 환경설정 → OTA 배포에서 바로 배포하세요" -ForegroundColor Cyan
 Write-Host "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" -ForegroundColor Cyan
+Write-Host ""
+
+# 원격 서버에 자동 업로드
+$SERVER_URL = "http://121.189.102.108:3300"
+Write-Host "🌐 원격 서버 업로드 중..." -ForegroundColor Cyan
+try {
+    $form = [System.Net.Http.MultipartFormDataContent]::new()
+    $fileStream = [System.IO.File]::OpenRead($APK_DST)
+    $fileContent = [System.Net.Http.StreamContent]::new($fileStream)
+    $fileContent.Headers.ContentType = [System.Net.Http.Headers.MediaTypeHeaderValue]::Parse("application/octet-stream")
+    $form.Add($fileContent, "apk", "app.apk")
+    $client = [System.Net.Http.HttpClient]::new()
+    $resp = $client.PostAsync("$SERVER_URL/api/update/apk", $form).GetAwaiter().GetResult()
+    $fileStream.Close()
+    if ($resp.IsSuccessStatusCode) {
+        Write-Host "✅ 원격 서버 업로드 완료 → OTA 배포 준비됨" -ForegroundColor Green
+    } else {
+        Write-Host "⚠️  업로드 실패 (HTTP $($resp.StatusCode)) — 대시보드에서 수동 업로드하세요" -ForegroundColor Yellow
+    }
+} catch {
+    Write-Host "⚠️  원격 서버 연결 실패 — 대시보드에서 수동 업로드하세요" -ForegroundColor Yellow
+}
 Write-Host ""
