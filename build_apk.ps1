@@ -11,6 +11,11 @@ $ANDROID = "$ROOT\android"
 $APK_SRC = "$ANDROID\app\build\outputs\apk\release\app-release.apk"
 $APK_DST = "$ROOT\server\update\app.apk"
 
+# build.gradle.kts에서 versionName 자동 추출
+$gradleFile = "$ANDROID\app\build.gradle.kts"
+$versionName = (Select-String -Path $gradleFile -Pattern 'versionName\s*=\s*"([^"]+)"').Matches[0].Groups[1].Value
+$APK_NAMED  = "$ROOT\server\update\signagepro-$versionName.apk"
+
 Set-Location $ANDROID
 
 Write-Host ""
@@ -42,9 +47,11 @@ $updateDir = Split-Path $APK_DST
 if (-not (Test-Path $updateDir)) { New-Item -ItemType Directory -Force $updateDir | Out-Null }
 
 Copy-Item $APK_SRC $APK_DST -Force
+Copy-Item $APK_SRC $APK_NAMED -Force
 Write-Host ""
 Write-Host "📦 서버 배포 폴더 복사 완료" -ForegroundColor Green
 Write-Host "   └ $APK_DST" -ForegroundColor DarkGray
+Write-Host "   └ $APK_NAMED (버전명 포함)" -ForegroundColor DarkGray
 Write-Host ""
 Write-Host "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" -ForegroundColor Cyan
 Write-Host "  대시보드 → 환경설정 → OTA 배포에서 바로 배포하세요" -ForegroundColor Cyan
@@ -59,7 +66,7 @@ try {
     $fileStream = [System.IO.File]::OpenRead($APK_DST)
     $fileContent = [System.Net.Http.StreamContent]::new($fileStream)
     $fileContent.Headers.ContentType = [System.Net.Http.Headers.MediaTypeHeaderValue]::Parse("application/octet-stream")
-    $form.Add($fileContent, "apk", "app.apk")
+    $form.Add($fileContent, "apk", "signagepro-$versionName.apk")
     $client = [System.Net.Http.HttpClient]::new()
     $resp = $client.PostAsync("$SERVER_URL/api/update/apk", $form).GetAwaiter().GetResult()
     $fileStream.Close()
