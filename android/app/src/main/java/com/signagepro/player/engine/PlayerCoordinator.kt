@@ -347,8 +347,10 @@ class PlayerCoordinator(
                 // 2순위: su pm install -r (rooted 기기)
                 val pmOk = withContext(Dispatchers.IO) { trySilentInstallPm(apkFile) }
                 if (pmOk) {
-                    Log.i(TAG, "pm install 자동 설치 완료")
+                    Log.i(TAG, "pm install 자동 설치 완료 -> 3초 후 자가 종료 및 재시작")
                     onStatus("업데이트 완료 — 재시작 중…")
+                    kotlinx.coroutines.delay(3000)
+                    android.os.Process.killProcess(android.os.Process.myPid())
                     return@launch
                 }
 
