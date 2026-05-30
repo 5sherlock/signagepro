@@ -651,6 +651,7 @@ function SettingsTab({ onUnauth, deviceOrder = {} }) {
   const adbControllerRef = useRef(null);
   const apkInputRef = useRef(null);
   const [localApkVersion, setLocalApkVersion] = useState(() => localStorage.getItem('signagepro_apk_version'));
+  const [serverApkVersion, setServerApkVersion] = useState(null);
 
   const check401 = (res) => { if (res.status === 401) { onUnauth?.(); throw new Error('401'); } return res; };
 
@@ -658,7 +659,7 @@ function SettingsTab({ onUnauth, deviceOrder = {} }) {
     apiFetch(`${SOCKET_URL}/api/update/status`)
       .then(check401)
       .then(r => r.json())
-      .then(setOtaStatus)
+      .then(data => { setOtaStatus(data); if (data?.apkVersion) setServerApkVersion(data.apkVersion); })
       .catch(e => { if (e.message !== '401') setOtaStatus({ available: false }); });
 
   const refreshDevices = () =>
@@ -984,7 +985,7 @@ function SettingsTab({ onUnauth, deviceOrder = {} }) {
           ) : otaStatus.available ? (
             <>
               <span style={{ color: '#10B981', fontSize: '0.85rem' }}>
-                ✅ APK 준비됨 — {(otaStatus.size / 1024 / 1024).toFixed(1)} MB{localApkVersion && <>&nbsp;<span style={{ background: 'rgba(16,185,129,0.15)', color: '#10b981', fontWeight: 700, padding: '1px 6px', borderRadius: '4px', fontSize: '0.8rem' }}>v{localApkVersion}</span></>}
+                ✅ APK 준비됨 — {(otaStatus.size / 1024 / 1024).toFixed(1)} MB{(serverApkVersion || localApkVersion) && <>&nbsp;<span style={{ background: 'rgba(16,185,129,0.15)', color: '#10b981', fontWeight: 700, padding: '1px 6px', borderRadius: '4px', fontSize: '0.8rem' }}>v{serverApkVersion || localApkVersion}</span></>}
                 {otaStatus.lastDeployedAt
                   ? <>&nbsp;<span style={{ color: '#64748b' }}>업로드 {new Date(otaStatus.updatedAt).toLocaleString('ko-KR')}</span>
                       &nbsp;·&nbsp;<span style={{ color: '#10b981', fontWeight: 600 }}>마지막 배포 {new Date(otaStatus.lastDeployedAt).toLocaleString('ko-KR')}</span></>
