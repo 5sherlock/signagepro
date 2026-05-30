@@ -1124,7 +1124,7 @@ async function handleTcpMessage(socket, msg) {
       ...cached,
       deviceTime: deviceTime ?? cached.deviceTime,
       slide: slide !== null ? slide : cached.slide,
-      dl: dl !== null ? dl : cached.dl,
+      dl: dl,
       vol: vol !== null ? vol : cached.vol,
       cpu: cpu ?? cached.cpu,
       mem: mem ?? cached.mem,

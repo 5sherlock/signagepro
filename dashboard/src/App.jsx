@@ -1460,8 +1460,8 @@ function App() {
                 deviceTime: newDev.deviceTime ?? oldDev.deviceTime,
                 vu: newDev.vu ?? oldDev.vu,
                 vol: newDev.vol ?? oldDev.vol,
-                dl: newDev.dl ?? oldDev.dl,
-                slide: newDev.slide ?? oldDev.slide,
+                dl: newDev.dl === null ? null : (newDev.dl ?? oldDev.dl),
+                slide: newDev.slide === null ? null : (newDev.slide ?? oldDev.slide),
                 screenOff: newDev.screenOff ?? oldDev.screenOff ?? false
               };
             }

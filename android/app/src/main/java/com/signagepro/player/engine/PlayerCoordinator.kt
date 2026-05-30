@@ -232,27 +232,30 @@ class PlayerCoordinator(
         val total = uniqueItems.size
         val activeHashes = mutableSetOf<String>()
 
-        uniqueItems.forEachIndexed { idx, item ->
-            item.media.hash?.let { activeHashes.add(it) }
+        try {
+            uniqueItems.forEachIndexed { idx, item ->
+                item.media.hash?.let { activeHashes.add(it) }
 
-            // 이미 캐시된 파일은 건너뜀
-            if (cache.cachedFile(item.media) != null) {
-                onStatus("확인 중… (${idx + 1}/$total)  ${item.media.filename}")
-                return@forEachIndexed
-            }
-
-            try {
-                cache.ensure(serverUrl, item.media) { pct ->
-                    dlStatus = "${idx + 1}/$total/$pct"
-                    onStatus("다운로드 (${idx + 1}/$total)  ${item.media.filename}\n$pct%")
+                // 이미 캐시된 파일은 건너뜀
+                if (cache.cachedFile(item.media) != null) {
+                    onStatus("확인 중… (${idx + 1}/$total)  ${item.media.filename}")
+                    return@forEachIndexed
                 }
-            } catch (e: Exception) {
-                Log.w(TAG, "미디어 다운로드 실패: ${item.media.filename}", e)
-                onStatus("다운로드 실패: ${item.media.filename}")
+
+                try {
+                    cache.ensure(serverUrl, item.media) { pct ->
+                        dlStatus = "${idx + 1}/$total/$pct"
+                        onStatus("다운로드 (${idx + 1}/$total)  ${item.media.filename}\n$pct%")
+                    }
+                } catch (e: Exception) {
+                    Log.w(TAG, "미디어 다운로드 실패: ${item.media.filename}", e)
+                    onStatus("다운로드 실패: ${item.media.filename}")
+                }
             }
+        } finally {
+            dlStatus = null
+            cache.trim(activeHashes)
         }
-        dlStatus = null
-        cache.trim(activeHashes)
     }
 
     private fun refreshPlaylist() {
@@ -326,7 +329,6 @@ class PlayerCoordinator(
                             }
                         }
                     }
-                    dlStatus = null
                     tmp.setReadable(true, false)
                     tmp
                 }
@@ -357,6 +359,8 @@ class PlayerCoordinator(
             } catch (e: Exception) {
                 Log.e(TAG, "업데이트 실패", e)
                 onStatus("업데이트 실패: ${e.message}")
+            } finally {
+                dlStatus = null
             }
         }
     }
