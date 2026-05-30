@@ -650,6 +650,7 @@ function SettingsTab({ onUnauth, deviceOrder = {} }) {
   const [dlProgress, setDlProgress] = useState({});
   const adbControllerRef = useRef(null);
   const apkInputRef = useRef(null);
+  const [localApkVersion, setLocalApkVersion] = useState(() => localStorage.getItem('signagepro_apk_version'));
 
   const check401 = (res) => { if (res.status === 401) { onUnauth?.(); throw new Error('401'); } return res; };
 
@@ -764,6 +765,9 @@ function SettingsTab({ onUnauth, deviceOrder = {} }) {
     if (!file) return;
     if (!file.name.endsWith('.apk')) { alert('APK 파일만 업로드 가능합니다.'); return; }
     if (!window.confirm(`${file.name} (${(file.size / 1024 / 1024).toFixed(1)} MB) 을 업로드할까요?`)) return;
+
+    const verMatch = file.name.match(/(\d+\.\d+\.\d+(?:\.\d+)?)/);
+    if (verMatch) { localStorage.setItem('signagepro_apk_version', verMatch[1]); setLocalApkVersion(verMatch[1]); }
 
     setUploading(true);
     setUploadProgress(0);
@@ -980,7 +984,7 @@ function SettingsTab({ onUnauth, deviceOrder = {} }) {
           ) : otaStatus.available ? (
             <>
               <span style={{ color: '#10B981', fontSize: '0.85rem' }}>
-                ✅ APK 준비됨 — {(otaStatus.size / 1024 / 1024).toFixed(1)} MB
+                ✅ APK 준비됨 — {(otaStatus.size / 1024 / 1024).toFixed(1)} MB{localApkVersion && <>&nbsp;<span style={{ background: 'rgba(16,185,129,0.15)', color: '#10b981', fontWeight: 700, padding: '1px 6px', borderRadius: '4px', fontSize: '0.8rem' }}>v{localApkVersion}</span></>}
                 {otaStatus.lastDeployedAt
                   ? <>&nbsp;<span style={{ color: '#64748b' }}>업로드 {new Date(otaStatus.updatedAt).toLocaleString('ko-KR')}</span>
                       &nbsp;·&nbsp;<span style={{ color: '#10b981', fontWeight: 600 }}>마지막 배포 {new Date(otaStatus.lastDeployedAt).toLocaleString('ko-KR')}</span></>
@@ -993,7 +997,7 @@ function SettingsTab({ onUnauth, deviceOrder = {} }) {
                   if (!window.confirm('배포용 APK를 삭제할까요?')) return;
                   apiFetch(`${SOCKET_URL}/api/update/apk`, { method: 'DELETE' })
                     .then(r => r.json())
-                    .then(d => { if (d.ok) setOtaStatus({ available: false }); else alert(d.error); })
+                    .then(d => { if (d.ok) { setOtaStatus({ available: false }); localStorage.removeItem('signagepro_apk_version'); setLocalApkVersion(null); } else alert(d.error); })
                     .catch(e => alert('오류: ' + e.message));
                 }}
               >
