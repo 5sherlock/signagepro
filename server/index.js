@@ -498,6 +498,20 @@ app.get('/api/time', (req, res) => {
   res.json({ epochMs: Date.now() });
 });
 
+app.get('/api/diagnostics/sockets', (req, res) => {
+  const sockets = Array.from(io.sockets.sockets.values());
+  const connectedDevices = sockets.map(s => ({
+    id: s.id,
+    deviceId: s.deviceId || null,
+    address: s.handshake.address,
+    rooms: Array.from(s.rooms)
+  }));
+  res.json({
+    totalConnected: connectedDevices.length,
+    devices: connectedDevices
+  });
+});
+
 app.get('/api/media', async (req, res) => {
   const { storeId } = req.query;
   const where = storeId ? { storeId } : {};
