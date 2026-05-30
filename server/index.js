@@ -162,7 +162,10 @@ const uploadApk = multer({
 });
 
 const httpServer = http.createServer(app);
-const io = new Server(httpServer, { cors: { origin: '*' } });
+const io = new Server(httpServer, {
+  cors: { origin: '*' },
+  allowEIO3: true
+});
 
 // --- Socket.io 웹 플레이어 연결 처리 ---
 io.on('connection', (socket) => {
