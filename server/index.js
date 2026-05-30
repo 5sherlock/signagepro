@@ -512,6 +512,28 @@ app.get('/api/diagnostics/sockets', (req, res) => {
   });
 });
 
+app.get('/api/diagnostics/logs', (req, res) => {
+  const logDir = path.join(os.homedir(), '.pm2', 'logs');
+  const outLogPath = path.join(logDir, 'signagepro-out.log');
+  const errorLogPath = path.join(logDir, 'signagepro-error.log');
+
+  const readLastLines = (filePath, maxLines = 100) => {
+    try {
+      if (!fs.existsSync(filePath)) return `[Log file does not exist: ${filePath}]`;
+      const content = fs.readFileSync(filePath, 'utf8');
+      const lines = content.split('\n');
+      return lines.slice(-maxLines).join('\n');
+    } catch (e) {
+      return `[Error reading log ${filePath}: ${e.message}]`;
+    }
+  };
+
+  res.json({
+    outLog: readLastLines(outLogPath),
+    errorLog: readLastLines(errorLogPath)
+  });
+});
+
 app.get('/api/media', async (req, res) => {
   const { storeId } = req.query;
   const where = storeId ? { storeId } : {};
