@@ -184,12 +184,35 @@ const io = new Server(httpServer, {
 // --- Socket.io 웹 플레이어 연결 처리 ---
 io.on('connection', (socket) => {
   // Android ControlChannel이 연결 직후 자신의 deviceId를 등록
-  socket.on('register_device', (data) => {
+  socket.on('register_device', async (data) => {
     const deviceId = typeof data === 'object' ? data?.deviceId : String(data);
     if (!deviceId) return;
     socket.deviceId = deviceId;
     socket.join(`device:${deviceId}`);
     console.log(`[Socket.io] 기기 등록: ${deviceId}`);
+
+    // 재연결 시 OTA 버전 자동 체크 — 구버전이면 즉시 update_apk 재발송
+    // (배포 중 오프라인이었거나 설치 실패한 기기 자동 복구)
+    try {
+      const apkPath = path.join(updateDir, 'app.apk');
+      const meta = loadDeployMeta();
+      const targetVersion = meta.apkVersion;
+      if (targetVersion && fs.existsSync(apkPath)) {
+        const device = await prisma.device.findUnique({ where: { id: deviceId } });
+        if (device) {
+          const raw = device.appVersion || '';
+          const currentVer = raw.includes(' (') ? raw.slice(0, raw.indexOf(' (')) : raw;
+          if (currentVer !== targetVersion) {
+            console.log(`[OTA-Reconnect] ${deviceId}: 구버전 감지 (${currentVer || 'unknown'} → v${targetVersion}) — update_apk 자동 발송`);
+            socket.emit('update_apk', { url: '/update/apk', deviceId });
+          } else {
+            console.log(`[OTA-Reconnect] ${deviceId}: 최신 버전 확인 (v${currentVer})`);
+          }
+        }
+      }
+    } catch (e) {
+      console.warn(`[OTA-Reconnect] ${deviceId} 버전 체크 실패: ${e.message}`);
+    }
   });
 
   socket.on('web_player_heartbeat', async (data) => {
@@ -526,6 +549,57 @@ app.get('/api/diagnostics/sockets', (req, res) => {
   });
 });
 
+// OTA 배포 현황 상세 진단 — 기기별 현재 버전 vs 목표 버전 비교
+app.get('/api/diagnostics/ota', async (req, res) => {
+  const apkPath = path.join(updateDir, 'app.apk');
+  const meta = loadDeployMeta();
+  const targetVersion = meta.apkVersion || null;
+  const threshold = new Date(Date.now() - HEARTBEAT_TIMEOUT_MS);
+
+  try {
+    const devices = await prisma.device.findMany({ orderBy: { name: 'asc' } });
+    const deviceStatus = await Promise.all(devices.map(async dev => {
+      const raw = dev.appVersion || '';
+      const currentVer = raw.includes(' (') ? raw.slice(0, raw.indexOf(' (')) : raw;
+      const isOnline = !!(dev.lastSeen && new Date(dev.lastSeen) >= threshold);
+      const room = `device:${dev.id}`;
+      const socketsInRoom = await io.in(room).allSockets();
+      const socketConnected = socketsInRoom.size > 0;
+      const needsUpdate = !!(targetVersion && currentVer && currentVer !== targetVersion);
+      return {
+        id: dev.id,
+        name: dev.name,
+        appVersion: raw || null,
+        currentVer: currentVer || null,
+        targetVersion,
+        needsUpdate,
+        isOnline,
+        socketConnected,
+        socketCount: socketsInRoom.size,
+        ip: dev.ip || null,
+        lastSeen: dev.lastSeen || null,
+      };
+    }));
+
+    const summary = {
+      total: devices.length,
+      upToDate: deviceStatus.filter(d => d.currentVer && d.currentVer === targetVersion).length,
+      outdated: deviceStatus.filter(d => d.needsUpdate).length,
+      unknown: deviceStatus.filter(d => !d.currentVer).length,
+    };
+
+    res.json({
+      apkAvailable: fs.existsSync(apkPath),
+      targetVersion,
+      lastDeployedAt: lastDeployedAt || null,
+      summary,
+      devices: deviceStatus,
+    });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 app.get('/api/diagnostics/logs', (req, res) => {
   const logDir = path.join(os.homedir(), '.pm2', 'logs');
   const outLogPath = path.join(logDir, 'signagepro-out.log');
@@ -857,10 +931,16 @@ app.post('/api/update/push', (req, res) => {
         const currentVer = parenIdx >= 0 ? currentVerStr.slice(0, parenIdx) : currentVerStr;
 
         if (currentVer !== targetVersion) {
-          console.log(`[Self-Healing] 기기 ${dev.id}가 여전히 구버전(${currentVer}) 상태입니다. 소켓 기반 강제 앱 재시작을 발송합니다.`);
+          console.log(`[Self-Healing] 기기 ${dev.id}가 여전히 구버전(${currentVer || 'unknown'}) 상태. update_apk 재발송 + restart_app 폴백 예약`);
           const room = `device:${dev.id}`;
-          io.to(room).emit('restart_app', { deviceId: dev.id });
-          console.log(`[Self-Healing] 기기 ${dev.id}에 대한 소켓 자가 복구 앱 재시작 명령 전송 완료!`);
+          // 1순위: update_apk 재발송 — 신버전 앱은 이것으로 OTA 재시도
+          io.to(room).emit('update_apk', { url: '/update/apk', deviceId: dev.id });
+          console.log(`[Self-Healing] ${dev.id}: update_apk 재발송 완료`);
+          // 2순위: 3초 후 restart_app 폴백 — 구버전 앱(update_apk 미지원) 복구용
+          setTimeout(() => {
+            io.to(room).emit('restart_app', { deviceId: dev.id });
+            console.log(`[Self-Healing] ${dev.id}: restart_app 폴백 전송 완료`);
+          }, 3000);
         } else {
           console.log(`[Self-Healing] 기기 ${dev.id}는 정상적으로 최신 버전(v${targetVersion})이 갱신되었습니다.`);
         }
@@ -1002,25 +1082,43 @@ app.post('/api/update/adb-cancel', (req, res) => {
   res.json({ ok: true });
 });
 
-// 기기 원격 재부팅 (소켓 기반)
+// 기기 원격 재부팅 (소켓 기반 + ADB 폴백)
 app.post('/api/devices/:id/reboot', async (req, res) => {
   const device = await prisma.device.findUnique({ where: { id: req.params.id } });
   if (!device) return res.status(404).json({ error: '기기를 찾을 수 없습니다.' });
 
-  // 오프라인 기기는 소켓 연결 불가 — 미리 차단
-  if (device.status !== 'online') {
+  // lastSeen 기반으로 온라인 여부 재계산 (DB status는 sweep 타이밍에 따라 stale할 수 있음)
+  const isOnline = device.lastSeen && (Date.now() - new Date(device.lastSeen).getTime()) <= HEARTBEAT_TIMEOUT_MS;
+  if (!isOnline) {
     return res.status(400).json({ error: '기기가 오프라인입니다.\n전원과 네트워크 연결을 확인해주세요.' });
   }
 
   const room = `device:${device.id}`;
   try {
-    // 1. 앱에 검은 화면 준비 명령 → 렌더링 루프 중단 (Socket.io)
-    io.to(room).emit('prepare_reboot', { deviceId: device.id });
-    await new Promise(r => setTimeout(r, 600));
+    const socketsInRoom = await io.in(room).allSockets();
 
-    // 2. 소켓을 통해 기기 자체 물리 재부팅 수행 명령 송신! (ADB 완전 우회)
-    io.to(room).emit('reboot_device', { deviceId: device.id });
-    console.log(`[Reboot] 소켓 기반 원격 재부팅 명령 전송: ${device.id}`);
+    if (socketsInRoom.size > 0) {
+      // Socket.io 룸 있음 → 소켓 기반 재부팅 (v0.4.6+)
+      io.to(room).emit('prepare_reboot', { deviceId: device.id });
+      await new Promise(r => setTimeout(r, 600));
+      io.to(room).emit('reboot_device', { deviceId: device.id });
+      console.log(`[Reboot] Socket.io 재부팅 명령 전송: ${device.id} (소켓 ${socketsInRoom.size}개)`);
+    } else if (device.ip) {
+      // Socket.io 룸 비어있음 → ADB 직접 재부팅 폴백 (v0.4.5 이하 또는 소켓 미연결 기기)
+      const target = `${device.ip}:5555`;
+      console.log(`[Reboot] Socket.io 룸 없음 → ADB 폴백 재부팅: ${device.id} (${target})`);
+      try {
+        await adbExec(GLOBAL_ADB_PATH, ['connect', target], { timeout: 8000 });
+        await adbExec(GLOBAL_ADB_PATH, ['-s', target, 'shell', 'reboot'], { timeout: 10000 });
+        console.log(`[Reboot] ADB 재부팅 명령 전송 완료: ${device.id}`);
+      } catch (adbErr) {
+        console.warn(`[Reboot] ADB 폴백 실패 (${device.id}): ${adbErr.message}`);
+        return res.status(500).json({ error: `소켓 미연결 + ADB 재부팅 실패: ${adbErr.message}` });
+      }
+    } else {
+      return res.status(400).json({ error: '소켓 미연결 상태이며 기기 IP도 없습니다.' });
+    }
+
     res.json({ ok: true });
   } catch (e) {
     res.status(500).json({ error: e.message });
@@ -1066,13 +1164,35 @@ app.post('/api/devices/:id/restart-app', async (req, res) => {
     const device = await prisma.device.findUnique({ where: { id: req.params.id } });
     if (!device) return res.status(404).json({ error: '기기를 찾을 수 없습니다.' });
 
-    if (device.status !== 'online') {
+    const isOnline = device.lastSeen && (Date.now() - new Date(device.lastSeen).getTime()) <= HEARTBEAT_TIMEOUT_MS;
+    if (!isOnline) {
       return res.status(400).json({ error: '기기가 오프라인입니다.' });
     }
 
     const room = `device:${device.id}`;
-    io.to(room).emit('restart_app', { deviceId: device.id });
-    console.log(`[Restart] 소켓 기반 앱 자체 재시작 명령 전송: ${device.id}`);
+    const socketsInRoom = await io.in(room).allSockets();
+
+    if (socketsInRoom.size > 0) {
+      io.to(room).emit('restart_app', { deviceId: device.id });
+      console.log(`[Restart] Socket.io 앱 재시작 명령 전송: ${device.id} (소켓 ${socketsInRoom.size}개)`);
+    } else if (device.ip) {
+      // ADB 폴백 — 앱 강제 재시작 (v0.4.5 이하 또는 소켓 미연결)
+      const target = `${device.ip}:5555`;
+      console.log(`[Restart] Socket.io 룸 없음 → ADB 폴백 앱 재시작: ${device.id} (${target})`);
+      try {
+        await adbExec(GLOBAL_ADB_PATH, ['connect', target], { timeout: 8000 });
+        await adbExec(GLOBAL_ADB_PATH, ['-s', target, 'shell', 'am', 'force-stop', 'com.signagepro.player'], { timeout: 8000 });
+        await new Promise(r => setTimeout(r, 1000));
+        await adbExec(GLOBAL_ADB_PATH, ['-s', target, 'shell', 'am', 'start', '-n', 'com.signagepro.player/.MainActivity'], { timeout: 8000 });
+        console.log(`[Restart] ADB 앱 재시작 완료: ${device.id}`);
+      } catch (adbErr) {
+        console.warn(`[Restart] ADB 폴백 실패 (${device.id}): ${adbErr.message}`);
+        return res.status(500).json({ error: `소켓 미연결 + ADB 재시작 실패: ${adbErr.message}` });
+      }
+    } else {
+      return res.status(400).json({ error: '소켓 미연결 상태이며 기기 IP도 없습니다.' });
+    }
+
     res.json({ ok: true });
   } catch (e) {
     res.status(500).json({ error: e.message });
@@ -1455,3 +1575,38 @@ setInterval(async () => {
     console.error('[Sweep] 에러:', err);
   }
 }, 10000);
+
+// OTA Watchdog — 5분마다 온라인 기기 중 구버전 기기에 update_apk 재발송
+setInterval(async () => {
+  const apkPath = path.join(updateDir, 'app.apk');
+  if (!fs.existsSync(apkPath)) return;
+  const meta = loadDeployMeta();
+  const targetVersion = meta.apkVersion;
+  if (!targetVersion) return;
+
+  try {
+    const threshold = new Date(Date.now() - HEARTBEAT_TIMEOUT_MS);
+    const onlineDevices = await prisma.device.findMany({
+      where: { lastSeen: { gte: threshold } }
+    });
+    let outdatedCount = 0;
+    for (const dev of onlineDevices) {
+      const raw = dev.appVersion || '';
+      const currentVer = raw.includes(' (') ? raw.slice(0, raw.indexOf(' (')) : raw;
+      if (!currentVer || currentVer === targetVersion) continue;
+
+      const room = `device:${dev.id}`;
+      const socketsInRoom = await io.in(room).allSockets();
+      if (socketsInRoom.size > 0) {
+        io.to(room).emit('update_apk', { url: '/update/apk', deviceId: dev.id });
+        console.log(`[OTA-Watchdog] ${dev.id}: 구버전 (${currentVer}) → v${targetVersion} update_apk 재발송 (소켓 ${socketsInRoom.size}개 연결)`);
+        outdatedCount++;
+      }
+    }
+    if (outdatedCount > 0) {
+      console.log(`[OTA-Watchdog] 총 ${outdatedCount}대 구버전 기기에 OTA 재발송 완료`);
+    }
+  } catch (e) {
+    console.warn('[OTA-Watchdog] 에러:', e.message);
+  }
+}, 5 * 60 * 1000);
