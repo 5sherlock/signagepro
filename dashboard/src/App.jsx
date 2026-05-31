@@ -1420,6 +1420,7 @@ function App() {
   const preMuteVol = useRef({});
   const [customGrid, setCustomGrid] = useState({ rows: 2, cols: 3 });
   const [apkAvailable, setApkAvailable] = useState(false);
+  const [serverApkVersion, setServerApkVersion] = useState(null);
   const [adbRunning, setAdbRunning] = useState(false);
   const [serverOnline, setServerOnline] = useState(null); // null=확인중, true=연결, false=끊김
   const [allSchedules, setAllSchedules] = useState([]);
@@ -1500,8 +1501,14 @@ function App() {
     const checkApk = () =>
       apiFetch(`${SOCKET_URL}/api/update/status`)
         .then(r => r.json())
-        .then(d => setApkAvailable(!!d.available))
-        .catch(() => setApkAvailable(false));
+        .then(d => {
+          setApkAvailable(!!d.available);
+          setServerApkVersion(d.apkVersion || null);
+        })
+        .catch(() => {
+          setApkAvailable(false);
+          setServerApkVersion(null);
+        });
 
     checkServer();
     checkApk();
@@ -1681,10 +1688,10 @@ function App() {
       {/* Main Content */}
       <main className="main-content">
         {activeTab === 'dashboard' && (() => {
-          // 가장 많은 기기가 쓰는 버전을 기준 버전으로 삼음
+          // 배포 준비된 APK 버전을 기준 버전으로 삼고, 없으면 가장 많은 기기가 쓰는 버전을 기준 버전으로 삼음
           const versionCounts = {};
           devices.forEach(d => { if (d.appVersion) versionCounts[d.appVersion] = (versionCounts[d.appVersion] || 0) + 1; });
-          const standardVersion = Object.keys(versionCounts).sort((a, b) => versionCounts[b] - versionCounts[a])[0] || null;
+          const standardVersion = serverApkVersion || Object.keys(versionCounts).sort((a, b) => versionCounts[b] - versionCounts[a])[0] || null;
           return (
           <>
             <header className="header">

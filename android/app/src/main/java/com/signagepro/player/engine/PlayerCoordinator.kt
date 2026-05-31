@@ -412,7 +412,7 @@ class PlayerCoordinator(
         // 1순위: root(su) 경유 — 설치 확인 다이얼로그 없이 자동 설치
         try {
             val proc = Runtime.getRuntime().exec(arrayOf(
-                "su", "-c", "pm install -r \"${apkFile.absolutePath}\""
+                "su", "-c", "cp \"${apkFile.absolutePath}\" /data/local/tmp/update.apk && chmod 777 /data/local/tmp/update.apk && pm install -r /data/local/tmp/update.apk && rm /data/local/tmp/update.apk && sleep 2 && am start -n com.signagepro.player/.MainActivity"
             ))
             val exitCode = proc.waitFor()
             val output = proc.inputStream.bufferedReader().readText()
@@ -425,8 +425,9 @@ class PlayerCoordinator(
 
         // 2순위: 일반 pm install (root 없는 일부 ROM 허용)
         return try {
-            val proc = Runtime.getRuntime()
-                .exec(arrayOf("pm", "install", "-r", apkFile.absolutePath))
+            val proc = Runtime.getRuntime().exec(arrayOf(
+                "sh", "-c", "pm install -r \"${apkFile.absolutePath}\" && sleep 2 && am start -n com.signagepro.player/.MainActivity"
+            ))
             val exitCode = proc.waitFor()
             val output = proc.inputStream.bufferedReader().readText()
             val error  = proc.errorStream.bufferedReader().readText()

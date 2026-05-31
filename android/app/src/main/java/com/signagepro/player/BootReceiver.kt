@@ -25,10 +25,11 @@ class BootReceiver : BroadcastReceiver() {
         val action = intent.action ?: return
         if (action != Intent.ACTION_BOOT_COMPLETED &&
             action != "android.intent.action.QUICKBOOT_POWERON" &&
-            action != "android.intent.action.REBOOT"
+            action != "android.intent.action.REBOOT" &&
+            action != Intent.ACTION_MY_PACKAGE_REPLACED
         ) return
 
-        Log.i(TAG, "부팅 완료 감지 (action=$action) — MainActivity + FG 서비스 시작")
+        Log.i(TAG, "부팅 또는 패키지 변경 감지 (action=$action) — MainActivity + FG 서비스 시작")
 
         enableAdbTcp()
 
