@@ -30,7 +30,9 @@ class ControlChannel(
     /** 앱 자체 재시작 명령 */
     private val onRestartApp: () -> Unit = {},
     /** 물리 기기 자체 재부팅 명령 */
-    private val onRebootDevice: () -> Unit = {}
+    private val onRebootDevice: () -> Unit = {},
+    /** 현재 설치된 앱 버전 — update_apk 수신 시 동일 버전이면 스킵 */
+    private val selfAppVersion: String = ""
 ) {
     private var socket: Socket? = null
     @Volatile private var wasConnected = false
@@ -83,9 +85,17 @@ class ControlChannel(
                 // targetDeviceId 없으면 전체 배포, 있으면 해당 기기만
                 val target = data.optString("deviceId", "")
                 if (target.isBlank() || target == selfDeviceId) {
+                    // 서버가 version 필드를 포함하고, 이미 해당 버전이 설치돼 있으면 스킵
+                    val targetVersion = data.optString("version", "")
+                    if (targetVersion.isNotBlank() && selfAppVersion.isNotBlank()) {
+                        if (selfAppVersion == targetVersion) {
+                            Log.i(TAG, "이미 최신 버전 ($selfAppVersion) — OTA 스킵")
+                            return@on
+                        }
+                    }
                     val apkUrl = data.optString("url", "")
                     if (apkUrl.isNotBlank()) {
-                        Log.i(TAG, "OTA 업데이트 수신: $apkUrl")
+                        Log.i(TAG, "OTA 업데이트 수신: $apkUrl (현재: $selfAppVersion → 목표: $targetVersion)")
                         onUpdateApk(apkUrl)
                     }
                 }

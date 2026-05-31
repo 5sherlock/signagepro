@@ -299,9 +299,14 @@ class PlayerCoordinator(
                 Log.i(TAG, "APK 다운로드: $fullUrl")
 
                 val apkFile = withContext(Dispatchers.IO) {
-                    // 외부 저장소 사용 — 패키지 인스톨러가 접근 가능한 위치
-                    val dir = context.getExternalCacheDir() ?: context.cacheDir
-                    val tmp = File(dir, "update.apk")
+                    // /sdcard/Android/data/<pkg>/cache/ 는 FUSE 때문에 pm(shell)이 traverse 불가.
+                    // 공개 Downloads 폴더는 shell·su 모두 접근 가능 → pm install -r 성공
+                    val dir = android.os.Environment.getExternalStoragePublicDirectory(
+                        android.os.Environment.DIRECTORY_DOWNLOADS
+                    ).also { it.mkdirs() }.takeIf { it.canWrite() }
+                        ?: context.getExternalCacheDir()
+                        ?: context.cacheDir
+                    val tmp = File(dir, "signagepro_update.apk")
                     val request = Request.Builder().url(fullUrl).build()
                     ApiClient.http().newCall(request).execute().use { resp ->
                         if (!resp.isSuccessful) throw Exception("HTTP ${resp.code}")
@@ -339,18 +344,20 @@ class PlayerCoordinator(
                 // 1순위: Device Owner PackageInstaller — 확인창 없이 자동 설치
                 val pkgOk = withContext(Dispatchers.IO) { installViaPackageInstaller(apkFile) }
                 if (pkgOk) {
-                    Log.i(TAG, "PackageInstaller(Device Owner) 자동 설치 완료")
+                    Log.i(TAG, "PackageInstaller(Device Owner) 자동 설치 완료 → performSelfRestart")
                     onStatus("업데이트 완료 — 재시작 중…")
+                    kotlinx.coroutines.delay(2000)
+                    performSelfRestart() // AlarmManager 재시작 예약 + killProcess
                     return@launch
                 }
 
                 // 2순위: su pm install -r (rooted 기기)
                 val pmOk = withContext(Dispatchers.IO) { trySilentInstallPm(apkFile) }
                 if (pmOk) {
-                    Log.i(TAG, "pm install 자동 설치 완료 -> 3초 후 자가 종료 및 재시작")
+                    Log.i(TAG, "pm install 자동 설치 완료 → performSelfRestart (AlarmManager 재시작 보장)")
                     onStatus("업데이트 완료 — 재시작 중…")
                     kotlinx.coroutines.delay(3000)
-                    android.os.Process.killProcess(android.os.Process.myPid())
+                    performSelfRestart() // killProcess 단독 대신 AlarmManager 예약 후 kill → 재시작 보장
                     return@launch
                 }
 
@@ -409,34 +416,38 @@ class PlayerCoordinator(
      * exitCode==0 && "Success" 포함 시 true.
      */
     private fun trySilentInstallPm(apkFile: File): Boolean {
-        // 1순위: root(su) 경유 — 설치 확인 다이얼로그 없이 자동 설치
+        val path = apkFile.absolutePath
+
+        // 1순위: shell pm install -r (su 불필요 — 공개 경로면 shell user도 접근 가능)
+        // /sdcard/Download/ 에 저장된 APK는 pm이 직접 읽을 수 있음
         try {
             val proc = Runtime.getRuntime().exec(arrayOf(
-                "su", "-c", "cp \"${apkFile.absolutePath}\" /data/local/tmp/update.apk && chmod 777 /data/local/tmp/update.apk && pm install -r /data/local/tmp/update.apk && rm /data/local/tmp/update.apk && sleep 2 && am start -n com.signagepro.player/.MainActivity"
+                "sh", "-c", "pm install -r \"$path\""
             ))
             val exitCode = proc.waitFor()
             val output = proc.inputStream.bufferedReader().readText()
             val error  = proc.errorStream.bufferedReader().readText()
-            Log.i(TAG, "su pm install: exitCode=$exitCode out=$output err=$error")
+            Log.i(TAG, "pm install(sh): exit=$exitCode out='$output' err='$error'")
             if (exitCode == 0 && output.contains("Success", ignoreCase = true)) return true
         } catch (e: Exception) {
-            Log.w(TAG, "su pm install 실행 불가: ${e.message}")
+            Log.w(TAG, "pm install(sh) 실패: ${e.message}")
         }
 
-        // 2순위: 일반 pm install (root 없는 일부 ROM 허용)
-        return try {
+        // 2순위: su root 경유 (1순위가 실패한 경우)
+        try {
             val proc = Runtime.getRuntime().exec(arrayOf(
-                "sh", "-c", "pm install -r \"${apkFile.absolutePath}\" && sleep 2 && am start -n com.signagepro.player/.MainActivity"
+                "su", "-c", "pm install -r \"$path\""
             ))
             val exitCode = proc.waitFor()
             val output = proc.inputStream.bufferedReader().readText()
             val error  = proc.errorStream.bufferedReader().readText()
-            Log.i(TAG, "pm install: exitCode=$exitCode out=$output err=$error")
-            exitCode == 0 && output.contains("Success", ignoreCase = true)
+            Log.i(TAG, "pm install(su): exit=$exitCode out='$output' err='$error'")
+            if (exitCode == 0 && output.contains("Success", ignoreCase = true)) return true
         } catch (e: Exception) {
-            Log.w(TAG, "pm install 실행 불가: ${e.message}")
-            false
+            Log.w(TAG, "pm install(su) 실패: ${e.message}")
         }
+
+        return false
     }
 
     /** ACTION_VIEW로 시스템 설치 다이얼로그 호출 (Android 5.1.1 / API 22 호환). */
@@ -524,9 +535,13 @@ class PlayerCoordinator(
 
     private fun startControlChannel(serverUrl: String, deviceId: String) {
         control?.stop()
+        val currentVersion = runCatching {
+            context.packageManager.getPackageInfo(context.packageName, 0).versionName ?: ""
+        }.getOrDefault("")
         control = ControlChannel(
             serverUrl = serverUrl,
             selfDeviceId = deviceId,
+            selfAppVersion = currentVersion,
             onPlaylistUpdated = { refreshPlaylist() },
             onAssignmentChanged = { refreshPlaylist() },
             onUpdateApk = { apkUrl -> downloadAndInstallApk(apkUrl) },

@@ -900,7 +900,9 @@ app.post('/api/update/push', (req, res) => {
     return res.status(404).json({ error: 'server/update/app.apk 가 없습니다.' });
   }
   const { deviceId } = req.body;
-  const payload = { url: '/update/apk', deviceId: deviceId || '' };
+  const meta = loadDeployMeta();
+  // version 필드 포함 — 기기가 이미 목표 버전이면 OTA 스킵하도록 함
+  const payload = { url: '/update/apk', deviceId: deviceId || '', version: meta.apkVersion || '' };
   io.emit('update_apk', payload);
   lastDeployedAt = new Date();
   saveDeployMeta(lastDeployedAt);
@@ -961,7 +963,9 @@ app.post('/api/update/adb-install', async (req, res) => {
     return res.status(404).json({ error: 'server/update/app.apk 가 없습니다.' });
   }
 
-  const { deviceId, deviceIds } = req.body;
+  // manualIps: { "dev-101": "192.168.0.76", "dev-102": "192.168.0.73" }
+  // DB의 공인 IP 대신 직접 지정한 내부 IP를 사용 (같은 LAN인 경우)
+  const { deviceId, deviceIds, manualIps } = req.body;
   const adbPath = GLOBAL_ADB_PATH;
 
   // deviceIds 배열 > deviceId 단일 > 전체(ip 있는 기기)
@@ -1007,10 +1011,13 @@ app.post('/api/update/adb-install', async (req, res) => {
       results.push({ deviceId: device.id, ip: device.ip, success: false, output: '취소됨' });
       continue;
     }
-    const target = `${device.ip}:5555`;
+    // manualIps로 내부 IP 직접 지정 가능 (같은 LAN이면 공인 IP 대신 사용)
+    const resolvedIp = (manualIps && manualIps[device.id]) || device.ip;
+    const target = resolvedIp.includes(':') ? resolvedIp : `${resolvedIp}:5555`;
     try {
       // 1. adb connect (10%)
-      emitProgress(device.id, 'connecting', 10, 'ADB 연결 중…');
+      emitProgress(device.id, 'connecting', 10, `ADB 연결 중… (${target})`);
+      console.log(`[ADB] install 대상: ${device.id} → ${target}`);
       const { stdout: cs } = await trackExec(adbPath, ['connect', target], { timeout: 8000 });
       console.log(`[ADB] connect ${target}: ${cs?.trim()}`);
 

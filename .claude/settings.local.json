@@ -13,7 +13,24 @@
       "Bash(git commit -m 'deploy: dashboard dist 포함 — 서버 빌드 없이 바로 배포 가능 *)",
       "Bash(git add *)",
       "Bash(git commit -m 'fix\\(build\\): 원격 서버 자동 APK 업로드 + 경로 PSScriptRoot로 수정 *)",
-      "Bash(git commit -m 'feat\\(build\\): APK 파일명에 버전 포함 \\(signagepro-0.4.5.apk\\) — 대시보드 버전 배지 자동 표시 *)"
+      "Bash(git commit -m 'feat\\(build\\): APK 파일명에 버전 포함 \\(signagepro-0.4.5.apk\\) — 대시보드 버전 배지 자동 표시 *)",
+      "PowerShell(Get-Process -Id 25564 -ErrorAction SilentlyContinue)",
+      "PowerShell(pm2 logs signagepro --lines 40 --nostream 2>&1)",
+      "PowerShell(Get-Content \"$env:USERPROFILE\\\\.pm2\\\\logs\\\\signagepro-out.log\" -Tail 30)",
+      "PowerShell(Invoke-RestMethod -Uri \"http://localhost:3300/api/diagnostics/sockets\" -Method GET)",
+      "PowerShell(Invoke-RestMethod -Uri \"http://localhost:3300/api/devices\" -Method GET)",
+      "PowerShell(Invoke-RestMethod -Uri \"http://localhost:3300/api/diagnostics/ota\" -Method GET)",
+      "PowerShell(Get-Process node -ErrorAction SilentlyContinue)",
+      "PowerShell(Invoke-RestMethod -Uri \"http://121.189.102.108:3300/api/diagnostics/ota\" -Method GET -TimeoutSec 5)",
+      "PowerShell(try { \\(Invoke-WebRequest -Uri \"http://checkip.amazonaws.com\" -TimeoutSec 5\\).Content.Trim\\(\\) } catch { \"실패\" })",
+      "PowerShell(try { \\(Invoke-RestMethod -Uri \"https://api.ipify.org\" -TimeoutSec 5\\) } catch { try { \\(Invoke-RestMethod -Uri \"http://icanhazip.com\" -TimeoutSec 5\\) } catch { \"외부 연결 불가\" } })",
+      "PowerShell(pm2 stop signagepro 2>&1)",
+      "PowerShell(pm2 delete signagepro 2>&1)",
+      "Bash(git commit -m ' *)",
+      "PowerShell(tailscale status 2>&1)",
+      "PowerShell(Test-NetConnection -ComputerName 121.189.102.108 -Port 22 -WarningAction SilentlyContinue -InformationLevel Quiet)",
+      "Bash(./gradlew assembleRelease)",
+      "Bash(timeout 8 bash -c \"echo > /dev/tcp/211.43.136.235/5555\")"
     ]
   }
 }
