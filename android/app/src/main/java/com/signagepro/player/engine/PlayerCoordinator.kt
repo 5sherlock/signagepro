@@ -544,6 +544,44 @@ class PlayerCoordinator(
                 scope.launch(kotlinx.coroutines.Dispatchers.Main) {
                     renderer.showBlack()
                 }
+            },
+            onRestartApp = {
+                Log.i(TAG, "자가 복구 앱 자체 재시작 수행")
+                scope.launch(kotlinx.coroutines.Dispatchers.Main) {
+                    try {
+                        val intent = context.packageManager.getLaunchIntentForPackage(context.packageName)?.apply {
+                            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)
+                        }
+                        context.startActivity(intent)
+                        kotlinx.coroutines.delay(1000)
+                        android.os.Process.killProcess(android.os.Process.myPid())
+                    } catch (e: Exception) {
+                        Log.e(TAG, "자가 앱 재시작 실패: ${e.message}")
+                    }
+                }
+            },
+            onRebootDevice = {
+                Log.i(TAG, "물리 기기 재부팅 수행")
+                // 1순위: Device Owner DevicePolicyManager 활용 (API 24+)
+                val dpm = context.getSystemService(Context.DEVICE_POLICY_SERVICE) as DevicePolicyManager
+                val adminComponent = ComponentName(context, SignageDeviceAdmin::class.java)
+                if (Build.VERSION.SDK_INT >= 24 && dpm.isDeviceOwnerApp(context.packageName)) {
+                    try {
+                        Log.i(TAG, "Device Owner 권한으로 reboot() API 호출")
+                        dpm.reboot(adminComponent)
+                        return@ControlChannel
+                    } catch (e: Exception) {
+                        Log.e(TAG, "DPM.reboot() API 실패, su reboot 시도: ${e.message}")
+                    }
+                }
+                
+                // 2순위: su -c reboot (Rooted 기기 폴백)
+                try {
+                    Log.i(TAG, "su -c reboot 쉘 명령어 호출")
+                    Runtime.getRuntime().exec(arrayOf("su", "-c", "reboot"))
+                } catch (e: Exception) {
+                    Log.e(TAG, "su reboot 쉘 실행 실패: ${e.message}")
+                }
             }
         ).also { it.start() }
     }
