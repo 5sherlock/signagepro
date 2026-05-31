@@ -817,6 +817,63 @@ app.post('/api/update/push', (req, res) => {
   lastDeployedAt = new Date();
   saveDeployMeta(lastDeployedAt);
   console.log(`[OTA] 업데이트 푸시: ${deviceId ? deviceId : '전체 단말'}`);
+
+  // ── [Self-Healing] 배포 60초 후 좀비 구버전 자동 깨우기 타이머 가동 ──────────────────────
+  setTimeout(async () => {
+    try {
+      const meta = loadDeployMeta();
+      const targetVersion = meta.apkVersion;
+      if (!targetVersion) return;
+
+      console.log(`[Self-Healing] 배포 60초 경과 - 좀비 기기 스캔 개시... (목표 버전: v${targetVersion})`);
+      
+      // 대상 기기 조회 (지정 기기 또는 온라인 상태 기기 전체)
+      let targetDevices = [];
+      if (deviceId) {
+        const d = await prisma.device.findUnique({ where: { id: deviceId } });
+        if (d) targetDevices = [d];
+      } else {
+        targetDevices = await prisma.device.findMany({ where: { status: 'online' } });
+      }
+
+      const adbPath = process.env.ADB_PATH || 'adb';
+
+      for (const dev of targetDevices) {
+        if (!dev.ip) continue;
+
+        // DB에 보고된 현재 버전 파싱 ("0.4.5 (2026-05-29 16:46)" -> "0.4.5")
+        const currentVerStr = dev.appVersion || '';
+        const parenIdx = currentVerStr.indexOf(' (');
+        const currentVer = parenIdx >= 0 ? currentVerStr.slice(0, parenIdx) : currentVerStr;
+
+        if (currentVer !== targetVersion) {
+          console.log(`[Self-Healing] 기기 ${dev.id} (${dev.ip})가 여전히 구버전(${currentVer}) 상태입니다. 강제 앱 재시작을 전송합니다.`);
+          const target = `${dev.ip}:5555`;
+          
+          // 백그라운드 비동기로 adb 연결 및 am force-stop / am start 쉘 명령어 발송
+          execFile(adbPath, ['connect', target], { timeout: 8000, windowsHide: true }, (err) => {
+            if (err) {
+              console.warn(`[Self-Healing] 기기 ${dev.id} (${target}) ADB 연결 실패: ${err.message}`);
+              return;
+            }
+            // 쉘 명령으로 기존 좀비 앱 강제 킬 및 MainActivity 정식 재기동
+            execFile(adbPath, ['-s', target, 'shell', 'am force-stop com.signagepro.player ; sleep 2 ; am start -n com.signagepro.player/.MainActivity'], { timeout: 15000, windowsHide: true }, (err2, stdout) => {
+              if (err2) {
+                console.error(`[Self-Healing] 기기 ${dev.id} 앱 재기동 쉘 실행 에러: ${err2.message}`);
+              } else {
+                console.log(`[Self-Healing] 기기 ${dev.id}에 대한 자가 복구 앱 재기동 명령 전송 완료!`);
+              }
+            });
+          });
+        } else {
+          console.log(`[Self-Healing] 기기 ${dev.id}는 정상적으로 최신 버전(v${targetVersion})이 갱신되었습니다.`);
+        }
+      }
+    } catch (e) {
+      console.error('[Self-Healing] 백그라운드 점검 에러:', e.message);
+    }
+  }, 60000); // 60초 후 동작
+
   res.json({ success: true, pushed: deviceId || 'all' });
 });
 
