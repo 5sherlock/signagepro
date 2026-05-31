@@ -37,7 +37,7 @@ class ControlChannel(
             reconnectionDelay = 1_000
             reconnectionDelayMax = 30_000
             timeout = 10_000
-            transports = arrayOf("websocket") // polling 건너뛰고 WebSocket 직접 사용
+            // transports = arrayOf("websocket") // polling 건너뛰고 WebSocket 직접 사용
         }
         socket = IO.socket(serverUrl, opts).apply {
             on(Socket.EVENT_CONNECT) {

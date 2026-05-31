@@ -973,7 +973,18 @@ app.post('/api/devices/:id/reboot', async (req, res) => {
     //    (RK3229 U4X+CM: /sys/class/display/HDMI/enable = -rw-rw-rw-, su 불필요)
     execFile(adbPath, ['-s', target, 'shell',
       'echo 0 > /sys/class/display/HDMI/enable; sleep 3; reboot'
-    ], { timeout: 15000, windowsHide: true }, () => {});
+    ], { timeout: 15000, windowsHide: true }, async (err, stdout, stderr) => {
+      if (err) {
+        console.warn(`[ADB] 쉘 재부팅 실패: ${err.message}. adb reboot 폴백 실행.`);
+      }
+      // 일반 reboot 쉘 명령어 권한 실패를 방지하기 위해 adb reboot 폴백 실행
+      try {
+        await adbExec(adbPath, ['-s', target, 'reboot']);
+        console.log(`[ADB] adb reboot 폴백 성공: ${device.id} (${target})`);
+      } catch (e) {
+        console.error(`[ADB] adb reboot 폴백 실패: ${e.message}`);
+      }
+    });
     console.log(`[ADB] 재부팅 명령 전송: ${device.id} (${target})`);
     res.json({ ok: true });
   } catch (e) {

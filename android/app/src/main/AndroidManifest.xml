@@ -49,12 +49,13 @@
                 <action android:name="android.intent.action.BOOT_COMPLETED" />
                 <action android:name="android.intent.action.QUICKBOOT_POWERON" />
                 <action android:name="android.intent.action.REBOOT" />
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
                 <category android:name="android.intent.category.DEFAULT" />
             </intent-filter>
         </receiver>
 
         <!-- OTA PackageInstaller 설치 완료 → 앱 자동 재시작 -->
-        <receiver android:name=".InstallReceiver" android:exported="false">
+        <receiver android:name=".InstallReceiver" android:exported="true">
             <intent-filter>
                 <action android:name="com.signagepro.player.INSTALL_COMPLETE" />
             </intent-filter>
