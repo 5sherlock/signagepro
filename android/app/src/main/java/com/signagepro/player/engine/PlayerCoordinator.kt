@@ -562,6 +562,25 @@ class PlayerCoordinator(
             },
             onRebootDevice = {
                 Log.i(TAG, "물리 기기 재부팅 수행")
+                
+                // 물리 재부팅이 실패(권한 부족 등)하여 프로세스가 계속 살아있는 경우를 대비한 Fail-Safe 비상 복구 타이머 가동
+                // 4초 뒤에도 앱이 죽지 않고 살아있다면 자가 앱 재시작을 강제로 구동해 검은 화면 굳어짐을 예방합니다.
+                scope.launch(kotlinx.coroutines.Dispatchers.Main) {
+                    kotlinx.coroutines.delay(4000)
+                    Log.w(TAG, "물리 재부팅 실패 감지 (4초 경과) ➔ 자가 앱 재시작으로 비상 복구 구동!")
+                    try {
+                        val intent = context.packageManager.getLaunchIntentForPackage(context.packageName)?.apply {
+                            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)
+                        }
+                        context.startActivity(intent)
+                        kotlinx.coroutines.delay(1000)
+                        android.os.Process.killProcess(android.os.Process.myPid())
+                    } catch (e: Exception) {
+                        Log.e(TAG, "비상 자가 복구 실패: ${e.message}")
+                        startLoop() // 최후의 수단: 재생 루프 복구
+                    }
+                }
+
                 // 1순위: Device Owner DevicePolicyManager 활용 (API 24+)
                 val dpm = context.getSystemService(Context.DEVICE_POLICY_SERVICE) as DevicePolicyManager
                 val adminComponent = ComponentName(context, SignageDeviceAdmin::class.java)
