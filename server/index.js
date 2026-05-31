@@ -14,6 +14,20 @@ const { execFile } = require('child_process');
 const os = require('os');
 const cron = require('node-cron');
 
+// ADB 실행 경로 계산 (프로젝트 로컬 server/bin/adb.exe가 존재하면 우선적으로 적용)
+const getAdbPath = () => {
+  if (process.env.ADB_PATH) {
+    return process.env.ADB_PATH;
+  }
+  const localAdb = path.join(__dirname, 'bin', 'adb.exe');
+  if (fs.existsSync(localAdb)) {
+    return localAdb;
+  }
+  return 'adb';
+};
+const GLOBAL_ADB_PATH = getAdbPath();
+console.log(`[ADB] 감지된 ADB 경로: ${GLOBAL_ADB_PATH}`);
+
 const prisma = new PrismaClient();
 const app = express();
 
@@ -836,7 +850,7 @@ app.post('/api/update/push', (req, res) => {
         targetDevices = await prisma.device.findMany({ where: { status: 'online' } });
       }
 
-      const adbPath = process.env.ADB_PATH || 'adb';
+      const adbPath = GLOBAL_ADB_PATH;
 
       for (const dev of targetDevices) {
         if (!dev.ip) continue;
@@ -886,7 +900,7 @@ app.post('/api/update/adb-install', async (req, res) => {
   }
 
   const { deviceId, deviceIds } = req.body;
-  const adbPath = process.env.ADB_PATH || 'adb';
+  const adbPath = GLOBAL_ADB_PATH;
 
   // deviceIds 배열 > deviceId 단일 > 전체(ip 있는 기기)
   let devices = [];
@@ -1017,7 +1031,7 @@ app.post('/api/devices/:id/reboot', async (req, res) => {
   }
 
   const target = `${device.ip}:5555`;
-  const adbPath = process.env.ADB_PATH || 'adb';
+  const adbPath = GLOBAL_ADB_PATH;
   try {
     // 1. 앱에 검은 화면 준비 명령 → 렌더링 루프 중단
     io.to(`device:${device.id}`).emit('prepare_reboot', { deviceId: device.id });
