@@ -850,35 +850,17 @@ app.post('/api/update/push', (req, res) => {
         targetDevices = await prisma.device.findMany({ where: { status: 'online' } });
       }
 
-      const adbPath = GLOBAL_ADB_PATH;
-
       for (const dev of targetDevices) {
-        if (!dev.ip) continue;
-
         // DB에 보고된 현재 버전 파싱 ("0.4.5 (2026-05-29 16:46)" -> "0.4.5")
         const currentVerStr = dev.appVersion || '';
         const parenIdx = currentVerStr.indexOf(' (');
         const currentVer = parenIdx >= 0 ? currentVerStr.slice(0, parenIdx) : currentVerStr;
 
         if (currentVer !== targetVersion) {
-          console.log(`[Self-Healing] 기기 ${dev.id} (${dev.ip})가 여전히 구버전(${currentVer}) 상태입니다. 강제 앱 재시작을 전송합니다.`);
-          const target = `${dev.ip}:5555`;
-          
-          // 백그라운드 비동기로 adb 연결 및 am force-stop / am start 쉘 명령어 발송
-          execFile(adbPath, ['connect', target], { timeout: 8000, windowsHide: true }, (err) => {
-            if (err) {
-              console.warn(`[Self-Healing] 기기 ${dev.id} (${target}) ADB 연결 실패: ${err.message}`);
-              return;
-            }
-            // 쉘 명령으로 기존 좀비 앱 강제 킬 및 MainActivity 정식 재기동
-            execFile(adbPath, ['-s', target, 'shell', 'am force-stop com.signagepro.player ; sleep 2 ; am start -n com.signagepro.player/.MainActivity'], { timeout: 15000, windowsHide: true }, (err2, stdout) => {
-              if (err2) {
-                console.error(`[Self-Healing] 기기 ${dev.id} 앱 재기동 쉘 실행 에러: ${err2.message}`);
-              } else {
-                console.log(`[Self-Healing] 기기 ${dev.id}에 대한 자가 복구 앱 재기동 명령 전송 완료!`);
-              }
-            });
-          });
+          console.log(`[Self-Healing] 기기 ${dev.id}가 여전히 구버전(${currentVer}) 상태입니다. 소켓 기반 강제 앱 재시작을 발송합니다.`);
+          const room = `device:${dev.id}`;
+          io.to(room).emit('restart_app', { deviceId: dev.id });
+          console.log(`[Self-Healing] 기기 ${dev.id}에 대한 소켓 자가 복구 앱 재시작 명령 전송 완료!`);
         } else {
           console.log(`[Self-Healing] 기기 ${dev.id}는 정상적으로 최신 버전(v${targetVersion})이 갱신되었습니다.`);
         }
@@ -1020,49 +1002,28 @@ app.post('/api/update/adb-cancel', (req, res) => {
   res.json({ ok: true });
 });
 
-// 기기 원격 재부팅 (ADB TCP 필요)
+// 기기 원격 재부팅 (소켓 기반)
 app.post('/api/devices/:id/reboot', async (req, res) => {
   const device = await prisma.device.findUnique({ where: { id: req.params.id } });
-  if (!device || !device.ip) return res.status(404).json({ error: '기기 또는 IP 정보 없음' });
+  if (!device) return res.status(404).json({ error: '기기를 찾을 수 없습니다.' });
 
-  // 오프라인 기기는 ADB 연결 불가 — 미리 차단
+  // 오프라인 기기는 소켓 연결 불가 — 미리 차단
   if (device.status !== 'online') {
     return res.status(400).json({ error: '기기가 오프라인입니다.\n전원과 네트워크 연결을 확인해주세요.' });
   }
 
-  const target = `${device.ip}:5555`;
-  const adbPath = GLOBAL_ADB_PATH;
+  const room = `device:${device.id}`;
   try {
-    // 1. 앱에 검은 화면 준비 명령 → 렌더링 루프 중단
-    io.to(`device:${device.id}`).emit('prepare_reboot', { deviceId: device.id });
+    // 1. 앱에 검은 화면 준비 명령 → 렌더링 루프 중단 (Socket.io)
+    io.to(room).emit('prepare_reboot', { deviceId: device.id });
     await new Promise(r => setTimeout(r, 600));
 
-    await adbExec(adbPath, ['connect', target], { timeout: 8000 });
-
-    // 2. 기기 쉘에서 한 번에: HDMI 끄기 → 2초 대기 → reboot
-    //    네트워크 왕복 없이 기기 내에서 타이밍 보장
-    //    (RK3229 U4X+CM: /sys/class/display/HDMI/enable = -rw-rw-rw-, su 불필요)
-    execFile(adbPath, ['-s', target, 'shell',
-      'echo 0 > /sys/class/display/HDMI/enable; sleep 3; reboot'
-    ], { timeout: 15000, windowsHide: true }, async (err, stdout, stderr) => {
-      if (err) {
-        console.warn(`[ADB] 쉘 재부팅 실패: ${err.message}. adb reboot 폴백 실행.`);
-      }
-      // 일반 reboot 쉘 명령어 권한 실패를 방지하기 위해 adb reboot 폴백 실행
-      try {
-        await adbExec(adbPath, ['-s', target, 'reboot']);
-        console.log(`[ADB] adb reboot 폴백 성공: ${device.id} (${target})`);
-      } catch (e) {
-        console.error(`[ADB] adb reboot 폴백 실패: ${e.message}`);
-      }
-    });
-    console.log(`[ADB] 재부팅 명령 전송: ${device.id} (${target})`);
+    // 2. 소켓을 통해 기기 자체 물리 재부팅 수행 명령 송신! (ADB 완전 우회)
+    io.to(room).emit('reboot_device', { deviceId: device.id });
+    console.log(`[Reboot] 소켓 기반 원격 재부팅 명령 전송: ${device.id}`);
     res.json({ ok: true });
   } catch (e) {
-    const friendly = e.message?.includes('connect')
-      ? `ADB 연결 실패 (${device.ip}:5555)\nWi-Fi가 연결되어 있는지 확인해주세요.`
-      : e.message;
-    res.status(500).json({ error: friendly });
+    res.status(500).json({ error: e.message });
   }
 });
 
@@ -1101,12 +1062,17 @@ app.post('/api/devices/:id/screenshot', async (req, res) => {
 
 // 앱 재시작
 app.post('/api/devices/:id/restart-app', async (req, res) => {
-  const adbPath = process.env.ADB_PATH || 'adb';
   try {
-    const { target } = await getDeviceTarget(req.params.id);
-    await adbExec(adbPath, ['-s', target, 'shell', 'am', 'force-stop', 'com.signagepro.player']);
-    await new Promise(r => setTimeout(r, 1500));
-    await adbExec(adbPath, ['-s', target, 'shell', 'am', 'start', '-n', 'com.signagepro.player/.MainActivity']);
+    const device = await prisma.device.findUnique({ where: { id: req.params.id } });
+    if (!device) return res.status(404).json({ error: '기기를 찾을 수 없습니다.' });
+
+    if (device.status !== 'online') {
+      return res.status(400).json({ error: '기기가 오프라인입니다.' });
+    }
+
+    const room = `device:${device.id}`;
+    io.to(room).emit('restart_app', { deviceId: device.id });
+    console.log(`[Restart] 소켓 기반 앱 자체 재시작 명령 전송: ${device.id}`);
     res.json({ ok: true });
   } catch (e) {
     res.status(500).json({ error: e.message });

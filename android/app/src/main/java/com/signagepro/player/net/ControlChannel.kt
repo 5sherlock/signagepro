@@ -26,7 +26,11 @@ class ControlChannel(
     /** 볼륨 설정 명령 (0~15) */
     private val onSetVolume: (level: Int) -> Unit = {},
     /** 재부팅 직전 검은 화면 준비 */
-    private val onPrepareReboot: () -> Unit = {}
+    private val onPrepareReboot: () -> Unit = {},
+    /** 앱 자체 재시작 명령 */
+    private val onRestartApp: () -> Unit = {},
+    /** 물리 기기 자체 재부팅 명령 */
+    private val onRebootDevice: () -> Unit = {}
 ) {
     private var socket: Socket? = null
     @Volatile private var wasConnected = false
@@ -107,6 +111,22 @@ class ControlChannel(
                 if (target.isNullOrBlank() || target == selfDeviceId) {
                     Log.i(TAG, "재부팅 준비 명령 수신 → 검은 화면")
                     onPrepareReboot()
+                }
+            }
+            on("restart_app") { args ->
+                val data = args.firstOrNull() as? JSONObject
+                val target = data?.optString("deviceId", "")
+                if (target.isNullOrBlank() || target == selfDeviceId) {
+                    Log.i(TAG, "원격 앱 재시작 명령 수신")
+                    onRestartApp()
+                }
+            }
+            on("reboot_device") { args ->
+                val data = args.firstOrNull() as? JSONObject
+                val target = data?.optString("deviceId", "")
+                if (target.isNullOrBlank() || target == selfDeviceId) {
+                    Log.i(TAG, "원격 물리 기기 재부팅 명령 수신")
+                    onRebootDevice()
                 }
             }
             connect()
