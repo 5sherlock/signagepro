@@ -162,14 +162,15 @@
   flex: 1;
   overflow-y: auto;
   padding: 8px;
-  display: grid;
-  grid-template-columns: repeat(2, 1fr);
-  gap: 6px;
-  align-content: start;
-  align-items: start;
+  columns: 2;
+  column-gap: 6px;
 }
 
 .library-item {
+  break-inside: avoid;
+  display: inline-block;
+  width: 100%;
+  margin-bottom: 6px;
   position: relative;
   border-radius: 6px;
   overflow: hidden;
