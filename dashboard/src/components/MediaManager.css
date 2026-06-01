@@ -1032,11 +1032,8 @@
   display: flex;
   flex-direction: column;
   align-items: center;
-  cursor: grab;
-}
-
-.reorder-item-wrapper:active {
-  cursor: grabbing;
+  position: relative;
+  cursor: default;
 }
 
 .reorder-item-wrapper.reorder-dragging .media-card-v4 {
@@ -1107,6 +1104,28 @@
 }
 
 .device-row-v4.row-self-dragging { opacity: 0.35; }
+
+/* ── 타임라인 미디어 아이템 드래그 핸들 ─────────────────────── */
+.timeline-item-drag-handle {
+  position: absolute;
+  top: 4px;
+  left: 50%;
+  transform: translateX(-50%);
+  font-size: 14px;
+  color: #64748b;
+  cursor: grab;
+  opacity: 0;
+  padding: 2px 6px;
+  border-radius: 4px;
+  transition: opacity 0.15s, background 0.15s;
+  z-index: 2;
+  user-select: none;
+}
+.reorder-item-wrapper:hover .timeline-item-drag-handle {
+  opacity: 1;
+  background: rgba(255,255,255,0.08);
+}
+.timeline-item-drag-handle:active { cursor: grabbing; }
 
 .device-row-v4.row-drop-target {
   outline: 2px solid #f59e0b;

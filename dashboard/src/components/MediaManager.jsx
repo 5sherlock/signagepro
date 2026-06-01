@@ -669,17 +669,7 @@ const DeviceRowV4 = ({ device, items, isDirty, onDrop, onRemoveItem, onChangeIte
           return (
             <React.Fragment key={item._key || idx}>
               <div
-                draggable
                 className={`reorder-item-wrapper${isDragging ? ' reorder-dragging' : ''}${isDraggedOver ? ' reorder-over' : ''}`}
-                onDragStart={e => {
-                  e.dataTransfer.setData('timeline-index', String(idx));
-                  e.dataTransfer.effectAllowed = 'move';
-                  setReorderDragIdx(idx);
-                }}
-                onDragEnd={() => {
-                  setReorderDragIdx(null);
-                  setReorderOverIdx(null);
-                }}
                 onDragOver={e => {
                   if (e.dataTransfer.types.includes('device-row-id')) return;
                   e.preventDefault();
@@ -712,6 +702,23 @@ const DeviceRowV4 = ({ device, items, isDirty, onDrop, onRemoveItem, onChangeIte
                   setReorderOverIdx(null);
                 }}
               >
+                {/* 드래그 핸들 — 이 영역만 잡아서 이동 */}
+                <div
+                  className="timeline-item-drag-handle"
+                  draggable
+                  title="잡고 드래그하여 순서 변경"
+                  onDragStart={e => {
+                    e.dataTransfer.setData('timeline-index', String(idx));
+                    e.dataTransfer.effectAllowed = 'move';
+                    setReorderDragIdx(idx);
+                  }}
+                  onDragEnd={() => {
+                    setReorderDragIdx(null);
+                    setReorderOverIdx(null);
+                  }}
+                >
+                  ⠿
+                </div>
                 <MediaItemV4 item={item} onRemove={() => onRemoveItem(idx)} onChange={upd => onChangeItem(idx, upd)} />
               </div>
               {(nextItem || (isLast && items.length > 0)) && (
