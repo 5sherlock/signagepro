@@ -166,6 +166,7 @@
   grid-template-columns: repeat(2, 1fr);
   gap: 6px;
   align-content: start;
+  align-items: start;
 }
 
 .library-item {
@@ -185,10 +186,7 @@
 .library-item-thumb {
   width: 100%;
   background: #000;
-  overflow: hidden;
-  display: flex;
-  align-items: center;
-  justify-content: center;
+  line-height: 0;
 }
 
 .library-item-name {
