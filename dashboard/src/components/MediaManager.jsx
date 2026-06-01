@@ -609,6 +609,15 @@ const TransitionBridgeV4 = ({ item, isLoop, onChange, onPreview }) => {
 const DeviceRowV4 = ({ device, items, isDirty, onDrop, onRemoveItem, onChangeItem, onDeleteDevice, onPreview, onTransitionPreview, onReorder, libDragOver = false }) => {
   const [reorderDragIdx, setReorderDragIdx] = useState(null);
   const [reorderOverIdx, setReorderOverIdx] = useState(null);
+  const timelineRef = useRef(null);
+
+  useEffect(() => {
+    const el = timelineRef.current;
+    if (!el) return;
+    const onWheel = e => { e.preventDefault(); el.scrollLeft += e.deltaY; };
+    el.addEventListener('wheel', onWheel, { passive: false });
+    return () => el.removeEventListener('wheel', onWheel);
+  }, []);
 
   const isReorderDrag = (e) => e.dataTransfer.types.includes('timeline-index');
 
@@ -656,9 +665,9 @@ const DeviceRowV4 = ({ device, items, isDirty, onDrop, onRemoveItem, onChangeIte
       </div>
 
       <div
+        ref={timelineRef}
         className={`device-timeline-v4 ${libDragOver ? 'drag-over' : ''}`}
         data-device-id={device.id}
-        onWheel={e => { e.preventDefault(); e.currentTarget.scrollLeft += e.deltaY; }}
       >
         {items.length === 0 && <div className="timeline-empty">미디어를 드래그하여 추가하세요</div>}
         {items.map((item, idx) => {
