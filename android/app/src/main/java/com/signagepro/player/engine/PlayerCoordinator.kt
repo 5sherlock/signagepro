@@ -11,6 +11,7 @@ import android.media.audiofx.Visualizer
 import android.net.Uri
 import android.os.Build
 import android.util.Log
+import com.signagepro.player.InstallReceiver
 import com.signagepro.player.SignageDeviceAdmin
 import com.signagepro.player.api.ApiClient
 import com.signagepro.player.api.PlaylistDto
@@ -336,17 +337,7 @@ class PlayerCoordinator(
                 Log.i(TAG, "다운로드 완료: ${apkFile.length()} bytes")
                 onStatus("업데이트 설치 중…")
 
-                // 1순위: Device Owner PackageInstaller — 확인창 없이 자동 설치
-                val pkgOk = withContext(Dispatchers.IO) { installViaPackageInstaller(apkFile) }
-                if (pkgOk) {
-                    Log.i(TAG, "PackageInstaller 세션 커밋 완료 — InstallReceiver 대기 중")
-                    onStatus("업데이트 완료 — 재시작 중…")
-                    kotlinx.coroutines.delay(15_000) // InstallReceiver.killProcess 우선; 미발화 시 15초 폴백
-                    android.os.Process.killProcess(android.os.Process.myPid())
-                    return@launch
-                }
-
-                // 2순위: su pm install -r (rooted 기기)
+                // 1순위: su pm install -r (rooted 기기 — 동기 결과 + killProcess 보장)
                 val pmOk = withContext(Dispatchers.IO) { trySilentInstallPm(apkFile) }
                 if (pmOk) {
                     Log.i(TAG, "pm install 자동 설치 완료 -> 3초 후 자가 종료 및 재시작")
@@ -355,6 +346,28 @@ class PlayerCoordinator(
                     android.os.Process.killProcess(android.os.Process.myPid())
                     return@launch
                 }
+
+                // 2순위: Device Owner PackageInstaller — 실제 설치 결과를 기다린 후 killProcess
+                val deferred = kotlinx.coroutines.CompletableDeferred<Boolean>()
+                InstallReceiver.pending = deferred
+                val sessionOk = withContext(Dispatchers.IO) { installViaPackageInstaller(apkFile) }
+                if (sessionOk) {
+                    onStatus("업데이트 완료 — 재시작 중…")
+                    // 실제 설치 완료 대기 (최대 60초) — InstallReceiver 가 killProcess 호출
+                    val installed = kotlinx.coroutines.withTimeoutOrNull(60_000) { deferred.await() } ?: false
+                    InstallReceiver.pending = null
+                    if (!installed) {
+                        Log.w(TAG, "PackageInstaller 설치 실패 — pm install 폴백")
+                        val pmFallback = withContext(Dispatchers.IO) { trySilentInstallPm(apkFile) }
+                        if (pmFallback) {
+                            kotlinx.coroutines.delay(3000)
+                            android.os.Process.killProcess(android.os.Process.myPid())
+                        }
+                    }
+                    // STATUS_SUCCESS 시 InstallReceiver 가 killProcess 처리
+                    return@launch
+                }
+                InstallReceiver.pending = null
 
                 // 3순위: ACTION_VIEW — 시스템 설치 다이얼로그 (최후 수단)
                 Log.i(TAG, "ACTION_VIEW 설치 시도")
