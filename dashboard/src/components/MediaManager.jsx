@@ -1066,7 +1066,7 @@ const MediaManager = ({ stores = [], groups = [], devices = [], selectedStoreId,
       }}
     >
       <div className="library-item-thumb">
-        <MediaThumb path={media.path} style={{ width: '100%', height: '100%', pointerEvents: 'none' }} />
+        <MediaThumb path={media.path} style={{ width: '100%', height: 'auto', pointerEvents: 'none', display: 'block' }} />
       </div>
       <span className="library-item-name">
         {showSize && media.size ? <span className="item-size-badge">{formatSize(media.size)}</span> : null}

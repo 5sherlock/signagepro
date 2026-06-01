@@ -184,9 +184,11 @@
 
 .library-item-thumb {
   width: 100%;
-  aspect-ratio: 16 / 9;
   background: #000;
   overflow: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .library-item-name {
