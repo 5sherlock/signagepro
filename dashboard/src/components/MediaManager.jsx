@@ -848,11 +848,17 @@ const MediaManager = ({ stores = [], groups = [], devices = [], selectedStoreId,
     return () => clearTimeout(t);
   }, [deployPanel]);
 
-  const handleDrop = (deviceId, media) => {
+  const handleDrop = (deviceId, media, insertIdx = null) => {
     const newItem = { mediaId: media.id, media, duration: 10, transition: 'fade', transitionTime: 1000, slideDirection: 'right', _key: `${media.id}-${Date.now()}` };
     setLanes(prev => {
       const updated = { ...prev };
-      updated[deviceId] = [...(updated[deviceId] || []), newItem];
+      const current = [...(updated[deviceId] || [])];
+      if (insertIdx !== null && insertIdx >= 0 && insertIdx <= current.length) {
+        current.splice(insertIdx, 0, newItem);
+      } else {
+        current.push(newItem);
+      }
+      updated[deviceId] = current;
       return updated;
     });
   };
@@ -872,7 +878,18 @@ const MediaManager = ({ stores = [], groups = [], devices = [], selectedStoreId,
       const els = document.elementsFromPoint(e.clientX, e.clientY);
       const tl = els.find(el => el.dataset?.deviceId);
       if (tl?.dataset.deviceId && libDragMediaRef.current) {
-        handleDropRef.current(tl.dataset.deviceId, libDragMediaRef.current);
+        // 드롭 위치에 있는 카드 기준으로 삽입 인덱스 계산
+        const hoverWrapper = els.find(el => el.classList?.contains('reorder-item-wrapper'));
+        let insertIdx = null;
+        if (hoverWrapper) {
+          const wrappers = Array.from(tl.querySelectorAll('.reorder-item-wrapper'));
+          const hoverIdx = wrappers.indexOf(hoverWrapper);
+          if (hoverIdx >= 0) {
+            const rect = hoverWrapper.getBoundingClientRect();
+            insertIdx = e.clientX < rect.left + rect.width / 2 ? hoverIdx : hoverIdx + 1;
+          }
+        }
+        handleDropRef.current(tl.dataset.deviceId, libDragMediaRef.current, insertIdx);
       }
       libDragMediaRef.current = null;
       setLibDragPos(null);
