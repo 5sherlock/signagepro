@@ -1902,11 +1902,11 @@ function App() {
                           {device.status === 'online' ? '온라인' : '오프라인'}
                         </div>
                         {device.appVersion ? (() => {
-                          const isOutdated = standardVersion && device.appVersion !== standardVersion;
                           // "0.4.0 (2026-05-27 12:50)" → verNum="0.4.0", verDate="2026-05-27 12:50"
                           const parenIdx = device.appVersion.indexOf(' (');
                           const verNum  = parenIdx >= 0 ? device.appVersion.slice(0, parenIdx) : device.appVersion;
                           const verDate = parenIdx >= 0 ? device.appVersion.slice(parenIdx + 2).replace(/\)$/, '') : null;
+                          const isOutdated = standardVersion && verNum !== standardVersion;
                           return (
                             <div style={{
                               display: 'flex',
@@ -2089,22 +2089,8 @@ function App() {
                       );
                     })()}
 
-                    {/* APK 업데이트 / 재부팅 버튼 */}
+                    {/* 재부팅 버튼 */}
                     <div style={{ marginTop: '8px', display: 'flex', justifyContent: 'flex-end', gap: '6px', flexWrap: 'wrap' }}>
-                      {apkAvailable && (device.appVersion !== standardVersion) && (
-                        <button
-                          disabled={adbRunning}
-                          style={{
-                            fontSize: '0.7rem', padding: '3px 10px',
-                            background: 'transparent', border: '1px solid #10B981',
-                            borderRadius: '4px', color: '#10B981',
-                            cursor: adbRunning ? 'not-allowed' : 'pointer', opacity: adbRunning ? 0.5 : 1
-                          }}
-                          onClick={() => installApk(device.id)}
-                        >
-                          {adbRunning ? '설치 중…' : '⚡ APK 업데이트'}
-                        </button>
-                      )}
                       <button
                         disabled={device.status !== 'online'}
                         title={device.status !== 'online' ? '오프라인 기기는 재부팅할 수 없습니다' : '기기 재부팅'}
