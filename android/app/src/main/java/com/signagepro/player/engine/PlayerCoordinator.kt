@@ -339,8 +339,10 @@ class PlayerCoordinator(
                 // 1순위: Device Owner PackageInstaller — 확인창 없이 자동 설치
                 val pkgOk = withContext(Dispatchers.IO) { installViaPackageInstaller(apkFile) }
                 if (pkgOk) {
-                    Log.i(TAG, "PackageInstaller(Device Owner) 자동 설치 완료")
+                    Log.i(TAG, "PackageInstaller 세션 커밋 완료 — InstallReceiver 대기 중")
                     onStatus("업데이트 완료 — 재시작 중…")
+                    kotlinx.coroutines.delay(15_000) // InstallReceiver.killProcess 우선; 미발화 시 15초 폴백
+                    android.os.Process.killProcess(android.os.Process.myPid())
                     return@launch
                 }
 

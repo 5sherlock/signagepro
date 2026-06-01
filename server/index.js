@@ -1098,11 +1098,27 @@ app.post('/api/devices/:id/reboot', async (req, res) => {
     const socketsInRoom = await io.in(room).allSockets();
 
     if (socketsInRoom.size > 0) {
-      // Socket.io 룸 있음 → 소켓 기반 재부팅 (v0.4.6+)
-      io.to(room).emit('prepare_reboot', { deviceId: device.id });
-      await new Promise(r => setTimeout(r, 600));
-      io.to(room).emit('reboot_device', { deviceId: device.id });
-      console.log(`[Reboot] Socket.io 재부팅 명령 전송: ${device.id} (소켓 ${socketsInRoom.size}개)`);
+      // v0.4.6+: reboot_device 처리 가능
+      const rawVer = device.appVersion || '';
+      const ver = rawVer.includes(' (') ? rawVer.slice(0, rawVer.indexOf(' (')) : rawVer;
+      const parts = ver.split('.').map(Number);
+      const supportsReboot = parts[0] > 0 || parts[1] > 4 || (parts[1] === 4 && (parts[2] || 0) >= 6);
+
+      if (supportsReboot) {
+        io.to(room).emit('prepare_reboot', { deviceId: device.id });
+        await new Promise(r => setTimeout(r, 600));
+        io.to(room).emit('reboot_device', { deviceId: device.id });
+        console.log(`[Reboot] Socket.io 재부팅 명령 전송: ${device.id} (v${ver})`);
+      } else {
+        // v0.4.5 이하: reboot_device 미지원 → update_apk 강제 재시도로 설치 후 프로세스 종료 유도
+        const apkPath = path.join(updateDir, 'app.apk');
+        if (fs.existsSync(apkPath)) {
+          io.to(room).emit('update_apk', { url: '/update/apk', deviceId: device.id });
+          console.log(`[Reboot] v0.4.5 폴백: update_apk 재전송 → ${device.id} (v${ver})`);
+        } else {
+          return res.status(400).json({ error: `기기 앱(v${ver})이 원격 재부팅을 지원하지 않습니다. 현장에서 전원을 재시작해 주세요.` });
+        }
+      }
     } else if (device.ip) {
       // Socket.io 룸 비어있음 → ADB 직접 재부팅 폴백 (v0.4.5 이하 또는 소켓 미연결 기기)
       const target = `${device.ip}:5555`;

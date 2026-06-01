@@ -13,7 +13,13 @@
       "Bash(git commit -m 'deploy: dashboard dist 포함 — 서버 빌드 없이 바로 배포 가능 *)",
       "Bash(git add *)",
       "Bash(git commit -m 'fix\\(build\\): 원격 서버 자동 APK 업로드 + 경로 PSScriptRoot로 수정 *)",
-      "Bash(git commit -m 'feat\\(build\\): APK 파일명에 버전 포함 \\(signagepro-0.4.5.apk\\) — 대시보드 버전 배지 자동 표시 *)"
+      "Bash(git commit -m 'feat\\(build\\): APK 파일명에 버전 포함 \\(signagepro-0.4.5.apk\\) — 대시보드 버전 배지 자동 표시 *)",
+      "Bash(./gradlew assembleRelease)",
+      "Bash(ls \"C:\\\\Program Files\\\\Java\\\\\" 2>&1; where java 2>&1)",
+      "Read(//c/Program Files/**)",
+      "PowerShell(Get-Command java -ErrorAction SilentlyContinue)",
+      "PowerShell(\\(Get-Item \"c:\\\\Users\\\\amore\\\\WorkSpace\\\\signagepro\\\\android\\\\app\\\\build\\\\outputs\\\\apk\\\\release\\\\app-release.apk\"\\) | Select-Object Name, @{N='Size\\(MB\\)';E={[math]::Round\\($_.Length/1MB,2\\)}}, LastWriteTime)",
+      "PowerShell(Get-NetTCPConnection -State Listen -ErrorAction SilentlyContinue | Select-Object LocalPort, OwningProcess | Sort-Object LocalPort | Where-Object { $_.LocalPort -lt 65000 -and $_.LocalPort -gt 1000 })"
     ]
   }
 }

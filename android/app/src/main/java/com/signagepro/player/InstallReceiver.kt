@@ -24,11 +24,8 @@ class InstallReceiver : BroadcastReceiver() {
 
         when (status) {
             PackageInstaller.STATUS_SUCCESS -> {
-                Log.i(TAG, "OTA 설치 완료 — MainActivity 재시작")
-                val launch = Intent(context, MainActivity::class.java).apply {
-                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)
-                }
-                context.startActivity(launch)
+                Log.i(TAG, "OTA 설치 완료 — 프로세스 종료 후 재시작")
+                android.os.Process.killProcess(android.os.Process.myPid())
             }
             else -> {
                 Log.e(TAG, "OTA 설치 실패: status=$status msg=$msg")
