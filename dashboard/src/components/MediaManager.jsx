@@ -765,6 +765,7 @@ const MediaManager = ({ stores = [], groups = [], devices = [], selectedStoreId,
   const deployHasSeenDl = useRef(false); // 기기 다운로드가 한 번이라도 감지됐는지
   const fileRef = useRef();
   const groupDevicesRef = useRef([]); // fetchPlaylist 스테일 클로저 방지용 ref
+  const libraryListRef = useRef(null);
 
   // 라이브러리 → 타임라인 포인터 드래그 (crxMouse 제스처 충돌 방지)
   const libDragMediaRef = useRef(null);   // 드래그 중인 미디어 객체
@@ -834,6 +835,15 @@ const MediaManager = ({ stores = [], groups = [], devices = [], selectedStoreId,
   }, [selectedGroupId]);
 
   useEffect(() => { fetchMedia(); }, [fetchMedia]);
+
+  useEffect(() => {
+    const el = libraryListRef.current;
+    if (!el) return;
+    const onWheel = e => { e.preventDefault(); el.scrollTop += e.deltaY; };
+    el.addEventListener('wheel', onWheel, { passive: false });
+    return () => el.removeEventListener('wheel', onWheel);
+  }, [showArchived]);
+
   // groupDevices.length 가 0→N 으로 바뀔 때 (devices 로딩 완료 후) 재fetch
   useEffect(() => {
     if (selectedGroupId && groupDevices.length > 0) fetchPlaylist();
@@ -1209,7 +1219,7 @@ const MediaManager = ({ stores = [], groups = [], devices = [], selectedStoreId,
             </button>
           </div>
           {showArchived ? (
-            <div className="mm-library-list archive-mode">
+            <div ref={libraryListRef} className="mm-library-list archive-mode">
               {/* 정렬 버튼 */}
               <div className="archive-sort-bar">
                 <button className={`sort-btn ${archiveSort === 'date-desc' ? 'active' : ''}`} onClick={() => setArchiveSort('date-desc')}>최신순</button>
@@ -1289,7 +1299,7 @@ const MediaManager = ({ stores = [], groups = [], devices = [], selectedStoreId,
               )}
             </div>
           ) : (
-            <div className="mm-library-list">
+            <div ref={libraryListRef} className="mm-library-list">
               {mediaList
                 .filter(media => usedMediaIds.size === 0 || usedMediaIds.has(media.id))
                 .map(media => renderLibraryItem(media))}

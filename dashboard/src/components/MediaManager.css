@@ -192,8 +192,8 @@
 
 .library-item-name {
   display: block;
-  padding: 3px 6px;
-  font-size: 0.6rem;
+  padding: 4px 6px;
+  font-size: 0.72rem;
   color: #94a3b8;
   white-space: nowrap;
   overflow: hidden;
@@ -332,8 +332,8 @@
 
 .archive-ext-grid {
   display: grid;
-  grid-template-columns: repeat(2, 1fr);
-  gap: 4px;
+  grid-template-columns: repeat(1, 1fr);
+  gap: 6px;
   padding: 4px 6px 6px;
 }
 
