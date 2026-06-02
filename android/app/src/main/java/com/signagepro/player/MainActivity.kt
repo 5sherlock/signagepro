@@ -334,6 +334,11 @@ class MainActivity : AppCompatActivity() {
                     binding.debugText.text = msg
                     binding.debugText.visibility = if (msg.isBlank()) View.GONE else View.VISIBLE
                 }
+            },
+            onBlackOverlay = { on ->
+                runOnUiThread {
+                    binding.blackOverlay.visibility = if (on) View.VISIBLE else View.GONE
+                }
             }
         )
         coordinator!!.start()
