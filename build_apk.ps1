@@ -58,24 +58,20 @@ Write-Host "  대시보드 → 환경설정 → OTA 배포에서 바로 배포�
 Write-Host "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" -ForegroundColor Cyan
 Write-Host ""
 
-# 원격 서버에 자동 업로드
+# 원격 서버에 자동 업로드 (curl 사용 — 버전명 파일명 명시로 서버 버전 추출 보장)
 $SERVER_URL = "http://121.189.102.108:3300"
 Write-Host "🌐 원격 서버 업로드 중..." -ForegroundColor Cyan
-try {
-    $form = [System.Net.Http.MultipartFormDataContent]::new()
-    $fileStream = [System.IO.File]::OpenRead($APK_DST)
-    $fileContent = [System.Net.Http.StreamContent]::new($fileStream)
-    $fileContent.Headers.ContentType = [System.Net.Http.Headers.MediaTypeHeaderValue]::Parse("application/octet-stream")
-    $form.Add($fileContent, "apk", "signagepro-$versionName.apk")
-    $client = [System.Net.Http.HttpClient]::new()
-    $resp = $client.PostAsync("$SERVER_URL/api/update/apk", $form).GetAwaiter().GetResult()
-    $fileStream.Close()
-    if ($resp.IsSuccessStatusCode) {
-        Write-Host "✅ 원격 서버 업로드 완료 → OTA 배포 준비됨" -ForegroundColor Green
-    } else {
-        Write-Host "⚠️  업로드 실패 (HTTP $($resp.StatusCode)) — 대시보드에서 수동 업로드하세요" -ForegroundColor Yellow
-    }
-} catch {
-    Write-Host "⚠️  원격 서버 연결 실패 — 대시보드에서 수동 업로드하세요" -ForegroundColor Yellow
+$curlResult = curl.exe -s -o - -w "`n%{http_code}" `
+    -X POST "$SERVER_URL/api/update/apk" `
+    -F "apk=@`"$APK_DST`";filename=signagepro-$versionName.apk" `
+    --max-time 120
+$curlLines  = $curlResult -split "`n"
+$httpCode   = $curlLines[-1].Trim()
+$body       = ($curlLines[0..($curlLines.Count-2)] -join "`n").Trim()
+if ($httpCode -eq "200") {
+    Write-Host "✅ 원격 서버 업로드 완료 (v$versionName) → OTA 배포 준비됨" -ForegroundColor Green
+} else {
+    Write-Host "⚠️  업로드 실패 (HTTP $httpCode) — 대시보드에서 수동 업로드하세요" -ForegroundColor Yellow
+    Write-Host "   응답: $body" -ForegroundColor DarkGray
 }
 Write-Host ""
