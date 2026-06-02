@@ -26,7 +26,6 @@ class ScreenScheduleManager(private val context: Context) {
      * HeartbeatService에 상태를 전달하기 위해 PlayerCoordinator가 설정.
      */
     var onScreenStateChange: ((Boolean) -> Unit)? = null
-    var onBlackOverlay: ((Boolean) -> Unit)? = null
 
     /** 마지막으로 적용된 화면 상태 — 불필요한 중복 호출 방지 */
     @Volatile private var lastScreenOn: Boolean? = null
@@ -130,7 +129,6 @@ class ScreenScheduleManager(private val context: Context) {
                 "SignagePro:ScreenScheduleOn"
             )
             wl.acquire(3_000L)
-            onBlackOverlay?.invoke(false)
             Log.i(TAG, "화면 켜기 완료")
             onScreenStateChange?.invoke(true)
         } catch (e: Exception) {
@@ -143,11 +141,10 @@ class ScreenScheduleManager(private val context: Context) {
             if (dpm.isAdminActive(adminComponent)) {
                 dpm.lockNow()
                 Log.i(TAG, "화면 끄기 완료 (lockNow)")
+                onScreenStateChange?.invoke(false)
             } else {
-                Log.i(TAG, "화면 끄기 완료 (black overlay)")
+                Log.w(TAG, "Device Admin 미활성 — 화면 끄기 불가. 관리자 권한을 부여하세요.")
             }
-            onBlackOverlay?.invoke(true)
-            onScreenStateChange?.invoke(false)
         } catch (e: Exception) {
             Log.e(TAG, "화면 끄기 실패", e)
         }

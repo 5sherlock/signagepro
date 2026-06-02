@@ -93,14 +93,6 @@
             android:layout_gravity="top|end"
             android:background="@android:color/transparent" />
 
-        <!-- Device Admin 없을 때 화면 끄기 폴백: 검은 오버레이 -->
-        <View
-            android:id="@+id/blackOverlay"
-            android:layout_width="match_parent"
-            android:layout_height="match_parent"
-            android:background="@android:color/black"
-            android:visibility="gone" />
-
     </FrameLayout>
 
     <!-- Setup container -->

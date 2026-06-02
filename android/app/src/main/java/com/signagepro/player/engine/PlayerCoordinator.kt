@@ -58,8 +58,7 @@ class PlayerCoordinator(
     private val config: ConfigStore,
     private val renderer: MediaRenderer,
     private val onStatus: (String) -> Unit,
-    private val onDebug: (String) -> Unit = {},
-    private val onBlackOverlay: ((Boolean) -> Unit)? = null
+    private val onDebug: (String) -> Unit = {}
 ) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
     private val ntp = NtpClient(context)
@@ -183,7 +182,6 @@ class PlayerCoordinator(
         initVisualizer()
         // 화면 ON/OFF 시 screenOn 상태 업데이트 → heartbeat에 포함
         scheduleManager.onScreenStateChange = { on -> screenOn = on }
-        scheduleManager.onBlackOverlay = onBlackOverlay
         startHeartbeat(serverUrl, deviceId, secret)
         startControlChannel(serverUrl, deviceId)
         scheduleManager.start(scope)

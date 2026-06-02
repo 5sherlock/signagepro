@@ -2091,8 +2091,34 @@ function App() {
                       );
                     })()}
 
-                    {/* 재부팅 / 화면 OFF 버튼 */}
+                    {/* 재부팅 / 화면 ON·OFF 버튼 */}
                     <div style={{ marginTop: '8px', display: 'flex', justifyContent: 'flex-end', gap: '6px', flexWrap: 'wrap' }}>
+                      <button
+                        disabled={device.status !== 'online'}
+                        title={device.status !== 'online' ? '오프라인 기기는 화면을 켤 수 없습니다' : '화면 켜기'}
+                        style={{
+                          fontSize: '0.7rem', padding: '3px 10px',
+                          background: 'transparent',
+                          border: `1px solid ${device.status !== 'online' ? '#1e293b' : '#22c55e'}`,
+                          borderRadius: '4px',
+                          color: device.status !== 'online' ? '#334155' : '#22c55e',
+                          cursor: device.status !== 'online' ? 'not-allowed' : 'pointer',
+                          opacity: device.status !== 'online' ? 0.4 : 1,
+                        }}
+                        onClick={() => {
+                          if (device.status !== 'online') return;
+                          apiFetch(`${SOCKET_URL}/api/devices/${device.id}/screen`, {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ on: true })
+                          })
+                            .then(r => r.json())
+                            .then(r => { if (!r.ok) alert(`화면 켜기 실패\n\n${r.error}`); })
+                            .catch(() => alert('서버 요청 실패'));
+                        }}
+                      >
+                        ON
+                      </button>
                       <button
                         disabled={device.status !== 'online'}
                         title={device.status !== 'online' ? '오프라인 기기는 화면을 끌 수 없습니다' : '화면 끄기'}
