@@ -64,6 +64,7 @@ class PlayerCoordinator(
     private val ntp = NtpClient(context)
     private val cache = MediaCacheRepo(context)
     private val store = PlaylistStore(context)
+    private val scheduleStore = ScheduleStore(context)
     private val metrics = SystemMetrics(context)
     private val refreshMutex = Mutex()
 
@@ -215,14 +216,21 @@ class PlayerCoordinator(
         return try {
             val api = ApiClient.get(serverUrl)
             val device = api.getDevice(deviceId)
-            // 스케줄 업데이트 (서버에서 내려온 enabled 스케줄만 포함됨)
+            // 스케줄 업데이트 후 로컬 캐시에 저장
             scheduleManager.update(device.schedules)
+            scheduleStore.save(device.schedules)
             val groupId = device.groupId ?: error("기기가 그룹에 배정되지 않았습니다")
             val playlist = api.getPlaylist(groupId)
             store.save(playlist)
             playlist
         } catch (e: Exception) {
             Log.w(TAG, "서버에서 playlist 가져오기 실패, 캐시 사용", e)
+            // 캐시된 스케줄로 복원 — 서버 미도달 시에도 화면 ON/OFF 유지
+            val cachedSchedules = scheduleStore.load()
+            if (cachedSchedules.isNotEmpty()) {
+                scheduleManager.update(cachedSchedules)
+                Log.i(TAG, "캐시된 스케줄 복원: ${cachedSchedules.size}개")
+            }
             store.load()
         }
     }
@@ -547,6 +555,7 @@ class PlayerCoordinator(
             onUpdateApk = { apkUrl -> downloadAndInstallApk(apkUrl) },
             onReconnected = { refreshPlaylist() },
             onScheduleChanged = { refreshPlaylist() },
+            onScreenControl = { on -> scheduleManager.applyScreenStatePublic(on) },
             onSetVolume = { level ->
                 val max = audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC)
                 val scaled = (level.toFloat() / 15 * max).toInt().coerceIn(0, max)

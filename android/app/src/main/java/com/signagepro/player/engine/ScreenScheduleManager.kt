@@ -39,6 +39,9 @@ class ScreenScheduleManager(private val context: Context) {
         Log.i(TAG, "스케줄 업데이트: ${schedules.size}개")
     }
 
+    /** 원격 명령(screen_control)으로 즉시 화면 상태 적용 */
+    fun applyScreenStatePublic(on: Boolean) = applyScreenState(on)
+
     fun start(scope: CoroutineScope) {
         job?.cancel()
         job = scope.launch(Dispatchers.IO) {
