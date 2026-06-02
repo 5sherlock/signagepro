@@ -1518,11 +1518,19 @@ async function runScreenCommand(deviceId, on) {
     : await prisma.device.findMany({ where: { ip: { not: null } } });
 
   for (const device of devices) {
+    const room = `device:${device.id}`;
+    const socketsInRoom = await io.in(room).allSockets();
+    if (socketsInRoom.size > 0) {
+      io.to(room).emit('screen_control', { deviceId: device.id, on });
+      console.log(`[SCHED] 화면 ${on ? 'ON' : 'OFF'} → ${device.id} (Socket.io)`);
+      continue;
+    }
+    // Socket.io 룸 없을 때 ADB 폴백
     const target = `${device.ip}:5555`;
     try {
       await adbExec(adbPath, ['connect', target], { timeout: 8000 });
       await adbExec(adbPath, ['-s', target, 'shell', 'input', 'keyevent', keycode]);
-      console.log(`[SCHED] 화면 ${on ? 'ON' : 'OFF'} → ${device.id} (${target})`);
+      console.log(`[SCHED] 화면 ${on ? 'ON' : 'OFF'} → ${device.id} (ADB ${target})`);
     } catch (e) {
       console.warn(`[SCHED] ${device.id} 명령 실패: ${e.message}`);
     }
