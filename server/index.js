@@ -1215,14 +1215,29 @@ app.post('/api/devices/:id/restart-app', async (req, res) => {
   }
 });
 
-// 화면 켜기/끄기 (KEYCODE_WAKEUP=224 / KEYCODE_SLEEP=223)
+// 화면 켜기/끄기 — Socket.io 우선, ADB 폴백
 app.post('/api/devices/:id/screen', async (req, res) => {
+  const deviceId = req.params.id;
+  const on = !!req.body.on;
+  const payload = { deviceId, on };
+
+  // 1. Socket.io로 기기에 직접 전송
+  const room = `device:${deviceId}`;
+  const socketsInRoom = await io.in(room).allSockets();
+  if (socketsInRoom.size > 0) {
+    io.to(room).emit('screen_control', payload);
+    console.log(`[Screen] Socket.io 전송: ${deviceId} → ${on ? 'ON' : 'OFF'}`);
+    return res.json({ ok: true, method: 'socketio' });
+  }
+
+  // 2. ADB 폴백 (같은 네트워크일 때)
   const adbPath = process.env.ADB_PATH || 'adb';
   try {
-    const { target } = await getDeviceTarget(req.params.id);
-    const keycode = req.body.on ? '224' : '223';
+    const { target } = await getDeviceTarget(deviceId);
+    const keycode = on ? '224' : '223';
     await adbExec(adbPath, ['-s', target, 'shell', 'input', 'keyevent', keycode]);
-    res.json({ ok: true });
+    console.log(`[Screen] ADB 전송: ${deviceId} → ${on ? 'ON' : 'OFF'}`);
+    res.json({ ok: true, method: 'adb' });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }

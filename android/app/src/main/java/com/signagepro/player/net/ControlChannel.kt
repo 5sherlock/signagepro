@@ -23,6 +23,8 @@ class ControlChannel(
     private val onUpdateApk: (apkUrl: String) -> Unit = {},
     private val onReconnected: () -> Unit = {},
     private val onScheduleChanged: () -> Unit = {},
+    /** 화면 켜기/끄기 명령 */
+    private val onScreenControl: (on: Boolean) -> Unit = {},
     /** 볼륨 설정 명령 (0~15) */
     private val onSetVolume: (level: Int) -> Unit = {},
     /** 재부팅 직전 검은 화면 준비 */
@@ -93,6 +95,15 @@ class ControlChannel(
             on("screen_schedule") { _ ->
                 Log.i(TAG, "screen_schedule 이벤트 수신 → 스케줄 재조회")
                 onScheduleChanged()
+            }
+            on("screen_control") { args ->
+                val data = args.firstOrNull() as? JSONObject
+                val target = data?.optString("deviceId", "")
+                if (target.isNullOrBlank() || target == selfDeviceId) {
+                    val on = data?.optBoolean("on", true) ?: true
+                    Log.i(TAG, "화면 ${if (on) "켜기" else "끄기"} 명령 수신")
+                    onScreenControl(on)
+                }
             }
             on("set_volume") { args ->
                 val data = args.firstOrNull() as? JSONObject ?: return@on

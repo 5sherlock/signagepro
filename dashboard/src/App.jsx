@@ -1941,11 +1941,13 @@ function App() {
                     {/* 볼륨 + 그라디언트 레벨미터 (Option C) */}
                     {(() => {
                       const vol = device.vol;
-                      const volPct = vol != null ? Math.round(vol / 15 * 100) : null;
-                      const isMuted = vol === 0;
                       // 비디오 재생 중일 때만 활성 — 이미지 전용이거나 오프라인이면 비활성
                       const isVideo = /\.(mp4|mov|avi|mkv|webm|m4v)$/i.test(deviceMeta[device.id]?.filename || '');
                       const canAudio = device.status === 'online' && isVideo;
+                      // 이미지 재생 중엔 0/음소거로 표시
+                      const displayVol = canAudio ? vol : 0;
+                      const volPct = displayVol != null ? Math.round(displayVol / 15 * 100) : null;
+                      const isMuted = displayVol === 0;
                       const sendVol = (level) => {
                         if (!canAudio) return;
                         setDevices(prev => prev.map(d => d.id === device.id ? { ...d, vol: level } : d));
@@ -1994,7 +1996,7 @@ function App() {
                             <div style={{ flex: 1 }}>
                               <input
                                 type="range" min={0} max={15} step={1}
-                                value={vol ?? 8}
+                                value={displayVol ?? 0}
                                 style={{ width: '100%', accentColor: '#3b82f6', cursor: 'pointer', display: 'block' }}
                                 onChange={e => {
                                   const level = Number(e.target.value);
@@ -2089,8 +2091,34 @@ function App() {
                       );
                     })()}
 
-                    {/* 재부팅 버튼 */}
+                    {/* 재부팅 / 화면 OFF 버튼 */}
                     <div style={{ marginTop: '8px', display: 'flex', justifyContent: 'flex-end', gap: '6px', flexWrap: 'wrap' }}>
+                      <button
+                        disabled={device.status !== 'online'}
+                        title={device.status !== 'online' ? '오프라인 기기는 화면을 끌 수 없습니다' : '화면 끄기'}
+                        style={{
+                          fontSize: '0.7rem', padding: '3px 10px',
+                          background: 'transparent',
+                          border: `1px solid ${device.status !== 'online' ? '#1e293b' : '#ef4444'}`,
+                          borderRadius: '4px',
+                          color: device.status !== 'online' ? '#334155' : '#ef4444',
+                          cursor: device.status !== 'online' ? 'not-allowed' : 'pointer',
+                          opacity: device.status !== 'online' ? 0.4 : 1,
+                        }}
+                        onClick={() => {
+                          if (device.status !== 'online') return;
+                          apiFetch(`${SOCKET_URL}/api/devices/${device.id}/screen`, {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ on: false })
+                          })
+                            .then(r => r.json())
+                            .then(r => { if (!r.ok) alert(`화면 끄기 실패\n\n${r.error}`); })
+                            .catch(() => alert('서버 요청 실패'));
+                        }}
+                      >
+                        OFF
+                      </button>
                       <button
                         disabled={device.status !== 'online'}
                         title={device.status !== 'online' ? '오프라인 기기는 재부팅할 수 없습니다' : '기기 재부팅'}
