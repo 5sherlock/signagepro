@@ -642,6 +642,6 @@ class PlayerCoordinator(
 
     companion object {
         private const val TAG = "PlayerCoordinator"
-        private const val DEBUG_OVERLAY = true
+        private const val DEBUG_OVERLAY = false
     }
 }
