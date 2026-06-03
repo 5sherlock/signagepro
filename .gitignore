@@ -62,3 +62,7 @@ server/query_db.js
 
 # 배포 메타 (로컬 상태)
 server/update/deploy-meta.json
+
+# Agentic / IDE state
+.claude/
+

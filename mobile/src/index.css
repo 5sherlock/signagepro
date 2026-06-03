@@ -1,0 +1,88 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Outfit:wght@400;500;600;700&display=swap');
+
+:root {
+  --bg-main: #0B0F19;
+  --bg-primary: #0B0F19;
+  --bg-secondary: #1A1F35;
+  --bg-gradient: linear-gradient(135deg, #0B0F19 0%, #1A1F35 100%);
+  --glass-bg: rgba(255, 255, 255, 0.03);
+  --glass-border: rgba(255, 255, 255, 0.08);
+  --glass-hover: rgba(255, 255, 255, 0.08);
+  --text-primary: #FFFFFF;
+  --text-secondary: #94A3B8;
+  --accent-blue: #3B82F6;
+  --accent-purple: #8B5CF6;
+  --status-online: #10B981;
+  --status-offline: #EF4444;
+  --status-warning: #F59E0B;
+  --border: rgba(255, 255, 255, 0.08);
+}
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+  -webkit-tap-highlight-color: transparent;
+}
+
+body {
+  font-family: 'Inter', sans-serif;
+  background: var(--bg-main);
+  color: var(--text-primary);
+  min-height: 100vh;
+  margin: 0;
+  overflow-x: hidden;
+}
+
+h1, h2, h3, h4, h5, h6 {
+  font-family: 'Outfit', sans-serif;
+}
+
+/* Animations (from dashboard/src/index.css) */
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes fade-to-black-in {
+  0% { opacity: 0; }
+  50% { opacity: 0; }
+  100% { opacity: 1; }
+}
+@keyframes fade-to-black-out {
+  0% { opacity: 1; }
+  50% { opacity: 0; }
+  100% { opacity: 0; }
+}
+@keyframes dissolve-transition {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+@keyframes fade-out-transition {
+  from { opacity: 1; }
+  to { opacity: 0; }
+}
+
+@keyframes slide-in-right  { from { transform: translateX(100%); }  to { transform: translateX(0); } }
+@keyframes slide-out-right { from { transform: translateX(0); }     to { transform: translateX(-100%); } }
+@keyframes slide-in-left   { from { transform: translateX(-100%); } to { transform: translateX(0); } }
+@keyframes slide-out-left  { from { transform: translateX(0); }     to { transform: translateX(100%); } }
+@keyframes slide-in-up     { from { transform: translateY(100%); }  to { transform: translateY(0); } }
+@keyframes slide-out-up    { from { transform: translateY(0); }     to { transform: translateY(-100%); } }
+@keyframes slide-in-down   { from { transform: translateY(-100%); } to { transform: translateY(0); } }
+@keyframes slide-out-down  { from { transform: translateY(0); }     to { transform: translateY(100%); } }
+
+.preview-fade     { opacity: 0; animation: fade-to-black-in  var(--trans-time, 1s) ease-in-out forwards; }
+.preview-fade-out {             animation: fade-to-black-out var(--trans-time, 1s) ease-in-out forwards; }
+
+.preview-dissolve     { opacity: 0; animation: dissolve-transition  var(--trans-time, 1s) ease-in-out forwards; }
+.preview-dissolve-out {             animation: fade-out-transition  var(--trans-time, 1s) ease-in-out forwards; }
+
+.preview-slide-in-right  { animation: slide-in-right  var(--trans-time, 0.8s) cubic-bezier(0.4,0,0.2,1) forwards; }
+.preview-slide-out-right { animation: slide-out-right var(--trans-time, 0.8s) cubic-bezier(0.4,0,0.2,1) forwards; }
+.preview-slide-in-left   { animation: slide-in-left   var(--trans-time, 0.8s) cubic-bezier(0.4,0,0.2,1) forwards; }
+.preview-slide-out-left  { animation: slide-out-left  var(--trans-time, 0.8s) cubic-bezier(0.4,0,0.2,1) forwards; }
+.preview-slide-in-up     { animation: slide-in-up     var(--trans-time, 0.8s) cubic-bezier(0.4,0,0.2,1) forwards; }
+.preview-slide-out-up    { animation: slide-out-up    var(--trans-time, 0.8s) cubic-bezier(0.4,0,0.2,1) forwards; }
+.preview-slide-in-down   { animation: slide-in-down   var(--trans-time, 0.8s) cubic-bezier(0.4,0,0.2,1) forwards; }
+.preview-slide-out-down  { animation: slide-out-down  var(--trans-time, 0.8s) cubic-bezier(0.4,0,0.2,1) forwards; }

@@ -5,8 +5,9 @@
   "scripts": {
     "server": "cd server && npm run dev",
     "dashboard": "cd dashboard && npm run dev",
-    "dev": "concurrently --names \"SERVER,DASHBOARD\" --prefix-colors \"cyan,magenta\" \"npm run server\" \"npm run dashboard\"",
-    "install:all": "cd server && npm install && cd ../dashboard && npm install",
+    "mobile": "cd mobile && npm run dev",
+    "dev": "concurrently --names \"SERVER,DASHBOARD,MOBILE\" --prefix-colors \"cyan,magenta,yellow\" \"npm run server\" \"npm run dashboard\" \"npm run mobile\"",
+    "install:all": "cd server && npm install && cd ../dashboard && npm install && cd ../mobile && npm install",
     "db:generate": "cd server && npx prisma generate",
     "db:push": "cd server && npx prisma db push",
     "db:studio": "cd server && npx prisma studio",

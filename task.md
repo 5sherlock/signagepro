@@ -12,11 +12,13 @@
   - [x] Node.js v24.12.0 / npm v11.6.2 확인
   - [x] `server` 의존성 설치 확인 (187 packages)
   - [x] `dashboard` 의존성 설치 확인 (417 packages)
+  - [x] `mobile` 독립 폴더 생성 및 의존성 설치 완료 (2026-06-03)
   - [x] Prisma Client 재생성 (`npx prisma generate`)
   - [x] SQLite DB 스키마 동기화 확인 (`npx prisma db push`)
-  - [x] 루트 `package.json` 생성 — `npm run dev` 한 번에 서버+대시보드 동시 실행
+  - [x] 루트 `package.json` 생성 — `npm run dev` 한 번에 서버+대시보드+모바일 동시 실행
   - [x] 백엔드 서버 실행 확인 (Port 3000 HTTP, Port 10080 TCP)
   - [x] 대시보드 Dev Server 실행 확인 (http://localhost:5173)
+  - [x] 모바일 앱 Dev Server 실행 확인 (http://localhost:5174)
 
 - [x] **1단계: 백엔드 서버 구축 (Node.js + Express + SQLite)**
   - [x] `server` 폴더에 Node.js 프로젝트 초기화
@@ -81,12 +83,13 @@
 - [ ] HTTPS 설정 및 도메인 연결
 - [ ] 파일 업로드 스토리지 → S3 또는 클라우드 스토리지 연동
 
-### B-2. 웹 대시보드 배포
+### B-2. 웹 및 모바일 대시보드 배포
+- [x] 모바일 전용 독립 프로젝트 생성 (`mobile` 폴더)
 - [ ] Electron 의존성 제거 → 순수 웹앱으로 분리 (`dashboard-web` 폴더)
 - [ ] Vite 프로덕션 빌드 (`npm run build`)
 - [ ] 정적 파일 호스팅 (Vercel / Netlify / S3 Static Hosting)
 - [ ] 인증/로그인 기능 추가 (관리자 계정 보안)
-- [ ] 반응형 UI 최적화 (태블릿/모바일 대응)
+- [ ] 모바일 UI 최적화 및 기능 구현 (진행 중)
 
 ### B-3. 운영 안정화 및 AI 연동
 - [ ] 다중 매장 관리 기능 (현재 오설록 외 확장)

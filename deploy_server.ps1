@@ -82,9 +82,16 @@ Set-Location "$ProjectRoot\dashboard"
 & npm run build
 Write-Host "  ✅ 대시보드 컴파일 빌드 완료" -ForegroundColor Green
 
-# ── 6. 서버 재기동 (PM2) ───────────────────────────────────────────
-Write-Host "`n⏱️ 5. 복구된 데이터와 소스로 서비스를 다시 구동합니다..." -ForegroundColor Green
+# ── 6. 서버 빌드 및 DB 마이그레이션 ───────────────────────────────
+Write-Host "`n⏱️ 5. 백엔드 의존성 설치 및 데이터베이스 스키마를 업데이트합니다..." -ForegroundColor Green
 Set-Location "$ProjectRoot\server"
+& npm install
+& npx prisma generate
+& npx prisma db push --accept-data-loss
+Write-Host "  ✅ 백엔드 빌드 및 DB 업데이트 완료" -ForegroundColor Green
+
+# ── 7. 서버 재기동 (PM2) ───────────────────────────────────────────
+Write-Host "`n⏱️ 6. 복구된 데이터와 소스로 서비스를 다시 구동합니다..." -ForegroundColor Green
 
 # 단일 프로세스로 PM2 등록 및 시작
 & pm2 start index.js --name "signagepro-server" --interpreter "C:\Users\Administrator\AppData\Local\nvm\v20.19.0\node.exe"
@@ -94,3 +101,4 @@ Write-Host "`n=============================================" -ForegroundColor Cy
 Write-Host "🎉 모든 백업, 소스 갱신 및 서비스 기동 작업이 성공적으로 완수되었습니다!" -ForegroundColor Green
 Write-Host "  - 백업 보존 위치: $BackupDir" -ForegroundColor Yellow
 Write-Host "=============================================" -ForegroundColor Cyan
+
