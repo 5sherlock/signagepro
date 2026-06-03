@@ -73,14 +73,20 @@ Set-Location $ProjectRoot
 & git pull origin release/0.4.10
 Write-Host "  ✅ 최신 소스 코드 동기화 완료" -ForegroundColor Green
 
-# ── 5. 대시보드 빌드 검증 및 갱신 ──────────────────────────────────
-Write-Host "`n⏱️ 4. 대시보드 프론트엔드 최신 리소스를 빌드합니다..." -ForegroundColor Green
+# ── 5. 대시보드 및 모바일 빌드 검증 및 갱신 ─────────────────────────
+Write-Host "`n⏱️ 4. 대시보드 및 모바일 최신 리소스를 빌드합니다..." -ForegroundColor Green
 Set-Location "$ProjectRoot\dashboard"
 
-# 의존성 설치 및 프로덕션 빌드 실행
+# 대시보드 의존성 설치 및 프로덕션 빌드 실행
 & npm install
 & npm run build
 Write-Host "  ✅ 대시보드 컴파일 빌드 완료" -ForegroundColor Green
+
+# 모바일 의존성 설치 및 프로덕션 빌드 실행
+Set-Location "$ProjectRoot\mobile"
+& npm install
+& npm run build
+Write-Host "  ✅ 모바일 대시보드 컴파일 빌드 완료" -ForegroundColor Green
 
 # ── 6. 서버 빌드 및 DB 마이그레이션 ───────────────────────────────
 Write-Host "`n⏱️ 5. 백엔드 의존성 설치 및 데이터베이스 스키마를 업데이트합니다..." -ForegroundColor Green
