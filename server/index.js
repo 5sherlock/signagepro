@@ -1577,7 +1577,7 @@ const mobileDist = path.join(__dirname, '../mobile/dist');
 if (fs.existsSync(mobileDist)) {
   app.get('/mobile', (req, res) => res.redirect('/mobile/'));
   app.use('/mobile', express.static(mobileDist));
-  app.get('/mobile/*', (req, res) => res.sendFile(path.join(mobileDist, 'index.html')));
+  app.get('/mobile/{*splat}', (req, res) => res.sendFile(path.join(mobileDist, 'index.html')));
   console.log('[Express] 모바일 대시보드 정적 파일 서빙 활성화');
 }
 
