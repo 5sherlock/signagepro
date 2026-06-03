@@ -123,32 +123,63 @@ class ScreenScheduleManager(private val context: Context) {
 
     @Suppress("DEPRECATION")
     private fun turnScreenOn() {
+        var success = false
         try {
             val wl = powerManager.newWakeLock(
                 PowerManager.SCREEN_BRIGHT_WAKE_LOCK or PowerManager.ACQUIRE_CAUSES_WAKEUP,
                 "SignagePro:ScreenScheduleOn"
             )
             wl.acquire(3_000L)
-            Log.i(TAG, "화면 켜기 완료")
-            onScreenStateChange?.invoke(true)
+            Log.i(TAG, "WakeLock 화면 켜기 완료")
+            success = true
         } catch (e: Exception) {
-            Log.e(TAG, "화면 켜기 실패", e)
+            Log.w(TAG, "WakeLock 화면 켜기 실패, su 쉘 시도: ${e.message}")
+        }
+
+        if (!success) {
+            try {
+                Log.i(TAG, "su -c input keyevent 224 쉘 명령어 호출")
+                Runtime.getRuntime().exec(arrayOf("su", "-c", "input keyevent 224"))
+                success = true
+            } catch (e: Exception) {
+                Log.e(TAG, "su screen on 쉘 실행 실패: ${e.message}")
+            }
+        }
+
+        if (success) {
+            onScreenStateChange?.invoke(true)
         }
     }
 
     private fun turnScreenOff() {
+        var success = false
         try {
             if (dpm.isAdminActive(adminComponent)) {
                 dpm.lockNow()
                 Log.i(TAG, "화면 끄기 완료 (lockNow)")
-                onScreenStateChange?.invoke(false)
+                success = true
             } else {
-                Log.w(TAG, "Device Admin 미활성 — 화면 끄기 불가. 관리자 권한을 부여하세요.")
+                Log.w(TAG, "Device Admin 미활성 — dpm.lockNow() 건너뜀")
             }
         } catch (e: Exception) {
-            Log.e(TAG, "화면 끄기 실패", e)
+            Log.w(TAG, "dpm.lockNow() 실패, su 쉘 시도: ${e.message}")
+        }
+
+        if (!success) {
+            try {
+                Log.i(TAG, "su -c input keyevent 223 쉘 명령어 호출")
+                Runtime.getRuntime().exec(arrayOf("su", "-c", "input keyevent 223"))
+                success = true
+            } catch (e: Exception) {
+                Log.e(TAG, "su screen off 쉘 실행 실패: ${e.message}")
+            }
+        }
+
+        if (success) {
+            onScreenStateChange?.invoke(false)
         }
     }
+
 
     companion object {
         private const val TAG = "ScreenScheduleManager"
