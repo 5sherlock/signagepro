@@ -1575,7 +1575,14 @@ reloadCrons();
 // 모바일 대시보드 정적 파일 서빙 (vite build 결과물)
 const mobileDist = path.join(__dirname, '../mobile/dist');
 if (fs.existsSync(mobileDist)) {
-  app.get('/mobile', (req, res) => res.redirect('/mobile/'));
+  app.use('/mobile', (req, res, next) => {
+    const pathOnly = req.originalUrl.split('?')[0];
+    if (req.path === '/' && !pathOnly.endsWith('/')) {
+      const query = req.originalUrl.substring(pathOnly.length);
+      return res.redirect(301, pathOnly + '/' + query);
+    }
+    next();
+  });
   app.use('/mobile', express.static(mobileDist));
   app.get('/mobile/{*splat}', (req, res) => res.sendFile(path.join(mobileDist, 'index.html')));
   console.log('[Express] 모바일 대시보드 정적 파일 서빙 활성화');
