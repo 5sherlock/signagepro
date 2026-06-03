@@ -1572,6 +1572,15 @@ async function reloadCrons() {
 // 서버 시작 시 스케줄 로드
 reloadCrons();
 
+// 모바일 대시보드 정적 파일 서빙 (vite build 결과물)
+const mobileDist = path.join(__dirname, '../mobile/dist');
+if (fs.existsSync(mobileDist)) {
+  app.use('/mobile', express.static(mobileDist));
+  app.get('/mobile', (req, res) => res.sendFile(path.join(mobileDist, 'index.html')));
+  app.get('/mobile/*', (req, res) => res.sendFile(path.join(mobileDist, 'index.html')));
+  console.log('[Express] 모바일 대시보드 정적 파일 서빙 활성화');
+}
+
 // 대시보드 정적 파일 서빙 (vite build 결과물)
 const dashboardDist = path.join(__dirname, '../dashboard/dist');
 if (fs.existsSync(dashboardDist)) {
@@ -1579,6 +1588,7 @@ if (fs.existsSync(dashboardDist)) {
   app.get('/{*splat}', (req, res) => res.sendFile(path.join(dashboardDist, 'index.html')));
   console.log('[Express] 대시보드 정적 파일 서빙 활성화');
 }
+
 
 // 서버 실행
 const HTTP_PORT = process.env.PORT || 3300;
