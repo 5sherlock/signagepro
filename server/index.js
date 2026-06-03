@@ -421,9 +421,16 @@ app.get('/api/devices/:id', async (req, res) => {
       include: { group: true, store: true }
     });
     if (!device) return res.status(404).json({ error: '기기를 찾을 수 없습니다.' });
-    // 이 기기에 적용되는 스케줄 (전체 대상 null + 기기 전용)
+    // 이 기기에 적용되는 스케줄 (전체 null + 사업장 전용 + 기기 전용)
     const schedules = await prisma.screenSchedule.findMany({
-      where: { enabled: true, OR: [{ deviceId: null }, { deviceId: req.params.id }] }
+      where: {
+        enabled: true,
+        OR: [
+          { storeId: null,           deviceId: null },           // 전체 글로벌
+          { storeId: device.storeId, deviceId: null },           // 사업장 전용
+          {                          deviceId: req.params.id },  // 기기 전용
+        ]
+      }
     });
     res.json({ ...device, schedules });
   } catch (err) {
@@ -736,7 +743,7 @@ app.post('/api/groups/:groupId/playlist', async (req, res) => {
           order: idx,
           duration: item.duration || 10,
           targetDeviceId: item.targetDeviceId || null,
-          transition: item.transition || 'fade',
+          transition: item.transition || 'dissolve',
           transitionTime: item.transitionTime || 1000,
           slideDirection: item.slideDirection || 'right'
         }));
@@ -1459,19 +1466,20 @@ app.get('/api/schedules', async (req, res) => {
 });
 
 app.post('/api/schedules', async (req, res) => {
-  const { id, deviceId, onTime, offTime, days, enabled } = req.body;
+  const { id, storeId, deviceId, onTime, offTime, days, enabled } = req.body;
   try {
     const data = {
+      storeId:  storeId  || null,
       deviceId: deviceId || null,
-      onTime: onTime || null,
-      offTime: offTime || null,
-      days: days || '1,2,3,4,5,6,0',
-      enabled: enabled !== false,
+      onTime:   onTime   || null,
+      offTime:  offTime  || null,
+      days:     days     || '1,2,3,4,5,6,0',
+      enabled:  enabled  !== false,
     };
-    // 중복 체크 — 같은 기기·켜는시간·끄는시간·요일 조합이 이미 존재하면 거부
     if (!id) {
       const dup = await prisma.screenSchedule.findFirst({
         where: {
+          storeId:  data.storeId,
           deviceId: data.deviceId,
           onTime:   data.onTime,
           offTime:  data.offTime,
@@ -1484,7 +1492,7 @@ app.post('/api/schedules', async (req, res) => {
       ? await prisma.screenSchedule.update({ where: { id }, data })
       : await prisma.screenSchedule.create({ data });
     reloadCrons();
-    io.emit('screen_schedule'); // 앱이 기기 정보 재조회하여 스케줄 갱신
+    io.emit('screen_schedule');
     res.json(schedule);
   } catch (e) {
     res.status(500).json({ error: e.message });
@@ -1510,12 +1518,13 @@ app.post('/api/schedules/push', requireAuth, async (req, res) => {
 
 const activeCrons = [];
 
-async function runScreenCommand(deviceId, on) {
+async function runScreenCommand(deviceId, storeId, on) {
   const adbPath = process.env.ADB_PATH || 'adb';
   const keycode = on ? '224' : '223';
-  const devices = deviceId
-    ? await prisma.device.findMany({ where: { id: deviceId, ip: { not: null } } })
-    : await prisma.device.findMany({ where: { ip: { not: null } } });
+  const where = deviceId ? { id: deviceId }
+              : storeId  ? { storeId }
+              : {};
+  const devices = await prisma.device.findMany({ where: { ...where, ip: { not: null } } });
 
   for (const device of devices) {
     const room = `device:${device.id}`;
@@ -1548,12 +1557,12 @@ async function reloadCrons() {
 
     if (s.onTime) {
       const [h, m] = s.onTime.split(':');
-      const job = cron.schedule(`${m} ${h} * * ${cronDays}`, () => runScreenCommand(s.deviceId, true), { timezone: 'Asia/Seoul' });
+      const job = cron.schedule(`${m} ${h} * * ${cronDays}`, () => runScreenCommand(s.deviceId, s.storeId, true), { timezone: 'Asia/Seoul' });
       activeCrons.push(job);
     }
     if (s.offTime) {
       const [h, m] = s.offTime.split(':');
-      const job = cron.schedule(`${m} ${h} * * ${cronDays}`, () => runScreenCommand(s.deviceId, false), { timezone: 'Asia/Seoul' });
+      const job = cron.schedule(`${m} ${h} * * ${cronDays}`, () => runScreenCommand(s.deviceId, s.storeId, false), { timezone: 'Asia/Seoul' });
       activeCrons.push(job);
     }
   }
@@ -1583,17 +1592,38 @@ tcpServer.listen(TCP_PORT, () => {
   console.log(`[TCP] 사이니지 보드용 소켓 서버가 포트 ${TCP_PORT}에서 대기 중입니다.`);
 });
 
-// 기기 이름 정리 — "Device-" 접두어 제거 (1회성 마이그레이션)
+// 기기 ID 및 이름 정리 — "Device-" 접두어 완전 제거 마이그레이션 (1회성)
 (async () => {
   try {
-    const devices = await prisma.device.findMany({ where: { name: { startsWith: 'Device-' } } });
+    const devices = await prisma.device.findMany({
+      where: {
+        OR: [
+          { id: { startsWith: 'Device-' } },
+          { name: { startsWith: 'Device-' } }
+        ]
+      }
+    });
     for (const d of devices) {
+      const oldId = d.id;
+      const newId = d.id.replace(/^Device-/, '');
       const newName = d.name.replace(/^Device-/, '');
-      await prisma.device.update({ where: { id: d.id }, data: { name: newName } });
-      console.log(`[Migrate] 기기 이름 정리: "${d.name}" → "${newName}"`);
+      console.log(`[Migrate] 기기 ID/이름 정리 시작: ID="${oldId}" Name="${d.name}" -> ID="${newId}" Name="${newName}"`);
+      if (oldId !== newId) {
+        await prisma.$transaction(async (tx) => {
+          await tx.$executeRawUnsafe(`UPDATE "Device" SET "id" = ? , "name" = ? WHERE "id" = ?`, newId, newName, oldId);
+          await tx.$executeRawUnsafe(`UPDATE "ScreenSchedule" SET "deviceId" = ? WHERE "deviceId" = ?`, newId, oldId);
+          await tx.$executeRawUnsafe(`UPDATE "PlaylistMedia" SET "targetDeviceId" = ? WHERE "targetDeviceId" = ?`, newId, oldId);
+        });
+      } else {
+        await prisma.device.update({
+          where: { id: d.id },
+          data: { name: newName }
+        });
+      }
+      console.log(`[Migrate] 기기 ID/이름 정리 완료: "${newId}"`);
     }
   } catch (e) {
-    console.error('[Migrate] 기기 이름 정리 오류:', e.message);
+    console.error('[Migrate] 기기 ID/이름 정리 오류:', e.message);
   }
 })();
 

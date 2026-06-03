@@ -311,7 +311,7 @@ const PlaylistPreviewModal = ({ items, deviceName, onClose }) => {
 const TransitionPreviewModal = ({ currentItem, nextItem, onChange, onClose }) => {
   const [isPlaying, setIsPlaying] = useState(true);
   const [currentTime, setCurrentTime] = useState(0); // ms
-  const [transType, setTransType] = useState(currentItem.transition || 'fade');
+  const [transType, setTransType] = useState(currentItem.transition || 'dissolve');
   const [slideDir, setSlideDir] = useState(currentItem.slideDirection || 'right');
   const [timeStr, setTimeStr] = useState(String(currentItem.transitionTime !== undefined ? currentItem.transitionTime : 1000));
   const [localTransTime, setLocalTransTime] = useState(currentItem.transitionTime !== undefined ? currentItem.transitionTime : 1000);
@@ -869,7 +869,7 @@ const MediaManager = ({ stores = [], groups = [], devices = [], selectedStoreId,
   }, [deployPanel]);
 
   const handleDrop = (deviceId, media, insertIdx = null) => {
-    const newItem = { mediaId: media.id, media, duration: 10, transition: 'fade', transitionTime: 1000, slideDirection: 'right', _key: `${media.id}-${Date.now()}` };
+    const newItem = { mediaId: media.id, media, duration: 10, transition: 'dissolve', transitionTime: 1000, slideDirection: 'right', _key: `${media.id}-${Date.now()}` };
     setLanes(prev => {
       const updated = { ...prev };
       const current = [...(updated[deviceId] || [])];

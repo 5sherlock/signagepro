@@ -4,6 +4,8 @@ import { io } from 'socket.io-client';
 import GroupManager from './components/GroupManager';
 import { SOCKET_URL, apiFetch, getToken } from './config';
 import MediaManager from './components/MediaManager';
+import DevicePreview from './components/DevicePreview';
+import LoginScreen from './components/LoginScreen';
 
 // ─────────────────────────────────────────────
 // 유틸
@@ -13,245 +15,6 @@ function formatTime(seconds) {
   const mins = Math.floor(seconds / 60);
   const secs = Math.floor(seconds % 60);
   return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
-}
-
-/**
- * PlaylistEngine(Android)과 동일 알고리즘. ms 단위 정밀도.
- * 서버 NTP epoch ms → 현재 슬라이드 인덱스 + 경과/남은 시간(초) 계산.
- * 모든 기기가 동일한 epoch를 받으면 항상 동일한 슬라이드를 반환.
- */
-function computeNtpPosition(medias, epochMs) {
-  const durationsMs = medias.map(m => (m.duration || 10) * 1000);
-  const cycleMs = durationsMs.reduce((a, b) => a + b, 0);
-  if (cycleMs <= 0) return { idx: 0, elapsed: 0, remaining: durationsMs[0] / 1000 || 10 };
-  // 음수 방어
-  const posInCycle = ((epochMs % cycleMs) + cycleMs) % cycleMs;
-  let idx = 0, acc = 0;
-  for (let i = 0; i < durationsMs.length; i++) {
-    if (posInCycle < acc + durationsMs[i]) { idx = i; break; }
-    acc += durationsMs[i];
-  }
-  const elapsedMs = posInCycle - acc;
-  return {
-    idx,
-    elapsed: Math.floor(elapsedMs / 1000),
-    remaining: Math.ceil((durationsMs[idx] - elapsedMs) / 1000),
-  };
-}
-
-// ─────────────────────────────────────────────
-// DevicePreview — 기기별 PiP 미리보기
-// ─────────────────────────────────────────────
-//
-// ■ 핵심 설계: setTimeout 누적 오차 제거
-//   이전 방식: 첫 슬롯만 NTP 기준, 이후 setTimeout(duration*1000) 체이닝
-//              → JS setTimeout이 매번 수ms 밀려 기기 간 점점 벌어짐
-//   현재 방식: 200ms setInterval로 매 tick마다 NTP epoch 재계산
-//              → 오차가 쌓이지 않음. 101/102가 항상 동일 슬라이드 표시
-
-function DevicePreview({ groupId, deviceId, onUpdate, pcAudio = false, devVol = 8, liveSlide = null }) {
-  const [playlist, setPlaylist] = useState([]);
-  const [ntpOffset, setNtpOffset] = useState(0); // 서버시각 − 로컬시각 (ms)
-  const [currentIndex, setCurrentIndex] = useState(0);
-  const [prevIndex, setPrevIndex] = useState(-1);
-  const [isTransitioning, setIsTransitioning] = useState(false);
-  const [currentTime, setCurrentTime] = useState(0);
-  const prevIdxRef = useRef(-1);
-  const transTimerRef = useRef(null);
-  const videoElRef = useRef(null);
-
-  // ── PC 오디오 볼륨/음소거 실시간 반영 ────────────────────────────────────
-  useEffect(() => {
-    const el = videoElRef.current;
-    if (!el) return;
-    const muted = !pcAudio || devVol === 0;
-    el.muted = muted;
-    if (!muted) el.volume = Math.max(0, Math.min(1, devVol / 15));
-  }, [pcAudio, devVol]);
-
-  // ── 플레이리스트 + NTP 오프셋 로드 + 주기적 재동기 ──────────────────────────────────────
-  useEffect(() => {
-    if (!groupId) return;
-
-    const load = () => {
-      const fetchStart = Date.now();
-      Promise.all([
-        fetch(`${SOCKET_URL}/api/groups/${groupId}/playlist`).then(r => r.json()),
-        fetch(`${SOCKET_URL}/api/time`)
-          .then(r => r.json())
-          .catch(() => ({ epochMs: Date.now() })),
-      ])
-        .then(([data, { epochMs }]) => {
-          const medias = (data?.medias || []).filter(
-            m => !m.targetDeviceId || m.targetDeviceId === deviceId
-          );
-          setPlaylist(medias);
-          // RTT 절반 보정 → 네트워크 왕복 지연 제거
-          const rtt = Date.now() - fetchStart;
-          setNtpOffset(epochMs - Date.now() + rtt / 2);
-          prevIdxRef.current = -1;
-        })
-        .catch(err => console.error('미리보기 불러오기 실패:', err));
-    };
-
-    load();
-    // 10초마다 NTP 재동기 — 기기 heartbeat 주기(10초)와 동일 → 타임라인 항상 최신
-    const resyncTimer = setInterval(load, 10_000);
-
-    const socket = io(SOCKET_URL);
-    socket.on('playlist_updated', ({ groupId: gid }) => {
-      if (gid === groupId) load();
-    });
-    return () => {
-      clearInterval(resyncTimer);
-      socket.disconnect();
-    };
-  }, [groupId, deviceId]);
-
-  // ── 200ms 마다 슬라이드 위치 재계산 ──────────────────────────────────────
-  // NTP epoch 기반 순수 계산 — 기기의 PlaylistEngine과 동일한 알고리즘
-  // liveSlide(하트비트) 오버라이드 제거: 최대 10초 지연 + stale 값에 의한 오싱크 원인
-  useEffect(() => {
-    if (!playlist.length) return;
-
-    const tick = () => {
-      const nowMs = Date.now() + ntpOffset;
-      const { idx, elapsed } = computeNtpPosition(playlist, nowMs);
-
-      // 인덱스가 바뀌면 전환 애니메이션 트리거
-      if (prevIdxRef.current !== -1 && prevIdxRef.current !== idx) {
-        setPrevIndex(prevIdxRef.current);
-        setIsTransitioning(true);
-        if (transTimerRef.current) clearTimeout(transTimerRef.current);
-        const tTime = playlist[prevIdxRef.current]?.transitionTime || 1000;
-        transTimerRef.current = setTimeout(() => setIsTransitioning(false), tTime);
-      }
-      prevIdxRef.current = idx;
-      setCurrentIndex(idx);
-      setCurrentTime(elapsed);
-    };
-
-    tick(); // 즉시 1회 실행
-    const interval = setInterval(tick, 200);
-    return () => {
-      clearInterval(interval);
-      if (transTimerRef.current) clearTimeout(transTimerRef.current);
-    };
-  }, [playlist, ntpOffset]);
-
-  const activeItem = playlist[currentIndex];
-  const prevItem = prevIndex !== -1 ? playlist[prevIndex] : null;
-  // 애니메이션 CSS: 전환 중엔 나가는 슬라이드(prevItem)의 효과 사용
-  const transType = (prevItem ?? activeItem)?.transition?.toLowerCase() || 'fade';
-  const transTime = (prevItem ?? activeItem)?.transitionTime || 1000;
-  const duration = activeItem?.duration || 10;
-  // 라벨 표시: 항상 현재 슬라이드(activeItem)의 전환 효과 — "이 슬라이드가 나갈 때 쓸 효과"
-  const labelTransType = activeItem?.transition?.toLowerCase() || 'fade';
-
-  // 기기 실제 보고값으로 미리보기 중인지 여부
-  const isLiveSync = liveSlide && liveSlide.index > 0 && liveSlide.index <= playlist.length;
-
-  // ── 부모(App)에 현재 재생 상태 보고 ─────────────────────────────────────
-  // onUpdate를 deps에 포함하면 App 재렌더 시 새 함수 레퍼런스 → 무한 루프
-  // → 의도적으로 deps에서 제외 (eslint-disable)
-  useEffect(() => {
-    if (!onUpdate) return;
-    onUpdate({
-      filename: activeItem?.media?.filename || 'No Media',
-      currentTime,
-      duration,
-      transType: labelTransType,
-      transTime,
-    });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeItem, currentTime, labelTransType, transTime, duration]);
-
-  if (!playlist.length) {
-    return (
-      <div style={{ width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#444' }}>
-        No Media
-      </div>
-    );
-  }
-
-  const slideDir = (prevItem ?? activeItem)?.slideDirection?.toLowerCase() || 'right';
-  let inClass = '';
-  let outClass = '';
-  if (transType === 'slide') {
-    inClass  = `preview-slide-in-${slideDir}`;
-    outClass = `preview-slide-out-${slideDir}`;
-  } else if (transType === 'fade') {
-    inClass  = 'preview-fade';
-    outClass = 'preview-fade-out';
-  } else if (transType === 'dissolve') {
-    inClass  = 'preview-dissolve';
-    outClass = 'preview-dissolve-out';
-  }
-
-  const renderMedia = (item) => {
-    if (!item) return null;
-    const { media } = item;
-    if (media.type === 'video') {
-      return (
-        <video
-          key={media.path}
-          ref={videoElRef}
-          src={`${SOCKET_URL}${media.path}`}
-          autoPlay
-          muted={!pcAudio || devVol === 0}
-          loop
-          playsInline
-          onLoadedMetadata={e => {
-            e.target.muted = !pcAudio || devVol === 0;
-            e.target.volume = Math.max(0, Math.min(1, devVol / 15));
-          }}
-          style={{ width: '100%', height: '100%', objectFit: 'cover', background: '#000' }}
-        />
-      );
-    }
-    return (
-      <img
-        src={`${SOCKET_URL}${media.path}`}
-        alt="Preview"
-        style={{ width: '100%', height: '100%', objectFit: 'cover' }}
-      />
-    );
-  };
-
-  return (
-    <div style={{ position: 'relative', width: '100%', height: '100%', overflow: 'hidden', background: '#000' }}>
-      {/* LIVE / NTP 표시 배지 */}
-      <div style={{
-        position: 'absolute', top: 4, right: 4, zIndex: 10,
-        fontSize: '0.48rem', fontWeight: 700, letterSpacing: '0.04em',
-        padding: '2px 5px', borderRadius: 3,
-        background: isLiveSync ? 'rgba(16,185,129,0.85)' : 'rgba(99,102,241,0.75)',
-        color: '#fff', pointerEvents: 'none',
-      }}>
-        {isLiveSync ? '● LIVE' : '◎ NTP'}
-      </div>
-      {/* 전환 중: 이전 슬라이드 — slide-out 애니메이션 적용 */}
-      {isTransitioning && prevItem && (
-        <div
-          className={outClass}
-          style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', zIndex: 1, '--trans-time': `${transTime}ms` }}
-        >
-          {renderMedia(prevItem)}
-        </div>
-      )}
-      {/* 현재 슬라이드 — slide-in 애니메이션 적용 */}
-      <div
-        key={`${activeItem.id}-${currentIndex}`}
-        className={inClass}
-        style={{
-          position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', zIndex: 2,
-          '--trans-time': `${transTime}ms`
-        }}
-      >
-        {renderMedia(activeItem)}
-      </div>
-    </div>
-  );
 }
 
 // ─────────────────────────────────────────────
@@ -341,9 +104,10 @@ function TimeStepper({ value, onChange }) {
 function ScreenScheduleSection({ onUnauth, deviceOrder = {} }) {
   const [schedules, setSchedules] = useState([]);
   const [devices, setDevices] = useState([]);
+  const [stores, setStores] = useState([]);
   const [saving, setSaving] = useState(false);
   const [toast, setToast] = useState(null); // { msg, ok }
-  const [draft, setDraft] = useState({ deviceId: '', onTime: '09:00', offTime: '22:00', days: '1,2,3,4,5', enabled: true });
+  const [draft, setDraft] = useState({ storeId: '', deviceId: '', onTime: '09:00', offTime: '22:00', days: '1,2,3,4,5', enabled: true });
   const [editId, setEditId] = useState(null);
   const [showForm, setShowForm] = useState(false); // 추가 폼 열림/닫힘
   // 기기 현재 시각 — 온라인 기기의 deviceTime 기준으로 1초 tick
@@ -377,6 +141,7 @@ function ScreenScheduleSection({ onUnauth, deviceOrder = {} }) {
         })
         .catch(() => {});
 
+    apiFetch(`${SOCKET_URL}/api/stores`).then(r => r.json()).then(setStores).catch(() => {});
     fetchDevices();
     const pollId = setInterval(fetchDevices, 10000); // 10초마다 갱신
     const tickId = setInterval(() => {
@@ -400,13 +165,13 @@ function ScreenScheduleSection({ onUnauth, deviceOrder = {} }) {
 
   const startEdit = (s) => {
     setEditId(s.id);
-    setDraft({ deviceId: s.deviceId || '', onTime: s.onTime || '', offTime: s.offTime || '', days: s.days, enabled: s.enabled });
+    setDraft({ storeId: s.storeId || '', deviceId: s.deviceId || '', onTime: s.onTime || '', offTime: s.offTime || '', days: s.days, enabled: s.enabled });
   };
 
   const toggleEnabled = async (s) => {
     await apiFetch(`${SOCKET_URL}/api/schedules`, {
       method: 'POST',
-      body: JSON.stringify({ id: s.id, deviceId: s.deviceId, onTime: s.onTime, offTime: s.offTime, days: s.days, enabled: !s.enabled }),
+      body: JSON.stringify({ id: s.id, storeId: s.storeId, deviceId: s.deviceId, onTime: s.onTime, offTime: s.offTime, days: s.days, enabled: !s.enabled }),
     }).then(check401);
     load();
   };
@@ -416,11 +181,11 @@ function ScreenScheduleSection({ onUnauth, deviceOrder = {} }) {
   const isFormOpen = showForm || !!editId;
   const inp = { padding: '7px 11px', borderRadius: '8px', border: '1px solid var(--border)', background: 'rgba(255,255,255,0.06)', color: 'var(--text-primary)', fontSize: '0.95rem', colorScheme: 'dark', outline: 'none', width: '100%' };
 
-  const closeForm = () => { setShowForm(false); setEditId(null); setDraft({ deviceId: '', onTime: '09:00', offTime: '22:00', days: '1,2,3,4,5', enabled: true }); };
+  const closeForm = () => { setShowForm(false); setEditId(null); setDraft({ storeId: '', deviceId: '', onTime: '09:00', offTime: '22:00', days: '1,2,3,4,5', enabled: true }); };
   const handleSave = async () => {
-    // 중복 체크 — 같은 기기·시간·요일 조합이 이미 존재하는지 확인
     const dup = schedules.find(s =>
       s.id !== editId &&
+      (s.storeId  || '') === (draft.storeId  || '') &&
       (s.deviceId || '') === (draft.deviceId || '') &&
       s.onTime  === draft.onTime &&
       s.offTime === draft.offTime &&
@@ -500,12 +265,18 @@ function ScreenScheduleSection({ onUnauth, deviceOrder = {} }) {
                       {liveOnTime  && <span style={{ fontSize: '0.95rem', fontWeight: 700, color: s.enabled ? '#fbbf24' : '#475569', flexShrink: 0 }}>☀️ {liveOnTime}</span>}
                       {liveOnTime && liveOffTime && <span style={{ color: '#475569', fontSize: '0.75rem', flexShrink: 0 }}>→</span>}
                       {liveOffTime && <span style={{ fontSize: '0.95rem', fontWeight: 700, color: s.enabled ? '#818cf8' : '#475569', flexShrink: 0 }}>🌙 {liveOffTime}</span>}
-                      {liveDeviceId
-                        ? <span style={{ fontSize: '0.68rem', color: '#60a5fa', background: 'rgba(96,165,250,0.1)', border: '1px solid rgba(96,165,250,0.2)', padding: '1px 6px', borderRadius: '4px', maxWidth: '120px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                      {(() => {
+                        const liveStoreId = isEditing ? draft.storeId : s.storeId;
+                        if (liveDeviceId)
+                          return <span style={{ fontSize: '0.68rem', color: '#60a5fa', background: 'rgba(96,165,250,0.1)', border: '1px solid rgba(96,165,250,0.2)', padding: '1px 6px', borderRadius: '4px' }}>
                             {devices.find(d => d.id === liveDeviceId)?.name || liveDeviceId}
-                          </span>
-                        : <span style={{ fontSize: '0.68rem', color: '#64748b' }}>전체 기기</span>
-                      }
+                          </span>;
+                        if (liveStoreId)
+                          return <span style={{ fontSize: '0.68rem', color: '#a78bfa', background: 'rgba(167,139,250,0.1)', border: '1px solid rgba(167,139,250,0.2)', padding: '1px 6px', borderRadius: '4px' }}>
+                            🏪 {stores.find(s => s.id === liveStoreId)?.name || liveStoreId}
+                          </span>;
+                        return <span style={{ fontSize: '0.68rem', color: '#64748b' }}>전체 기기</span>;
+                      })()}
                     </div>
                     {/* 요일 칩 */}
                     <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap' }}>
@@ -559,21 +330,31 @@ function ScreenScheduleSection({ onUnauth, deviceOrder = {} }) {
             </div>
           </div>
 
-          {/* 기기 선택 */}
+          {/* 적용 범위 선택 */}
           <div style={{ marginBottom: '16px' }}>
-            <label style={{ display: 'block', fontSize: '0.72rem', color: '#94a3b8', marginBottom: '8px' }}>📱 적용 기기</label>
+            <label style={{ display: 'block', fontSize: '0.72rem', color: '#94a3b8', marginBottom: '8px' }}>📱 적용 범위</label>
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
               {/* 전체 기기 */}
               {(() => {
-                const sel = draft.deviceId === '';
+                const sel = draft.storeId === '' && draft.deviceId === '';
                 return (
-                  <button onClick={() => setDraft(p => ({ ...p, deviceId: '' }))}
-                    style={{ padding: '5px 12px', borderRadius: '6px', fontSize: '0.72rem', fontWeight: sel ? 700 : 400, cursor: 'pointer', border: sel ? '2px solid #3b82f6' : '1px solid var(--border)', background: sel ? '#3b82f6' : 'rgba(255,255,255,0.03)', color: sel ? '#fff' : '#64748b', transition: 'all 0.15s' }}>
+                  <button onClick={() => setDraft(p => ({ ...p, storeId: '', deviceId: '' }))}
+                    style={{ padding: '5px 12px', borderRadius: '6px', fontSize: '0.72rem', fontWeight: sel ? 700 : 400, cursor: 'pointer', border: sel ? '2px solid #3b82f6' : '1px solid var(--border)', background: sel ? '#3b82f6' : 'rgba(255,255,255,0.03)', color: sel ? '#fff' : '#64748b' }}>
                     전체 기기
                   </button>
                 );
               })()}
-              {/* 개별 기기 칩 — deviceOrder 순서 적용 */}
+              {/* 사업장 칩 */}
+              {stores.map(store => {
+                const sel = draft.storeId === store.id && draft.deviceId === '';
+                return (
+                  <button key={store.id} onClick={() => setDraft(p => ({ ...p, storeId: store.id, deviceId: '' }))}
+                    style={{ padding: '5px 12px', borderRadius: '6px', fontSize: '0.72rem', fontWeight: sel ? 700 : 400, cursor: 'pointer', border: sel ? '2px solid #a78bfa' : '1px solid var(--border)', background: sel ? 'rgba(167,139,250,0.2)' : 'rgba(255,255,255,0.03)', color: sel ? '#a78bfa' : '#64748b' }}>
+                    🏪 {store.name}
+                  </button>
+                );
+              })}
+              {/* 개별 기기 칩 */}
               {(() => {
                 const orderedIds = Object.values(deviceOrder).flat();
                 const sorted = orderedIds.length === 0 ? devices : [
@@ -584,8 +365,8 @@ function ScreenScheduleSection({ onUnauth, deviceOrder = {} }) {
                   const sel = draft.deviceId === dev.id;
                   const online = dev.status === 'online';
                   return (
-                    <button key={dev.id} onClick={() => setDraft(p => ({ ...p, deviceId: sel ? '' : dev.id }))}
-                      style={{ display: 'flex', alignItems: 'center', gap: '5px', padding: '5px 10px', borderRadius: '6px', fontSize: '0.72rem', fontWeight: sel ? 700 : 400, cursor: 'pointer', border: sel ? '2px solid #3b82f6' : '1px solid var(--border)', background: sel ? 'rgba(59,130,246,0.18)' : 'rgba(255,255,255,0.03)', color: sel ? '#93c5fd' : '#64748b', transition: 'all 0.15s' }}>
+                    <button key={dev.id} onClick={() => setDraft(p => ({ ...p, storeId: '', deviceId: sel ? '' : dev.id }))}
+                      style={{ display: 'flex', alignItems: 'center', gap: '5px', padding: '5px 10px', borderRadius: '6px', fontSize: '0.72rem', fontWeight: sel ? 700 : 400, cursor: 'pointer', border: sel ? '2px solid #3b82f6' : '1px solid var(--border)', background: sel ? 'rgba(59,130,246,0.18)' : 'rgba(255,255,255,0.03)', color: sel ? '#93c5fd' : '#64748b' }}>
                       <span style={{ width: '6px', height: '6px', borderRadius: '50%', background: !online ? '#ef4444' : sel ? '#10b981' : '#334155', flexShrink: 0 }} />
                       {dev.name}
                     </button>
@@ -642,9 +423,10 @@ function SettingsTab({ onUnauth, deviceOrder = {} }) {
   const [adbRunning, setAdbRunning] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState(0);
-  const [pushResults, setPushResults] = useState(null); // { deviceId, success, label }[]
+  const [pushResults, setPushResults] = useState(null);
   // 기기 목록 + 선택
   const [allDevices, setAllDevices] = useState([]);
+  const [stores, setStores] = useState([]);
   const [selectedIds, setSelectedIds] = useState(new Set());
   // 기기별 다운로드/설치 진행률 { [deviceId]: { cur, total, pct, label } | null }
   const [dlProgress, setDlProgress] = useState({});
@@ -667,13 +449,15 @@ function SettingsTab({ onUnauth, deviceOrder = {} }) {
       .then(r => r.json())
       .then(devs => {
         setAllDevices(devs);
-        // 처음 로드 시 온라인 기기만 자동 선택 (설치 중일 땐 변경 안 함)
         setSelectedIds(prev => {
           if (prev.size === 0 && !pushing) return new Set(devs.filter(d => d.status === 'online').map(d => d.id));
           return prev;
         });
       })
       .catch(() => {});
+
+  const refreshStores = () =>
+    apiFetch(`${SOCKET_URL}/api/stores`).then(r => r.json()).then(setStores).catch(() => {});
 
   // 페이지 복귀 시 서버 설치 상태 복원
   const checkAdbStatus = () =>
@@ -697,6 +481,7 @@ function SettingsTab({ onUnauth, deviceOrder = {} }) {
   useEffect(() => {
     refreshStatus();
     refreshDevices();
+    refreshStores();
     checkAdbStatus();
     const t = setInterval(refreshDevices, 10000);
 
@@ -1026,15 +811,38 @@ function SettingsTab({ onUnauth, deviceOrder = {} }) {
           {allDevices.length === 0 ? (
             <p style={{ fontSize: '0.82rem', color: '#64748b', padding: '10px 0' }}>기기 없음</p>
           ) : (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
               {(() => {
-                const orderedIds = Object.values(deviceOrder).flat();
-                const sorted = orderedIds.length === 0 ? allDevices : [
-                  ...orderedIds.map(id => allDevices.find(d => d.id === id)).filter(Boolean),
-                  ...allDevices.filter(d => !orderedIds.includes(d.id)),
-                ];
-                return sorted;
-              })().map(dev => {
+                const storeGroups = stores.map(store => ({
+                  store,
+                  devices: allDevices.filter(d => d.storeId === store.id)
+                })).filter(g => g.devices.length > 0);
+                const unassigned = allDevices.filter(d => !stores.some(s => s.id === d.storeId));
+                if (unassigned.length > 0) storeGroups.push({ store: { id: null, name: '미배정' }, devices: unassigned });
+                return storeGroups;
+              })().map(({ store, devices }) => {
+                const storeAllSelected = devices.every(d => selectedIds.has(d.id));
+                const storeSomeSelected = devices.some(d => selectedIds.has(d.id));
+                const toggleStore = () => {
+                  setSelectedIds(prev => {
+                    const next = new Set(prev);
+                    if (storeAllSelected) devices.forEach(d => next.delete(d.id));
+                    else devices.forEach(d => next.add(d.id));
+                    return next;
+                  });
+                };
+                return (
+                  <div key={store.id || 'unassigned'}>
+                    {/* 사업장 헤더 */}
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '6px', padding: '4px 0' }}>
+                      <span style={{ fontSize: '0.8rem', fontWeight: 700, color: '#94a3b8' }}>🏪 {store.name}</span>
+                      <button onClick={toggleStore}
+                        style={{ fontSize: '0.7rem', padding: '2px 8px', background: 'transparent', border: `1px solid ${storeAllSelected ? 'rgba(249,115,22,0.5)' : 'rgba(255,255,255,0.15)'}`, borderRadius: '4px', color: storeAllSelected ? '#f97316' : '#64748b', cursor: 'pointer' }}>
+                        {storeAllSelected ? '해제' : storeSomeSelected ? '전체 선택' : '선택'}
+                      </button>
+                    </div>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', paddingLeft: '12px', borderLeft: '2px solid rgba(255,255,255,0.07)' }}>
+                    {devices.map(dev => {
                 const isOnline = dev.status === 'online';
                 const checked = selectedIds.has(dev.id);
                 const result = pushResults?.find(r => r.id === dev.id);
@@ -1100,6 +908,10 @@ function SettingsTab({ onUnauth, deviceOrder = {} }) {
                         </div>
                       );
                     })()}
+                  </div>
+                );
+              })}
+                    </div>
                   </div>
                 );
               })}
@@ -1256,106 +1068,6 @@ function RemoteControlModal({ device, onClose }) {
         {/* 상태 로그 */}
         {log && <p style={{ margin:0, fontSize:'0.78rem', color:'#94a3b8', fontFamily:'monospace' }}>▶ {log}</p>}
       </div>
-    </div>
-  );
-}
-
-function LoginScreen({ onLogin }) {
-  const [mode, setMode] = useState('login'); // 'login' | 'change'
-  const [pw, setPw] = useState('');
-  const [currentPw, setCurrentPw] = useState('');
-  const [newPw, setNewPw] = useState('');
-  const [confirmPw, setConfirmPw] = useState('');
-  const [error, setError] = useState('');
-  const [success, setSuccess] = useState('');
-  const [loading, setLoading] = useState(false);
-
-  const submitLogin = async (e) => {
-    e.preventDefault();
-    setLoading(true); setError('');
-    try {
-      const r = await fetch(`${SOCKET_URL}/api/auth/login`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ password: pw }),
-      });
-      const d = await r.json();
-      if (!r.ok) { setError(d.error || '로그인 실패'); return; }
-      localStorage.setItem('SIGNAGE_TOKEN', d.token);
-      onLogin();
-    } catch { setError('서버에 연결할 수 없습니다.'); }
-    finally { setLoading(false); }
-  };
-
-  const submitChange = async (e) => {
-    e.preventDefault();
-    setError(''); setSuccess('');
-    if (newPw !== confirmPw) { setError('새 비밀번호가 일치하지 않습니다.'); return; }
-    if (newPw.length < 4) { setError('새 비밀번호는 4자 이상이어야 합니다.'); return; }
-    setLoading(true);
-    try {
-      const r = await fetch(`${SOCKET_URL}/api/auth/change-password`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ current: currentPw, newPassword: newPw }),
-      });
-      const d = await r.json();
-      if (!r.ok) { setError(d.error || '변경 실패'); return; }
-      setSuccess('비밀번호가 변경되었습니다. 새 비밀번호로 로그인하세요.');
-      setCurrentPw(''); setNewPw(''); setConfirmPw('');
-      setTimeout(() => { setMode('login'); setSuccess(''); }, 2000);
-    } catch { setError('서버에 연결할 수 없습니다.'); }
-    finally { setLoading(false); }
-  };
-
-  const inputStyle = { padding:'10px 12px', borderRadius:'8px', border:'1px solid var(--border)', background:'var(--bg-primary)', color:'var(--text-primary)', fontSize:'1rem', outline:'none' };
-
-  return (
-    <div style={{ display:'flex', alignItems:'center', justifyContent:'center', height:'100vh', background:'var(--bg-primary)' }}>
-      <form onSubmit={mode === 'login' ? submitLogin : submitChange}
-        style={{ background:'var(--bg-secondary)', border:'1px solid var(--border)', borderRadius:'12px', padding:'40px', width:'320px', display:'flex', flexDirection:'column', gap:'16px' }}>
-        <div style={{ display:'flex', alignItems:'center', gap:'10px', marginBottom:'4px' }}>
-          <Activity size={28} color="#3B82F6" />
-          <span style={{ fontSize:'1.3rem', fontWeight:700, color:'var(--text-primary)' }}>SignagePro</span>
-        </div>
-
-        {mode === 'login' ? (
-          <>
-            <p style={{ color:'var(--text-secondary)', fontSize:'0.85rem', margin:0 }}>관리자 비밀번호를 입력하세요.</p>
-            <input type="password" value={pw} onChange={e => setPw(e.target.value)}
-              placeholder="비밀번호" autoFocus style={inputStyle} />
-            {error && <p style={{ color:'#EF4444', fontSize:'0.8rem', margin:0 }}>{error}</p>}
-            <button type="submit" disabled={loading}
-              style={{ padding:'10px', borderRadius:'8px', background:'#3B82F6', color:'#fff', border:'none', fontWeight:600, fontSize:'1rem', cursor:'pointer' }}>
-              {loading ? '확인 중…' : '로그인'}
-            </button>
-            <button type="button" onClick={() => { setMode('change'); setError(''); }}
-              style={{ padding:'6px', background:'transparent', border:'none', color:'var(--text-secondary)', fontSize:'0.8rem', cursor:'pointer', textDecoration:'underline' }}>
-              비밀번호 변경
-            </button>
-          </>
-        ) : (
-          <>
-            <p style={{ color:'var(--text-secondary)', fontSize:'0.85rem', margin:0 }}>비밀번호를 변경합니다.</p>
-            <input type="password" value={currentPw} onChange={e => setCurrentPw(e.target.value)}
-              placeholder="현재 비밀번호" autoFocus style={inputStyle} />
-            <input type="password" value={newPw} onChange={e => setNewPw(e.target.value)}
-              placeholder="새 비밀번호" style={inputStyle} />
-            <input type="password" value={confirmPw} onChange={e => setConfirmPw(e.target.value)}
-              placeholder="새 비밀번호 확인" style={inputStyle} />
-            {error && <p style={{ color:'#EF4444', fontSize:'0.8rem', margin:0 }}>{error}</p>}
-            {success && <p style={{ color:'#10B981', fontSize:'0.8rem', margin:0 }}>{success}</p>}
-            <button type="submit" disabled={loading}
-              style={{ padding:'10px', borderRadius:'8px', background:'#10B981', color:'#fff', border:'none', fontWeight:600, fontSize:'1rem', cursor:'pointer' }}>
-              {loading ? '변경 중…' : '비밀번호 변경'}
-            </button>
-            <button type="button" onClick={() => { setMode('login'); setError(''); }}
-              style={{ padding:'6px', background:'transparent', border:'none', color:'var(--text-secondary)', fontSize:'0.8rem', cursor:'pointer', textDecoration:'underline' }}>
-              로그인으로 돌아가기
-            </button>
-          </>
-        )}
-      </form>
     </div>
   );
 }
@@ -1799,28 +1511,8 @@ function App() {
                       </div>
                     )}
 
-                    {/* 화면 꺼짐 오버레이 — 스케줄 OFF, 기기는 온라인 유지 */}
-                    {device.screenOff && device.status === 'online' && serverOnline === true && (
-                      <div style={{
-                        position: 'absolute', top: 0, left: 0, right: 0, bottom: 0,
-                        background: 'rgba(8, 12, 28, 0.86)',
-                        backdropFilter: 'blur(2px)',
-                        borderRadius: '16px',
-                        display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
-                        zIndex: 5, gap: '8px',
-                        border: '1px solid rgba(99,102,241,0.25)',
-                        padding: '16px', textAlign: 'center', pointerEvents: 'none'
-                      }}>
-                        <div style={{ fontSize: '1.6rem', lineHeight: 1 }}>🌙</div>
-                        <div style={{ fontWeight: 700, fontSize: '0.82rem', color: '#818cf8' }}>화면 꺼짐</div>
-                        <div style={{ fontSize: '0.66rem', color: '#475569', lineHeight: '1.4' }}>
-                          스케줄에 의해 꺼진 상태<br/>기기는 정상 연결 중
-                        </div>
-                      </div>
-                    )}
-
                     {/* PiP 화면 영역 */}
-                    <div className="thumbnail-wrapper">
+                    <div className="thumbnail-wrapper" style={{ position: 'relative' }}>
                       <div className="device-thumbnail">
                         <div className="pip-badge">
                           <Monitor size={10} color={device.status === 'online' ? '#10B981' : '#EF4444'} />
@@ -1842,6 +1534,25 @@ function App() {
                         )}
                       </div>
 
+                      {/* 화면 꺼짐 오버레이 — 썸네일 영역에만 적용 */}
+                      {device.screenOff && device.status === 'online' && serverOnline === true && (
+                        <div style={{
+                          position: 'absolute', top: 0, left: 0, right: 0, bottom: 0,
+                          background: 'rgba(8, 12, 28, 0.86)',
+                          backdropFilter: 'blur(2px)',
+                          borderRadius: '12px',
+                          display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
+                          zIndex: 5, gap: '8px',
+                          border: '1px solid rgba(99,102,241,0.25)',
+                          padding: '16px', textAlign: 'center', pointerEvents: 'none'
+                        }}>
+                          <div style={{ fontSize: '1.6rem', lineHeight: 1 }}>🌙</div>
+                          <div style={{ fontWeight: 700, fontSize: '0.82rem', color: '#818cf8' }}>화면 꺼짐</div>
+                          <div style={{ fontSize: '0.66rem', color: '#475569', lineHeight: '1.4' }}>
+                            스케줄에 의해 꺼진 상태<br/>기기는 정상 연결 중
+                          </div>
+                        </div>
+                      )}
                     </div>
 
                     <div className="device-header">

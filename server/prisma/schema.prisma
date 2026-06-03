@@ -94,7 +94,8 @@ model PlaylistMedia {
 
 model ScreenSchedule {
   id        String   @id @default(uuid())
-  deviceId  String?  // null = 전체 기기
+  storeId   String?  // null = 전체 | 특정 사업장
+  deviceId  String?  // null = 사업장 전체 | 특정 기기
   onTime    String?  // "09:00" 형식, null이면 켜기 없음
   offTime   String?  // "22:00" 형식, null이면 끄기 없음
   days      String   @default("1,2,3,4,5,6,0") // 0=일,1=월...6=토
