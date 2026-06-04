@@ -54,6 +54,18 @@ class HeartbeatService(
      * 스케줄에 의해 화면이 꺼지면 "off", 켜지면 "on" 반환.
      */
     private val screenStateProvider: (() -> String)? = null,
+    /** HDMI 연결 상태 반환. */
+    private val hdmiProvider: (() -> Boolean)? = null,
+    /** 셋톱박스 CPU 온도 반환 */
+    private val tempProvider: (() -> Float)? = null,
+    /** 디스크 가용공간 / 총용량 반환 (bytes) */
+    private val diskProvider: (() -> Pair<Long, Long>)? = null,
+    /** RAM 가용용량 / 총용량 반환 (bytes) */
+    private val ramProvider: (() -> Pair<Long, Long>)? = null,
+    /** TV EDID 정보 (Brand, Model, Serial, Resolution, HDMI Version) 반환 */
+    private val tvEdidProvider: (() -> TvEdidInfo)? = null,
+    /** TV HDMI-CEC 상태 반환 */
+    private val tvCecProvider: (() -> String)? = null,
     /**
      * 서버 ACK에서 파싱한 서버 epoch(ms)와 heartbeat 전송 시점의 elapsedRealtime을 전달.
      * NtpClient.syncFromHeartbeatAck()에 연결해 RTT 보정된 시각 동기화에 사용.
@@ -129,9 +141,25 @@ class HeartbeatService(
                     // slide: "1|5|filename.jpg" 형식 — '|' 구분자로 '/' 충돌 방지
                     val slidePart = slideProvider?.invoke()?.let { "/slide:$it" } ?: ""
                     val screenPart = screenStateProvider?.invoke()?.let { "/screen:$it" } ?: ""
+                    val hdmiPart = hdmiProvider?.invoke()?.let { "/hdmi:${if (it) 1 else 0}" } ?: ""
+                    val tempVal = tempProvider?.invoke() ?: 0f
+                    val tempPart = "/temp:${"%.1f".format(tempVal)}"
+                    val (diskFree, diskTotal) = diskProvider?.invoke() ?: (0L to 0L)
+                    val diskPart = "/disk:${diskFree}_${diskTotal}"
+                    val (ramFree, ramTotal) = ramProvider?.invoke() ?: (0L to 0L)
+                    val ramPart = "/ram:${ramFree}_${ramTotal}"
+                    val edid = tvEdidProvider?.invoke() ?: TvEdidInfo("Unknown", "Unknown", "-")
+                    val safeBrand = edid.brand.replace('/', '_').replace(':', '_')
+                    val safeModel = edid.model.replace('/', '_').replace(':', '_')
+                    val safeSerial = edid.serial.replace('/', '_').replace(':', '_')
+                    val safeMaxRes = edid.maxRes.replace('/', '_').replace(':', '_')
+                    val safeHdmiVer = edid.hdmiVer.replace('/', '_').replace(':', '_')
+                    val edidPart = "/edid:${safeBrand}|${safeModel}|${safeSerial}|${safeMaxRes}|${safeHdmiVer}"
+                    val cecVal = tvCecProvider?.invoke() ?: "Unknown"
+                    val cecPart = "/cec:$cecVal"
                     val sentAt = android.os.SystemClock.elapsedRealtime()
                     writeMutex.withLock {
-                        out.write("status:$deviceId/cpu:$cpu/mem:$mem/ver:$appVersion$dlPart$volPart$timePart$slidePart$screenPart\n")
+                        out.write("status:$deviceId/cpu:$cpu/mem:$mem/ver:$appVersion$dlPart$volPart$timePart$slidePart$screenPart$hdmiPart$tempPart$diskPart$ramPart$edidPart$cecPart\n")
                         out.flush()
                     }
                     val ack = input.readLine() ?: throw IOException("EOF on heartbeat")
@@ -151,3 +179,11 @@ class HeartbeatService(
         private const val TAG = "HeartbeatService"
     }
 }
+
+data class TvEdidInfo(
+    val brand: String,
+    val model: String,
+    val serial: String,
+    val maxRes: String = "Unknown",
+    val hdmiVer: String = "Unknown"
+)

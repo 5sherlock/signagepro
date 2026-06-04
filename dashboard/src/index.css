@@ -232,6 +232,7 @@ h6 {
 }
 
 .device-card {
+  container-type: inline-size;
   width: 100%;
   min-width: 180px;
   height: auto;
@@ -616,4 +617,334 @@ h6 {
 .preview-slide-out-up    { animation: slide-out-up    var(--trans-time, 0.8s) cubic-bezier(0.4,0,0.2,1) forwards; }
 .preview-slide-in-down   { animation: slide-in-down   var(--trans-time, 0.8s) cubic-bezier(0.4,0,0.2,1) forwards; }
 .preview-slide-out-down  { animation: slide-out-down  var(--trans-time, 0.8s) cubic-bezier(0.4,0,0.2,1) forwards; }
+
+/* --- Responsive Device Card Header Layout (Container Queries) --- */
+.device-detail-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.device-status-info {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 4px;
+}
+
+.device-ip-time {
+  font-size: 0.7rem;
+  color: var(--text-secondary);
+  font-family: monospace;
+  margin-top: 2px;
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  flex-wrap: nowrap;
+  overflow: hidden;
+}
+
+.device-schedule {
+  font-size: 0.72rem;
+  color: #38bdf8;
+  margin-top: 3px;
+  display: flex;
+  gap: 8px;
+  flex-wrap: nowrap;
+  overflow: hidden;
+}
+
+.device-video-meta {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  margin-top: 1px;
+  display: flex;
+  align-items: center;
+}
+
+.device-version-info {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  text-align: right;
+  line-height: 1.3;
+}
+
+.device-version-number {
+  font-size: 0.65rem;
+  font-family: monospace;
+  white-space: nowrap;
+}
+
+.device-version-date {
+  font-size: 0.6rem;
+  font-family: monospace;
+  white-space: nowrap;
+  color: #64748b;
+}
+
+.device-version-unconfirmed {
+  font-size: 0.65rem;
+  color: #f59e0b;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+/* Container query adjustments for narrow card width (< 270px) */
+@container (max-width: 270px) {
+  .device-header {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 8px;
+  }
+  
+  .device-status-info {
+    flex-direction: row;
+    align-items: center;
+    justify-content: flex-start;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+  
+  .device-version-info {
+    flex-direction: row;
+    align-items: center;
+    gap: 6px;
+    text-align: left;
+  }
+}
+
+/* Extra wrapping for extremely narrow card width (< 200px) */
+@container (max-width: 200px) {
+  .device-ip-time {
+    flex-wrap: wrap;
+    gap: 2px 6px;
+  }
+  
+  .device-schedule {
+    flex-wrap: wrap;
+    gap: 2px 6px;
+  }
+  
+  .device-video-meta {
+    flex-wrap: wrap;
+    gap: 4px;
+  }
+  
+  .device-version-info {
+    flex-wrap: wrap;
+    gap: 2px 6px;
+  }
+}
+
+/* HDMI Warning Badge */
+.hdmi-warning-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 0.7rem;
+  color: #ef4444;
+  background: rgba(239, 68, 68, 0.15);
+  border: 1px solid rgba(239, 68, 68, 0.35);
+  padding: 3px 8px;
+  border-radius: 4px;
+  font-weight: 700;
+  margin-top: 5px;
+  align-self: flex-start;
+  animation: hdmi-badge-pulse 2s infinite ease-in-out;
+}
+
+@keyframes hdmi-badge-pulse {
+  0% {
+    border-color: rgba(239, 68, 68, 0.35);
+    box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.2);
+  }
+  50% {
+    border-color: rgba(239, 68, 68, 0.85);
+    box-shadow: 0 0 6px 1px rgba(239, 68, 68, 0.35);
+  }
+  100% {
+    border-color: rgba(239, 68, 68, 0.35);
+    box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.2);
+  }
+}
+
+/* --- Diagnostics Modal --- */
+.diag-modal-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(4, 6, 12, 0.65);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 9999;
+  animation: fadeIn 0.25s ease-out;
+}
+
+.diag-modal-content {
+  background: rgba(15, 23, 42, 0.85);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 20px;
+  width: 90%;
+  max-width: 520px;
+  box-shadow: 0 20px 50px rgba(0, 0, 0, 0.4);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.diag-modal-header {
+  padding: 18px 24px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.diag-modal-title {
+  font-size: 1.15rem;
+  font-weight: 600;
+  color: var(--text-primary);
+  margin: 0;
+}
+
+.diag-close-btn {
+  background: transparent;
+  border: none;
+  color: var(--text-secondary);
+  font-size: 1.5rem;
+  cursor: pointer;
+  line-height: 1;
+  padding: 4px;
+  transition: color 0.2s;
+}
+
+.diag-close-btn:hover {
+  color: var(--text-primary);
+}
+
+.diag-modal-body {
+  padding: 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  overflow-y: auto;
+  max-height: 70vh;
+}
+
+.diag-section {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.diag-section-title {
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: #38bdf8;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin-bottom: 4px;
+}
+
+.diag-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 12px;
+}
+
+.diag-info-box {
+  background: rgba(255, 255, 255, 0.02);
+  border: 1px solid rgba(255, 255, 255, 0.05);
+  border-radius: 12px;
+  padding: 12px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.diag-info-label {
+  font-size: 0.72rem;
+  color: var(--text-secondary);
+}
+
+.diag-info-value {
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: var(--text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.diag-hardware-container {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.diag-hardware-row {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.diag-hw-label {
+  display: flex;
+  justify-content: space-between;
+  font-size: 0.8rem;
+  color: var(--text-secondary);
+}
+
+.diag-bar-bg {
+  height: 8px;
+  background: rgba(255, 255, 255, 0.05);
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.diag-bar-fill {
+  height: 100%;
+  border-radius: 4px;
+  transition: width 0.6s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.diag-bar-fill.temp {
+  background: linear-gradient(90deg, #10b981, #f59e0b);
+}
+
+.diag-bar-fill.danger {
+  background: linear-gradient(90deg, #f59e0b, #ef4444);
+}
+
+.diag-bar-fill.disk {
+  background: linear-gradient(90deg, #3b82f6, #8b5cf6);
+}
+
+.diag-bar-fill.ram {
+  background: linear-gradient(90deg, #3b82f6, #10b981);
+}
+
+.danger-text {
+  color: #ef4444;
+}
+
+.normal-text {
+  color: #10b981;
+}
+
+.diag-modal-footer {
+  padding: 16px 24px;
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
+  display: flex;
+  justify-content: flex-end;
+}
+
 
