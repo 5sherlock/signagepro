@@ -40,6 +40,39 @@ class SystemMetrics(private val context: Context) {
             .coerceIn(0f, 100f)
     } catch (_: Exception) { 0f }
 
+    fun cpuTemperature(): Float = try {
+        val paths = arrayOf(
+            "/sys/class/thermal/thermal_zone0/temp",
+            "/sys/class/thermal/thermal_zone1/temp",
+            "/sys/devices/virtual/thermal/thermal_zone0/temp",
+            "/sys/class/hwmon/hwmon0/temp1_input"
+        )
+        var temp = 0f
+        for (path in paths) {
+            val file = File(path)
+            if (file.exists()) {
+                val raw = file.readText().trim().toFloatOrNull() ?: continue
+                temp = if (raw > 1000) raw / 1000f else raw
+                if (temp in 10f..120f) break
+            }
+        }
+        temp
+    } catch (_: Exception) { 0f }
+
+    fun diskSpace(): Pair<Long, Long> = try {
+        val stat = android.os.StatFs(context.filesDir.absolutePath)
+        val free = stat.availableBlocksLong * stat.blockSizeLong
+        val total = stat.blockCountLong * stat.blockSizeLong
+        free to total
+    } catch (_: Exception) { 0L to 0L }
+
+    fun ramSpace(): Pair<Long, Long> = try {
+        val am = context.getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager
+        val info = ActivityManager.MemoryInfo()
+        am.getMemoryInfo(info)
+        info.availMem to info.totalMem
+    } catch (_: Exception) { 0L to 0L }
+
     private fun readStat(): Pair<Long, Long> {
         val line = File("/proc/stat").bufferedReader().use { it.readLine() }
         // 형식: "cpu user nice system idle iowait irq softirq steal ..."

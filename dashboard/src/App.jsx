@@ -204,7 +204,7 @@ function ScreenScheduleSection({ onUnauth, deviceOrder = {} }) {
   };
 
   return (
-    <div className="glass-card" style={{ maxWidth: '600px', padding: '24px 28px', marginTop: '20px', height: 'auto', alignSelf: 'stretch' }}>
+    <div className="glass-card" style={{ maxWidth: '600px', padding: '24px 28px', marginTop: '20px', height: 'auto', alignSelf: 'stretch', flexShrink: 0 }}>
 
       {/* ── 헤더 ── */}
       <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '20px' }}>
@@ -1069,8 +1069,132 @@ function RemoteControlModal({ device, onClose }) {
   );
 }
 
+function DeviceDiagnosticsModal({ device, onClose }) {
+  const formatBytesGB = (bytes) => {
+    if (!bytes) return '0 GB';
+    return (bytes / (1024 * 1024 * 1024)).toFixed(1) + ' GB';
+  };
+
+  const formatBytesMB = (bytes) => {
+    if (!bytes) return '0 MB';
+    return (bytes / (1024 * 1024)).toFixed(0) + ' MB';
+  };
+
+  const disk = device.diskSpace || { free: 0, total: 0 };
+  const diskUsed = disk.total - disk.free;
+  const diskUsedPct = disk.total > 0 ? Math.round((diskUsed / disk.total) * 100) : 0;
+
+  const ram = device.ramSpace || { free: 0, total: 0 };
+  const ramUsed = ram.total - ram.free;
+  const ramUsedPct = ram.total > 0 ? Math.round((ramUsed / ram.total) * 100) : 0;
+
+  const edid = device.tvEdid || { brand: 'Unknown', model: 'Unknown', serial: '-', maxRes: 'Unknown', hdmiVer: 'Unknown' };
+  const cec = device.tvCec || (device.status === 'online' ? (device.hdmiConnected ? '켜짐' : '꺼짐') : 'Unknown');
+
+  const temp = device.cpuTemp || 0;
+  const isTempHigh = temp > 75;
+
+  return (
+    <div className="diag-modal-overlay" onClick={onClose}>
+      <div className="diag-modal-content animate-fade-in" onClick={e => e.stopPropagation()}>
+        <div className="diag-modal-header">
+          <h2 className="diag-modal-title">📊 기기 상세 진단 ({device.name})</h2>
+          <button className="diag-close-btn" onClick={onClose}>&times;</button>
+        </div>
+        
+        <div className="diag-modal-body">
+          <div className="diag-section">
+            <h3 className="diag-section-title">📺 TV 디스플레이 상태 (EDID / CEC)</h3>
+            <div className="diag-grid">
+              <div className="diag-info-box">
+                <div className="diag-info-label">제조사 (Brand)</div>
+                <div className="diag-info-value">{edid.brand}</div>
+              </div>
+              <div className="diag-info-box">
+                <div className="diag-info-label">모델명 (Model Name)</div>
+                <div className="diag-info-value" title={edid.model}>{edid.model}</div>
+              </div>
+              <div className="diag-info-box">
+                <div className="diag-info-label">시리얼 번호</div>
+                <div className="diag-info-value">{edid.serial}</div>
+              </div>
+              <div className="diag-info-box">
+                <div className="diag-info-label">전원 상태 (CEC)</div>
+                <div className="diag-info-value" style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                  <span className={`status-dot ${cec === '켜짐' ? 'online' : 'offline'}`} style={{ position: 'static', transform: 'none' }}></span>
+                  <span style={{ color: cec === '켜짐' ? '#10b981' : '#f59e0b', fontWeight: 700 }}>{cec}</span>
+                </div>
+              </div>
+              <div className="diag-info-box">
+                <div className="diag-info-label">HDMI 버전 (최대)</div>
+                <div className="diag-info-value">{edid.hdmiVer || 'Unknown'}</div>
+              </div>
+              <div className="diag-info-box">
+                <div className="diag-info-label">TV 최대 해상도</div>
+                <div className="diag-info-value">{edid.maxRes || 'Unknown'}</div>
+              </div>
+            </div>
+          </div>
+
+          <div className="diag-section">
+            <h3 className="diag-section-title">📟 셋톱박스 하드웨어 상태</h3>
+            
+            <div className="diag-hardware-container">
+              <div className="diag-hardware-row">
+                <div className="diag-hw-label">
+                  <span>🌡️ CPU 내부 온도</span>
+                  <span className={isTempHigh ? 'danger-text' : 'normal-text'} style={{ fontWeight: 700 }}>
+                    {temp > 0 ? `${temp.toFixed(1)}°C` : '측정 불가'}
+                  </span>
+                </div>
+                <div className="diag-bar-bg">
+                  <div 
+                    className={`diag-bar-fill ${isTempHigh ? 'danger' : 'temp'}`} 
+                    style={{ width: `${Math.min(100, Math.max(0, temp))}%` }}
+                  ></div>
+                </div>
+              </div>
+
+              <div className="diag-hardware-row">
+                <div className="diag-hw-label">
+                  <span>💾 저장 장치 용량 (사용량: {diskUsedPct}%)</span>
+                  <span>{formatBytesGB(diskUsed)} / {formatBytesGB(disk.total)}</span>
+                </div>
+                <div className="diag-bar-bg">
+                  <div 
+                    className="diag-bar-fill disk" 
+                    style={{ width: `${diskUsedPct}%` }}
+                  ></div>
+                </div>
+              </div>
+
+              <div className="diag-hardware-row">
+                <div className="diag-hw-label">
+                  <span>🧠 RAM 사용 현황 (사용량: {ramUsedPct}%)</span>
+                  <span>{formatBytesMB(ramUsed)} / {formatBytesMB(ram.total)}</span>
+                </div>
+                <div className="diag-bar-bg">
+                  <div 
+                    className="diag-bar-fill ram" 
+                    style={{ width: `${ramUsedPct}%` }}
+                  ></div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div className="diag-modal-footer">
+          <button className="btn btn-primary" onClick={onClose} style={{ padding: '8px 24px', fontSize: '0.85rem' }}>닫기</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function App() {
   const [authed, setAuthed] = useState(!!getToken());
+  const [selectedDiagDevice, setSelectedDiagDevice] = useState(null);
   const [activeTab, setActiveTab] = useState('dashboard');
   const [currentDateTime, setCurrentDateTime] = useState(new Date());
 
@@ -1172,7 +1296,13 @@ function App() {
                 vol: newDev.vol ?? oldDev.vol,
                 dl: newDev.dl === null ? null : (newDev.dl ?? oldDev.dl),
                 slide: newDev.slide === null ? null : (newDev.slide ?? oldDev.slide),
-                screenOff: newDev.screenOff ?? oldDev.screenOff ?? false
+                screenOff: newDev.screenOff ?? oldDev.screenOff ?? false,
+                hdmiConnected: newDev.hdmiConnected ?? oldDev.hdmiConnected ?? true,
+                cpuTemp: newDev.cpuTemp ?? oldDev.cpuTemp ?? null,
+                diskSpace: newDev.diskSpace ?? oldDev.diskSpace ?? null,
+                ramSpace: newDev.ramSpace ?? oldDev.ramSpace ?? null,
+                tvEdid: newDev.tvEdid ?? oldDev.tvEdid ?? null,
+                tvCec: newDev.tvCec ?? oldDev.tvCec ?? null
               };
             }
             return newDev;
@@ -1280,7 +1410,25 @@ function App() {
         if (exists) {
           return prev.map(d =>
             d.id === update.deviceId
-              ? { ...d, status: update.status, cpuUsage: update.cpu ?? d.cpuUsage, memUsage: update.mem ?? d.memUsage, ip: update.ip || d.ip, appVersion: update.appVersion || d.appVersion, dl: update.dl ?? null, vol: update.vol ?? d.vol, deviceTime: update.deviceTime ?? d.deviceTime, slide: update.slide ?? d.slide, screenOff: update.screenOff ?? d.screenOff ?? false }
+              ? {
+                  ...d,
+                  status: update.status,
+                  cpuUsage: update.cpu ?? d.cpuUsage,
+                  memUsage: update.mem ?? d.memUsage,
+                  ip: update.ip || d.ip,
+                  appVersion: update.appVersion || d.appVersion,
+                  dl: update.dl ?? null,
+                  vol: update.vol ?? d.vol,
+                  deviceTime: update.deviceTime ?? d.deviceTime,
+                  slide: update.slide ?? d.slide,
+                  screenOff: update.screenOff ?? d.screenOff ?? false,
+                  hdmiConnected: update.hdmiConnected ?? d.hdmiConnected ?? true,
+                  cpuTemp: update.cpuTemp ?? d.cpuTemp ?? null,
+                  diskSpace: update.diskSpace ?? d.diskSpace ?? null,
+                  ramSpace: update.ramSpace ?? d.ramSpace ?? null,
+                  tvEdid: update.tvEdid ?? d.tvEdid ?? null,
+                  tvCec: update.tvCec ?? d.tvCec ?? null
+                }
               : d
           );
         } else {
@@ -1553,13 +1701,13 @@ function App() {
                     </div>
 
                     <div className="device-header">
-                      <div>
+                      <div className="device-detail-info">
                         <h3 className="device-name">{device.name}</h3>
                         <div className="device-group" style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>
                           {device.storeName} &gt; {device.groupName}
                         </div>
                         {(device.ip || device.deviceTime) && (
-                          <div style={{ fontSize: '0.7rem', color: 'var(--text-secondary)', fontFamily: 'monospace', marginTop: '2px', display: 'flex', gap: '6px', alignItems: 'center', flexWrap: 'nowrap', overflow: 'hidden' }}>
+                          <div className="device-ip-time">
                             {device.ip && <span style={{ flexShrink: 0 }}>{device.ip}</span>}
                             {device.deviceTime && (() => {
                               // lastSeen 기준으로 보정: 마지막 하트비트 후 경과 시간만큼 더해 현재 추정 시각 표시
@@ -1578,7 +1726,7 @@ function App() {
                           if (!sched.length) return null;
                           const s = sched[0];
                           return (
-                            <div style={{ fontSize: '0.72rem', color: '#38bdf8', marginTop: '3px', display: 'flex', gap: '8px', flexWrap: 'nowrap', overflow: 'hidden' }}>
+                            <div className="device-schedule">
                               {s.onTime  ? <span style={{ flexShrink: 0, whiteSpace: 'nowrap' }}>☀️ {s.onTime}</span>  : null}
                               {s.offTime ? <span style={{ flexShrink: 0, whiteSpace: 'nowrap' }}>🌙 {s.offTime}</span> : null}
                             </div>
@@ -1593,7 +1741,7 @@ function App() {
                               </span>
                             </div>
                             {/* 시간 / 전환타입 — 항상 한 줄 (whiteSpace:nowrap으로 강제) */}
-                            <div style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', marginTop: '1px' }}>
+                            <div className="device-video-meta">
                               <span style={{ fontFamily: 'monospace', fontSize: '0.65rem', color: 'var(--text-secondary)' }}>
                                 {formatTime(deviceMeta[device.id].currentTime)} / {formatTime(deviceMeta[device.id].duration)}
                               </span>
@@ -1604,7 +1752,7 @@ function App() {
                           </div>
                         )}
                       </div>
-                      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '4px' }}>
+                      <div className="device-status-info">
                         <div className={`status-badge ${device.status}`}>
                           <span className="status-dot"></span>
                           {device.status === 'online' ? '온라인' : '오프라인'}
@@ -1616,30 +1764,26 @@ function App() {
                           const verDate = parenIdx >= 0 ? device.appVersion.slice(parenIdx + 2).replace(/\)$/, '') : null;
                           const isOutdated = standardVersion && verNum !== standardVersion;
                           return (
-                            <div style={{
-                              display: 'flex',
-                              flexDirection: 'column',
-                              alignItems: 'flex-end',
-                              textAlign: 'right',
-                              lineHeight: 1.3
-                            }}>
+                            <div className="device-version-info">
                               <span
-                                style={{ fontSize: '0.65rem', fontFamily: 'monospace', whiteSpace: 'nowrap',
+                                className={`device-version-number ${isOutdated ? 'outdated' : ''}`}
+                                style={{
                                   color: isOutdated ? '#f59e0b' : 'var(--text-secondary)',
-                                  fontWeight: isOutdated ? 700 : 400 }}
+                                  fontWeight: isOutdated ? 700 : 400
+                                }}
                                 title={`v${device.appVersion}${isOutdated ? `  (기준: v${standardVersion})` : ''}`}
                               >
                                 {isOutdated ? '⚠ ' : ''}v{verNum}
                               </span>
                               {verDate && (
-                                <span style={{ fontSize: '0.6rem', fontFamily: 'monospace', whiteSpace: 'nowrap', color: '#64748b' }}>
+                                <span className="device-version-date">
                                   {verDate}
                                 </span>
                               )}
                             </div>
                           );
                         })() : (
-                          <span style={{ fontSize: '0.65rem', color: '#f59e0b', fontWeight: 700, whiteSpace: 'nowrap' }} title="앱 버전 미확인">
+                          <span className="device-version-unconfirmed" title="앱 버전 미확인">
                             ⚠ 버전 미확인
                           </span>
                         )}
@@ -1799,86 +1943,111 @@ function App() {
                       );
                     })()}
 
-                    {/* 재부팅 / 화면 ON·OFF 버튼 */}
-                    <div style={{ marginTop: '8px', display: 'flex', justifyContent: 'flex-end', gap: '6px', flexWrap: 'wrap' }}>
-                      <button
-                        disabled={device.status !== 'online'}
-                        title={device.status !== 'online' ? '오프라인 기기는 화면을 켤 수 없습니다' : '화면 켜기'}
-                        style={{
-                          fontSize: '0.7rem', padding: '3px 10px',
-                          background: 'transparent',
-                          border: `1px solid ${device.status !== 'online' ? '#1e293b' : '#22c55e'}`,
-                          borderRadius: '4px',
-                          color: device.status !== 'online' ? '#334155' : '#22c55e',
-                          cursor: device.status !== 'online' ? 'not-allowed' : 'pointer',
-                          opacity: device.status !== 'online' ? 0.4 : 1,
-                        }}
-                        onClick={() => {
-                          if (device.status !== 'online') return;
-                          apiFetch(`${SOCKET_URL}/api/devices/${device.id}/screen`, {
-                            method: 'POST',
-                            headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify({ on: true })
-                          })
-                            .then(r => r.json())
-                            .then(r => { if (!r.ok) alert(`화면 켜기 실패\n\n${r.error}`); })
-                            .catch(() => alert('서버 요청 실패'));
-                        }}
-                      >
-                        ON
-                      </button>
-                      <button
-                        disabled={device.status !== 'online'}
-                        title={device.status !== 'online' ? '오프라인 기기는 화면을 끌 수 없습니다' : '화면 끄기'}
-                        style={{
-                          fontSize: '0.7rem', padding: '3px 10px',
-                          background: 'transparent',
-                          border: `1px solid ${device.status !== 'online' ? '#1e293b' : '#ef4444'}`,
-                          borderRadius: '4px',
-                          color: device.status !== 'online' ? '#334155' : '#ef4444',
-                          cursor: device.status !== 'online' ? 'not-allowed' : 'pointer',
-                          opacity: device.status !== 'online' ? 0.4 : 1,
-                        }}
-                        onClick={() => {
-                          if (device.status !== 'online') return;
-                          apiFetch(`${SOCKET_URL}/api/devices/${device.id}/screen`, {
-                            method: 'POST',
-                            headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify({ on: false })
-                          })
-                            .then(r => r.json())
-                            .then(r => { if (!r.ok) alert(`화면 끄기 실패\n\n${r.error}`); })
-                            .catch(() => alert('서버 요청 실패'));
-                        }}
-                      >
-                        OFF
-                      </button>
-                      <button
-                        disabled={device.status !== 'online'}
-                        title={device.status !== 'online' ? '오프라인 기기는 재부팅할 수 없습니다' : '기기 재부팅'}
-                        style={{
-                          fontSize: '0.7rem', padding: '3px 10px',
-                          background: 'transparent',
-                          border: `1px solid ${device.status !== 'online' ? '#1e293b' : 'var(--border)'}`,
-                          borderRadius: '4px',
-                          color: device.status !== 'online' ? '#334155' : 'var(--text-secondary)',
-                          cursor: device.status !== 'online' ? 'not-allowed' : 'pointer',
-                          opacity: device.status !== 'online' ? 0.4 : 1,
-                        }}
-                        onClick={() => {
-                          if (device.status !== 'online') return;
-                          if (!window.confirm(`${device.name || device.id} 기기를 재부팅할까요?`)) return;
-                          apiFetch(`${SOCKET_URL}/api/devices/${device.id}/reboot`, { method: 'POST' })
-                            .then(r => r.json())
-                            .then(r => {
-                              if (r.ok) alert('재부팅 명령을 전송했습니다.');
-                              else alert(`재부팅 실패\n\n${r.error}`);
+                    {/* 재부팅 / 화면 ON·OFF 버튼 및 진단 버튼 */}
+                    <div style={{ marginTop: '8px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '6px', flexWrap: 'wrap' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                        {device.status === 'online' && device.hdmiConnected === false && (
+                          <div className="hdmi-warning-badge" style={{ marginTop: 0, alignSelf: 'center' }} title="HDMI 케이블 연결 유실 또는 TV 전원 꺼짐 감지">
+                            ⚠️ HDMI 분리됨
+                          </div>
+                        )}
+                        <button
+                          style={{
+                            fontSize: '0.7rem', padding: '3px 10px',
+                            background: 'rgba(59, 130, 246, 0.08)',
+                            border: '1px solid rgba(59, 130, 246, 0.25)',
+                            borderRadius: '4px',
+                            color: '#60a5fa',
+                            cursor: 'pointer',
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: '4px',
+                          }}
+                          onClick={() => setSelectedDiagDevice(device)}
+                        >
+                          📊 진단
+                        </button>
+                      </div>
+                      <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
+                        <button
+                          disabled={device.status !== 'online'}
+                          title={device.status !== 'online' ? '오프라인 기기는 화면을 켤 수 없습니다' : '화면 켜기'}
+                          style={{
+                            fontSize: '0.7rem', padding: '3px 10px',
+                            background: 'transparent',
+                            border: `1px solid ${device.status !== 'online' ? '#1e293b' : '#22c55e'}`,
+                            borderRadius: '4px',
+                            color: device.status !== 'online' ? '#334155' : '#22c55e',
+                            cursor: device.status !== 'online' ? 'not-allowed' : 'pointer',
+                            opacity: device.status !== 'online' ? 0.4 : 1,
+                          }}
+                          onClick={() => {
+                            if (device.status !== 'online') return;
+                            apiFetch(`${SOCKET_URL}/api/devices/${device.id}/screen`, {
+                              method: 'POST',
+                              headers: { 'Content-Type': 'application/json' },
+                              body: JSON.stringify({ on: true })
                             })
-                            .catch(() => alert('서버 요청 실패'));
-                        }}
-                      >
-                        🔄 재부팅
-                      </button>
+                              .then(r => r.json())
+                              .then(r => { if (!r.ok) alert(`화면 켜기 실패\n\n${r.error}`); })
+                              .catch(() => alert('서버 요청 실패'));
+                          }}
+                        >
+                          ON
+                        </button>
+                        <button
+                          disabled={device.status !== 'online'}
+                          title={device.status !== 'online' ? '오프라인 기기는 화면을 끌 수 없습니다' : '화면 끄기'}
+                          style={{
+                            fontSize: '0.7rem', padding: '3px 10px',
+                            background: 'transparent',
+                            border: `1px solid ${device.status !== 'online' ? '#1e293b' : '#ef4444'}`,
+                            borderRadius: '4px',
+                            color: device.status !== 'online' ? '#334155' : '#ef4444',
+                            cursor: device.status !== 'online' ? 'not-allowed' : 'pointer',
+                            opacity: device.status !== 'online' ? 0.4 : 1,
+                          }}
+                          onClick={() => {
+                            if (device.status !== 'online') return;
+                            apiFetch(`${SOCKET_URL}/api/devices/${device.id}/screen`, {
+                              method: 'POST',
+                              headers: { 'Content-Type': 'application/json' },
+                              body: JSON.stringify({ on: false })
+                            })
+                              .then(r => r.json())
+                              .then(r => { if (!r.ok) alert(`화면 끄기 실패\n\n${r.error}`); })
+                              .catch(() => alert('서버 요청 실패'));
+                          }}
+                        >
+                          OFF
+                        </button>
+                        <button
+                          disabled={device.status !== 'online'}
+                          title={device.status !== 'online' ? '오프라인 기기는 재부팅할 수 없습니다' : '기기 재부팅'}
+                          style={{
+                            fontSize: '0.7rem', padding: '3px 10px',
+                            background: 'transparent',
+                            border: `1px solid ${device.status !== 'online' ? '#1e293b' : 'var(--border)'}`,
+                            borderRadius: '4px',
+                            color: device.status !== 'online' ? '#334155' : 'var(--text-secondary)',
+                            cursor: device.status !== 'online' ? 'not-allowed' : 'pointer',
+                            opacity: device.status !== 'online' ? 0.4 : 1,
+                          }}
+                          onClick={() => {
+                            if (device.status !== 'online') return;
+                            if (!window.confirm(`${device.name || device.id} 기기를 재부팅할까요?`)) return;
+                            apiFetch(`${SOCKET_URL}/api/devices/${device.id}/reboot`, { method: 'POST' })
+                              .then(r => r.json())
+                              .then(r => {
+                                if (r.ok) alert('재부팅 명령을 전송했습니다.');
+                                else alert(`재부팅 실패\n\n${r.error}`);
+                              })
+                              .catch(() => alert('서버 요청 실패'));
+                          }}
+                        >
+                          🔄 재부팅
+                        </button>
+                      </div>
                     </div>
                   </div>
                 ))}
@@ -1921,6 +2090,12 @@ function App() {
           <SettingsTab onUnauth={onUnauth} deviceOrder={deviceOrder} />
         )}
       </main>
+      {selectedDiagDevice && (
+        <DeviceDiagnosticsModal
+          device={devices.find(d => d.id === selectedDiagDevice.id) || selectedDiagDevice}
+          onClose={() => setSelectedDiagDevice(null)}
+        />
+      )}
     </div>
   );
 }

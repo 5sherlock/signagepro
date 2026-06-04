@@ -19,6 +19,7 @@ import com.signagepro.player.cache.MediaCacheRepo
 import com.signagepro.player.config.ConfigStore
 import com.signagepro.player.net.ControlChannel
 import com.signagepro.player.net.HeartbeatService
+import com.signagepro.player.net.TvEdidInfo
 import com.signagepro.player.render.MediaRenderer
 import com.signagepro.player.sync.NtpClient
 import kotlinx.coroutines.CoroutineScope
@@ -541,6 +542,12 @@ class PlayerCoordinator(
             vuProvider = { getVuLevel() },
             timeProvider = { ntp.now() },
             screenStateProvider = { if (screenOn) "on" else "off" },
+            hdmiProvider = { isHdmiConnected() },
+            tempProvider = { metrics.cpuTemperature() },
+            diskProvider = { metrics.diskSpace() },
+            ramProvider = { metrics.ramSpace() },
+            tvEdidProvider = { readTvEdid() },
+            tvCecProvider = { checkTvCecPower() },
             onServerEpoch = { epochMs, sentAt -> ntp.syncFromHeartbeatAck(epochMs, sentAt) }
         ).also { it.start() }
     }
@@ -636,6 +643,147 @@ class PlayerCoordinator(
         } catch (e: Exception) {
             Log.e(TAG, "AlarmManager 자가 앱 재시작 예약 실패: ${e.message}")
         }
+    }
+
+    private fun readTvEdid(): TvEdidInfo {
+        val paths = arrayOf(
+            "/sys/class/display/HDMI/edid",
+            "/sys/class/drm/card0-HDMI-A-1/edid",
+            "/sys/devices/virtual/display/HDMI/edid"
+        )
+        for (path in paths) {
+            val file = java.io.File(path)
+            if (file.exists()) {
+                try {
+                    var bytes = file.readBytes()
+                    val text = String(bytes).trim()
+                    if (text.matches(Regex("^[0-9a-fA-F\\s\\n\\r]+$"))) {
+                        val cleanText = text.replace(Regex("\\s"), "")
+                        if (cleanText.length >= 256) {
+                            val temp = ByteArray(cleanText.length / 2)
+                            for (i in temp.indices) {
+                                temp[i] = cleanText.substring(i * 2, i * 2 + 2).toInt(16).toByte()
+                            }
+                            bytes = temp
+                        }
+                    }
+
+                    if (bytes.size >= 128) {
+                        val m1 = bytes[8].toInt() and 0xFF
+                        val m2 = bytes[9].toInt() and 0xFF
+                        val c1 = (((m1 and 0x7c) shr 2) + 64).toChar()
+                        val c2 = ((((m1 and 0x03) shl 3) or ((m2 and 0xe0) shr 5)) + 64).toChar()
+                        val c3 = ((m2 and 0x1f) + 64).toChar()
+                        var brand = "$c1$c2$c3".trim()
+                        if (!brand.all { it.isLetterOrDigit() }) brand = "Unknown"
+
+                        var snVal = 0L
+                        for (i in 0..3) {
+                            snVal = snVal or ((bytes[12 + i].toLong() and 0xFF) shl (i * 8))
+                        }
+                        var serial = snVal.toString()
+                        if (serial == "0") serial = "-"
+
+                        var model = "Unknown"
+                        for (offset in arrayOf(54, 72, 90, 108)) {
+                            if (bytes.size >= offset + 18) {
+                                if (bytes[offset].toInt() == 0 && bytes[offset + 1].toInt() == 0 &&
+                                    bytes[offset + 2].toInt() == 0 && (bytes[offset + 3].toInt() and 0xFF) == 0xFC) {
+                                    val nameBytes = bytes.sliceArray((offset + 5)..(offset + 17))
+                                    model = String(nameBytes, Charsets.US_ASCII).trim()
+                                    break
+                                }
+                            }
+                        }
+
+                        // 최대 해상도 계산 (DTD 스캔)
+                        var maxH = 0
+                        var maxV = 0
+                        for (offset in arrayOf(54, 72, 90, 108)) {
+                            if (bytes.size >= offset + 18) {
+                                val pixelClock = (bytes[offset].toInt() and 0xFF) or ((bytes[offset + 1].toInt() and 0xFF) shl 8)
+                                if (pixelClock > 0) {
+                                    val hActive = ((bytes[offset + 4].toInt() and 0xF0) shl 4) or (bytes[offset + 2].toInt() and 0xFF)
+                                    val vActive = ((bytes[offset + 7].toInt() and 0xF0) shl 4) or (bytes[offset + 5].toInt() and 0xFF)
+                                    if (hActive * vActive > maxH * maxV && hActive in 320..10000 && vActive in 240..10000) {
+                                        maxH = hActive
+                                        maxV = vActive
+                                    }
+                                }
+                            }
+                        }
+                        val maxRes = if (maxH > 0 && maxV > 0) "${maxH}x${maxV}" else "Unknown"
+
+                        // HDMI 버전 추정 (기본 해상도 기반)
+                        val hdmiVer = when {
+                            maxH >= 7680 -> "HDMI 2.1 (8K)"
+                            maxH >= 3840 -> "HDMI 2.0 (4K)"
+                            maxH >= 1920 -> "HDMI 1.4 (FHD)"
+                            maxH > 0 -> "HDMI 1.3"
+                            else -> "Unknown"
+                        }
+
+                        return TvEdidInfo(brand, model, serial, maxRes, hdmiVer)
+                    }
+                } catch (e: Exception) {}
+            }
+        }
+        return TvEdidInfo("Unknown", "Unknown", "-", "Unknown", "Unknown")
+    }
+
+    private fun checkTvCecPower(): String {
+        if (!isHdmiConnected()) return "꺼짐"
+        val cecPaths = arrayOf(
+            "/sys/class/cec/cec_state",
+            "/sys/devices/platform/hdmi-cec/state",
+            "/sys/class/cec/state"
+        )
+        for (path in cecPaths) {
+            val file = java.io.File(path)
+            if (file.exists()) {
+                try {
+                    val text = file.readText().trim()
+                    if (text == "active" || text == "on" || text == "1") return "켜짐"
+                    if (text == "standby" || text == "0") return "대기모드"
+                } catch (e: Exception) {}
+            }
+        }
+        return "켜짐"
+    }
+
+    private fun isHdmiConnected(): Boolean {
+        val paths = arrayOf(
+            "/sys/class/display/HDMI/connect",
+            "/sys/class/switch/hdmi/state",
+            "/sys/class/extcon/hdmi/state"
+        )
+        for (path in paths) {
+            val file = java.io.File(path)
+            if (file.exists()) {
+                try {
+                    val text = file.readText().trim()
+                    return text == "1" || text.equals("connected", ignoreCase = true)
+                } catch (e: Exception) {}
+            }
+        }
+        val drmDir = java.io.File("/sys/class/drm")
+        if (drmDir.exists() && drmDir.isDirectory) {
+            drmDir.listFiles()?.forEach { sub ->
+                if (sub.name.contains("HDMI", ignoreCase = true)) {
+                    val statusFile = java.io.File(sub, "status")
+                    if (statusFile.exists()) {
+                        try {
+                            val text = statusFile.readText().trim()
+                            if (text.equals("connected", ignoreCase = true)) return true
+                        } catch (e: Exception) {}
+                    }
+                }
+            }
+        }
+        val hasAnyHdmiFile = paths.any { java.io.File(it).exists() } ||
+                (drmDir.exists() && drmDir.isDirectory && drmDir.listFiles()?.any { it.name.contains("HDMI", ignoreCase = true) } == true)
+        if (!hasAnyHdmiFile) return true // Fallback to true if no status nodes exist
+        return false
     }
 
     fun stop() {

@@ -402,7 +402,14 @@ app.get('/api/devices', async (req, res) => {
         vol: cached.vol !== undefined ? cached.vol : (d.vol !== undefined ? d.vol : null),
         vu: status === 'online' ? (cached.vu || 0) : 0,
         // 오프라인이면 screenOff 초기화 (기기 재연결 시 새 상태로 갱신됨)
-        screenOff: status === 'online' ? (cached.screenOff ?? false) : false
+        screenOff: status === 'online' ? (cached.screenOff ?? false) : false,
+        // HDMI 연결 상태 (오프라인이면 true)
+        hdmiConnected: status === 'online' ? (cached.hdmiConnected ?? true) : true,
+        cpuTemp: status === 'online' ? (cached.cpuTemp ?? null) : null,
+        diskSpace: status === 'online' ? (cached.diskSpace ?? null) : null,
+        ramSpace: status === 'online' ? (cached.ramSpace ?? null) : null,
+        tvEdid: status === 'online' ? (cached.tvEdid ?? null) : null,
+        tvCec: status === 'online' ? (cached.tvCec ?? null) : null
       };
     });
     console.log(`[API] 기기 목록 조회 요청됨. 현재 기기 수: ${devices.length}대`);
@@ -1330,7 +1337,8 @@ async function handleTcpMessage(socket, msg) {
     }
 
     const parts = msg.substring(7).split('/');
-    let cpu = null, mem = null, ver = null, dl = null, vol = null, deviceTime = null, slide = null, screen = null;
+    let cpu = null, mem = null, ver = null, dl = null, vol = null, deviceTime = null, slide = null, screen = null, hdmi = null;
+    let cpuTemp = null, diskSpace = null, ramSpace = null, tvEdid = null, tvCec = null;
     parts.forEach(p => {
       if (p.startsWith('cpu:')) cpu = parseFloat(p.substring(4));
       if (p.startsWith('mem:')) mem = parseFloat(p.substring(4));
@@ -1351,6 +1359,30 @@ async function handleTcpMessage(socket, msg) {
       }
       // screen: "on" 또는 "off" — 스케줄에 의한 화면 상태
       if (p.startsWith('screen:')) screen = p.substring(7).trim();
+      // hdmi: "1" 또는 "0" — HDMI 연결 여부
+      if (p.startsWith('hdmi:')) hdmi = p.substring(5).trim();
+      if (p.startsWith('temp:')) cpuTemp = parseFloat(p.substring(5));
+      if (p.startsWith('disk:')) {
+        const dp = p.substring(5).split('_');
+        if (dp.length >= 2) diskSpace = { free: parseInt(dp[0]) || 0, total: parseInt(dp[1]) || 0 };
+      }
+      if (p.startsWith('ram:')) {
+        const rp = p.substring(4).split('_');
+        if (rp.length >= 2) ramSpace = { free: parseInt(rp[0]) || 0, total: parseInt(rp[1]) || 0 };
+      }
+      if (p.startsWith('edid:')) {
+        const ep = p.substring(5).split('|');
+        if (ep.length >= 3) {
+          tvEdid = {
+            brand: ep[0],
+            model: ep[1],
+            serial: ep[2],
+            maxRes: ep[3] || 'Unknown',
+            hdmiVer: ep[4] || 'Unknown'
+          };
+        }
+      }
+      if (p.startsWith('cec:')) tvCec = p.substring(4).trim();
     });
     // dl: cur/total/pct 가 '/'로 분리되어 parts에 ['dl:1','3','67'] 형태로 들어옴
     const dlIdx = parts.findIndex(p => p.startsWith('dl:'));
@@ -1376,7 +1408,14 @@ async function handleTcpMessage(socket, msg) {
       mem: mem ?? cached.mem,
       ver: ver ?? cached.ver,
       // screen: "on"/"off" — null이면 이전 값 유지 (구버전 앱 호환)
-      screenOff: screen !== null ? (screen === 'off') : (cached.screenOff ?? false)
+      screenOff: screen !== null ? (screen === 'off') : (cached.screenOff ?? false),
+      // hdmi: "1"/"0" — null이면 이전 값 유지 (구버전 앱 호환)
+      hdmiConnected: hdmi !== null ? (hdmi === '1') : (cached.hdmiConnected ?? true),
+      cpuTemp: cpuTemp !== null ? cpuTemp : (cached.cpuTemp ?? null),
+      diskSpace: diskSpace !== null ? diskSpace : (cached.diskSpace ?? null),
+      ramSpace: ramSpace !== null ? ramSpace : (cached.ramSpace ?? null),
+      tvEdid: tvEdid !== null ? tvEdid : (cached.tvEdid ?? null),
+      tvCec: tvCec !== null ? tvCec : (cached.tvCec ?? null)
     });
 
     try {
@@ -1385,8 +1424,9 @@ async function handleTcpMessage(socket, msg) {
         update: { status: 'online', lastSeen: new Date(), ip: normalizeIp(socket.remoteAddress), cpuUsage: cpu, memUsage: mem, ...(ver && { appVersion: ver }) },
         create: { id: deviceId, name: deviceId, status: 'online', lastSeen: new Date(), ip: normalizeIp(socket.remoteAddress), cpuUsage: cpu, memUsage: mem, appVersion: ver }
       });
-      const screenOff = deviceLiveStateCache.get(deviceId)?.screenOff ?? false;
-      io.emit('device_status_update', { deviceId, status: 'online', cpu, mem, ip: normalizeIp(socket.remoteAddress), appVersion: ver, dl, vol, deviceTime, slide, screenOff });
+      const cachedState = deviceLiveStateCache.get(deviceId) || {};
+      const { screenOff = false, hdmiConnected = true, cpuTemp = null, diskSpace = null, ramSpace = null, tvEdid = null, tvCec = null } = cachedState;
+      io.emit('device_status_update', { deviceId, status: 'online', cpu, mem, ip: normalizeIp(socket.remoteAddress), appVersion: ver, dl, vol, deviceTime, slide, screenOff, hdmiConnected, cpuTemp, diskSpace, ramSpace, tvEdid, tvCec });
       socket.write(`ok:${Date.now()}\n`);
     } catch (err) {
       console.error('[TCP] DB 에러:', err);
