@@ -70,7 +70,7 @@ Set-Location $ProjectRoot
 
 # 로컬 수정 사항이 꼬여서 충돌 나는 것을 방지하기 위해 리셋 후 Pull
 & git reset --hard
-& git pull origin release/0.4.14
+& git pull origin release/0.4.16
 Write-Host "  ✅ 최신 소스 코드 동기화 완료" -ForegroundColor Green
 
 # ── 5. 대시보드 및 모바일 빌드 검증 및 갱신 ─────────────────────────
