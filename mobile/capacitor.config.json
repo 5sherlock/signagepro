@@ -1,0 +1,9 @@
+{
+  "appId": "com.signagepro.mobile",
+  "appName": "SignagePro",
+  "webDir": "dist",
+  "server": {
+    "url": "http://121.189.102.108:3300/mobile/",
+    "cleartext": true
+  }
+}
