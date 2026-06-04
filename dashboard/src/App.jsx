@@ -703,13 +703,10 @@ function SettingsTab({ onUnauth, deviceOrder = {} }) {
   };
 
   return (
-    <div className="content-area" style={{ overflowY: 'auto' }}>
-      <header className="header">
-        <h1 className="header-title">환경설정</h1>
-      </header>
+    <div className="content-area" style={{ overflowY: 'auto', paddingTop: '24px' }}>
 
       {/* 서버 연결 */}
-      <div className="glass-card" style={{ maxWidth: '600px', padding: '30px', marginTop: '20px' }}>
+      <div className="glass-card" style={{ maxWidth: '600px', padding: '30px', height: 'auto', flexShrink: 0 }}>
         <h2 style={{ marginBottom: '20px', fontSize: '1.2rem' }}>서버 연결 설정</h2>
         <div style={{ marginBottom: '20px' }}>
           <label style={{ display: 'block', marginBottom: '8px', color: 'var(--text-secondary)' }}>중앙 서버 주소 (API/Socket)</label>
@@ -739,7 +736,7 @@ function SettingsTab({ onUnauth, deviceOrder = {} }) {
       </div>
 
       {/* OTA 업데이트 */}
-      <div className="glass-card" style={{ maxWidth: '600px', padding: '30px', marginTop: '20px' }}>
+      <div className="glass-card" style={{ maxWidth: '600px', padding: '30px', marginTop: '20px', height: 'auto', flexShrink: 0 }}>
         <h2 style={{ marginBottom: '8px', fontSize: '1.2rem' }}>📦 단말 APK 원격 배포 (OTA)</h2>
         <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: '16px' }}>
           APK를 업로드한 후 배포 버튼을 누르세요. 단말이 자동으로 다운로드 후 설치합니다.
