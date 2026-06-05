@@ -33,6 +33,7 @@ const app = express();
 
 // 메모리에 보관할 기기별 실시간 상태 캐시 (deviceTime, slide, dl, vol, vu)
 const deviceLiveStateCache = new Map();
+const pendingCmdCallbacks = new Map();
 
 const DEVICE_SECRET = process.env.DEVICE_SECRET || 'changeme';
 const HEARTBEAT_TIMEOUT_MS = 35000; // 하트비트 10초 간격 × 3 + 여유
@@ -240,6 +241,17 @@ io.on('connection', (socket) => {
     }
   });
 
+  socket.on('run_cmd_result', (data) => {
+    if (data && data.deviceId && data.cmd) {
+      const key = `${data.deviceId}:${data.cmd}`;
+      const cb = pendingCmdCallbacks.get(key);
+      if (cb) {
+        cb(data.output);
+        pendingCmdCallbacks.delete(key);
+      }
+    }
+  });
+
   socket.on('disconnect', () => {
     if (socket.deviceId) {
       prisma.device.update({ where: { id: socket.deviceId }, data: { status: 'offline' } })
@@ -385,7 +397,10 @@ app.post('/api/groups', async (req, res) => {
 // 모든 기기 조회
 app.get('/api/devices', async (req, res) => {
   try {
-    const devices = await prisma.device.findMany({ include: { group: true, store: true } });
+    const devices = await prisma.device.findMany({ 
+      include: { group: true, store: true },
+      orderBy: { order: 'asc' }
+    });
     const now = Date.now();
     // DB status 를 그대로 믿지 않고, lastSeen 기준으로 실시간 재계산
     // → 스윕/소켓 close 이벤트가 미처 처리되지 않았을 때도 정확한 상태 반환
@@ -417,6 +432,25 @@ app.get('/api/devices', async (req, res) => {
   } catch (err) {
     console.error('[API] 기기 목록 조회 에러:', err);
     res.status(500).json({ error: '기기 조회 실패' });
+  }
+});
+
+// 기기 순서 변경
+app.post('/api/devices/reorder', async (req, res) => {
+  const { deviceIds } = req.body; // [id1, id2, id3, ...]
+  try {
+    await prisma.$transaction(
+      deviceIds.map((id, index) => 
+        prisma.device.update({
+          where: { id },
+          data: { order: index }
+        })
+      )
+    );
+    res.json({ success: true });
+  } catch (err) {
+    console.error('[API] 기기 순서 변경 에러:', err);
+    res.status(500).json({ error: '기기 순서 변경 실패' });
   }
 });
 
@@ -1229,6 +1263,52 @@ app.post('/api/devices/:id/restart-app', async (req, res) => {
   }
 });
 
+// 디버그용 쉘 명령어 실행
+app.post('/api/debug/run-cmd', async (req, res) => {
+  try {
+    const { deviceId, cmd, su = false } = req.body;
+    if (!deviceId || !cmd) {
+      return res.status(400).json({ error: 'deviceId and cmd are required' });
+    }
+    const device = await prisma.device.findUnique({ where: { id: deviceId } });
+    if (!device) return res.status(404).json({ error: '기기를 찾을 수 없습니다.' });
+
+    const isOnline = device.lastSeen && (Date.now() - new Date(device.lastSeen).getTime()) <= HEARTBEAT_TIMEOUT_MS;
+    if (!isOnline) {
+      return res.status(400).json({ error: '기기가 오프라인입니다.' });
+    }
+
+    const room = `device:${device.id}`;
+    const socketsInRoom = await io.in(room).allSockets();
+    if (socketsInRoom.size === 0) {
+      return res.status(400).json({ error: '기기 소켓 연결이 없습니다.' });
+    }
+
+    const key = `${deviceId}:${cmd}`;
+    let resolved = false;
+
+    pendingCmdCallbacks.set(key, (output) => {
+      if (!resolved) {
+        resolved = true;
+        res.json({ output });
+      }
+    });
+
+    io.to(room).emit('run_cmd', { deviceId, cmd, su });
+
+    setTimeout(() => {
+      if (!resolved) {
+        resolved = true;
+        pendingCmdCallbacks.delete(key);
+        res.status(504).json({ error: '기기 응답 시간 초과' });
+      }
+    }, 8000);
+
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // 화면 켜기/끄기 — Socket.io 우선, ADB 폴백
 app.post('/api/devices/:id/screen', async (req, res) => {
   const deviceId = req.params.id;
@@ -1639,7 +1719,7 @@ if (fs.existsSync(dashboardDist)) {
 
 // 서버 실행
 const HTTP_PORT = process.env.PORT || 3300;
-const TCP_PORT = 10080;
+const TCP_PORT = process.env.TCP_PORT || 10080;
 
 httpServer.listen(HTTP_PORT, () => {
   console.log(`[Express] 대시보드 API 서버가 포트 ${HTTP_PORT}에서 실행 중입니다.`);

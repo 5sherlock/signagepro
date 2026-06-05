@@ -7,6 +7,8 @@ export default function GroupManager({ devices, fetchDevices, stores, fetchStore
   const [newGroupName, setNewGroupName] = useState('');
   const [newDeviceId, setNewDeviceId] = useState('');
   const [newDeviceName, setNewDeviceName] = useState('');
+  const [draggedDeviceId, setDraggedDeviceId] = useState(null);
+  const [dragOverDeviceId, setDragOverDeviceId] = useState(null);
 
   // Initial select
   useEffect(() => {
@@ -35,7 +37,16 @@ export default function GroupManager({ devices, fetchDevices, stores, fetchStore
     const targetId = id || selectedStoreId;
     if (!targetId) return;
     const storeName = stores.find(s => s.id === targetId)?.name;
-    if (!window.confirm(`사업장 [${storeName}]을(를) 삭제하시겠습니까? \n모든 관련 구역, 재생목록, 미디어가 함께 삭제됩니다.`)) return;
+
+    // 해당 사업장에 배정된 기기가 있는지 확인
+    const assignedDevices = devices.filter(d => d.storeId === targetId);
+    if (assignedDevices.length > 0) {
+      const deviceNames = assignedDevices.map(d => `${d.name} (${d.id})`).join(', ');
+      const confirmMessage = `[⚠️ 경고 - 배정 기기 존재]\n\n이 사업장(구역 포함)에 배정된 기기가 존재합니다: [ ${deviceNames} ] (${assignedDevices.length}대)\n\n사업장을 삭제하면 배정된 기기들의 연결 및 설정이 강제로 해제됩니다.\n정말로 사업장 [${storeName}]을(를) 삭제하시겠습니까?`;
+      if (!window.confirm(confirmMessage)) return;
+    } else {
+      if (!window.confirm(`사업장 [${storeName}]을(를) 삭제하시겠습니까? \n모든 관련 구역, 재생목록, 미디어가 함께 삭제됩니다.`)) return;
+    }
 
     apiFetch(`${SOCKET_URL}/api/stores/${targetId}`, {
       method: 'DELETE'
@@ -94,7 +105,71 @@ export default function GroupManager({ devices, fetchDevices, stores, fetchStore
   };
 
   const onDragStart = (e, deviceId) => {
+    setDraggedDeviceId(deviceId);
     e.dataTransfer.setData('deviceId', deviceId);
+    e.dataTransfer.effectAllowed = 'move';
+  };
+
+  const onDeviceDragOver = (e, targetId) => {
+    e.preventDefault();
+    if (dragOverDeviceId !== targetId) {
+      setDragOverDeviceId(targetId);
+    }
+  };
+
+  const onDeviceDrop = (e, targetId, targetGroupId, targetStoreId) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const draggedId = e.dataTransfer.getData('deviceId') || draggedDeviceId;
+    if (!draggedId || draggedId === targetId) return;
+
+    const draggedDev = devices.find(d => d.id === draggedId);
+    if (!draggedDev) return;
+
+    const isGroupChanged = draggedDev.groupId !== targetGroupId || draggedDev.storeId !== targetStoreId;
+
+    const performReorder = () => {
+      // Get all devices in the target group/zone
+      const groupDevices = devices.filter(d => d.groupId === targetGroupId && d.storeId === targetStoreId);
+      const newDevices = [...groupDevices];
+      
+      const draggedIdx = newDevices.findIndex(d => d.id === draggedId);
+      const targetIdx = newDevices.findIndex(d => d.id === targetId);
+
+      if (targetIdx !== -1) {
+        if (draggedIdx !== -1) {
+          const [removed] = newDevices.splice(draggedIdx, 1);
+          newDevices.splice(targetIdx, 0, removed);
+        } else {
+          newDevices.splice(targetIdx, 0, draggedDev);
+        }
+
+        const deviceIds = newDevices.map(d => d.id);
+        
+        apiFetch(`${SOCKET_URL}/api/devices/reorder`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ deviceIds })
+        }).then(() => {
+          if (fetchDevices) fetchDevices();
+        }).catch(err => console.error('Device reorder error:', err));
+      }
+    };
+
+    if (isGroupChanged) {
+      apiFetch(`${SOCKET_URL}/api/devices/${draggedId}/group`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ groupId: targetGroupId || null, storeId: targetStoreId })
+      }).then(() => {
+        performReorder();
+      });
+    } else {
+      performReorder();
+    }
+
+    setDraggedDeviceId(null);
+    setDragOverDeviceId(null);
   };
 
   const onDrop = (e, groupId, storeId) => {
@@ -342,10 +417,15 @@ export default function GroupManager({ devices, fetchDevices, stores, fetchStore
                       key={d.id} 
                       draggable 
                       onDragStart={(e) => onDragStart(e, d.id)}
+                      onDragOver={(e) => onDeviceDragOver(e, d.id)}
+                      onDragEnd={() => { setDraggedDeviceId(null); setDragOverDeviceId(null); }}
+                      onDrop={(e) => onDeviceDrop(e, d.id, null, selectedStoreId)}
                       style={{ 
                         background: 'var(--glass-bg)', padding: '8px 12px', 
                         borderRadius: '8px', cursor: 'grab', 
-                        border: '1px solid rgba(255,255,255,0.1)',
+                        border: dragOverDeviceId === d.id ? '1px solid var(--accent-blue)' : '1px solid rgba(255,255,255,0.1)',
+                        transform: dragOverDeviceId === d.id ? 'scale(1.05)' : 'scale(1)',
+                        transition: 'all 0.2s',
                         boxShadow: '0 2px 4px rgba(0,0,0,0.2)', fontSize: '0.9rem',
                         display: 'flex', alignItems: 'center', gap: '8px'
                       }}
@@ -393,10 +473,15 @@ export default function GroupManager({ devices, fetchDevices, stores, fetchStore
                           key={d.id} 
                           draggable 
                           onDragStart={(e) => onDragStart(e, d.id)}
+                          onDragOver={(e) => onDeviceDragOver(e, d.id)}
+                          onDragEnd={() => { setDraggedDeviceId(null); setDragOverDeviceId(null); }}
+                          onDrop={(e) => onDeviceDrop(e, d.id, g.id, selectedStoreId)}
                           style={{ 
                             background: 'linear-gradient(135deg, rgba(59,130,246,0.1), rgba(139,92,246,0.1))', 
                             padding: '8px 12px', borderRadius: '8px', cursor: 'grab', 
-                            border: '1px solid rgba(139,92,246,0.3)',
+                            border: dragOverDeviceId === d.id ? '1px solid var(--accent-blue)' : '1px solid rgba(139,92,246,0.3)',
+                            transform: dragOverDeviceId === d.id ? 'scale(1.05)' : 'scale(1)',
+                            transition: 'all 0.2s',
                             boxShadow: '0 2px 4px rgba(0,0,0,0.2)', fontSize: '0.9rem',
                             display: 'flex', alignItems: 'center', gap: '8px'
                           }}

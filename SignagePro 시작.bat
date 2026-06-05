@@ -7,7 +7,7 @@ taskkill /f /im electron.exe >nul 2>&1
 timeout /t 2 /nobreak >nul
 
 :: 서버 실행 (숨김)
-start "" /min cmd /c "cd /d C:\WorkSpace\signagepro\server && node index.js"
+start "" /min cmd /c "cd /d D:\WorkSpace\signagepro\server && node index.js"
 
 :: 서버 뜰 때까지 대기 (최대 30초)
 set /a cnt=0
@@ -21,7 +21,7 @@ goto wait_server
 :server_ok
 
 :: Vite 실행 (숨김)
-start "" /min cmd /c "cd /d C:\WorkSpace\signagepro\dashboard && npx vite"
+start "" /min cmd /c "cd /d D:\WorkSpace\signagepro\dashboard && npx vite"
 
 :: Vite 뜰 때까지 대기 (최대 30초)
 set /a cnt=0

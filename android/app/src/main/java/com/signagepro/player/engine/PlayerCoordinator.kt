@@ -84,6 +84,8 @@ class PlayerCoordinator(
      */
     @Volatile private var screenOn: Boolean = true
 
+
+
     /**
      * 현재 재생 중인 슬라이드 정보 — heartbeat에 포함.
      * 형식: "<index>|<total>|<filename>" (index 1-based, '|' 구분자)
@@ -160,6 +162,9 @@ class PlayerCoordinator(
             onStatus("서버 연결 중…")
         }
 
+        // 화면 ON/OFF 시 screenOn 상태 업데이트 → heartbeat에 포함
+        scheduleManager.onScreenStateChange = { on -> screenOn = on }
+
         // 서버 업데이트는 백그라운드에서 처리
         scope.launch {
             try {
@@ -181,8 +186,6 @@ class PlayerCoordinator(
         }
 
         initVisualizer()
-        // 화면 ON/OFF 시 screenOn 상태 업데이트 → heartbeat에 포함
-        scheduleManager.onScreenStateChange = { on -> screenOn = on }
         startHeartbeat(serverUrl, deviceId, secret)
         startControlChannel(serverUrl, deviceId)
         scheduleManager.start(scope)
@@ -520,7 +523,11 @@ class PlayerCoordinator(
     }
 
     private fun startHeartbeat(serverUrl: String, deviceId: String, secret: String) {
-        val host = URI(serverUrl).host ?: return
+        val uri = try { URI(serverUrl) } catch (e: Exception) { null }
+        val host = uri?.host ?: return
+        val httpPort = uri.port
+        val tcpPort = if (httpPort == 3000) 10081 else 10080
+
         heartbeat?.stop()
         val versionName = runCatching {
             val name = context.packageManager.getPackageInfo(context.packageName, 0).versionName ?: "unknown"
@@ -528,6 +535,7 @@ class PlayerCoordinator(
         }.getOrDefault("unknown")
         heartbeat = HeartbeatService(
             serverHost = host,
+            serverPort = tcpPort,
             deviceId = deviceId,
             deviceSecret = secret,
             metrics = metrics,
@@ -752,6 +760,16 @@ class PlayerCoordinator(
     }
 
     private fun isHdmiConnected(): Boolean {
+        return checkHdmiConnectedPhysical()
+    }
+
+    private fun checkHdmiConnectedPhysical(): Boolean {
+        fun isConnectedText(text: String): Boolean {
+            val t = text.trim()
+            return t == "1" || t.equals("connected", ignoreCase = true) ||
+                t.contains("HDMI=1", ignoreCase = true)
+        }
+
         val paths = arrayOf(
             "/sys/class/display/HDMI/connect",
             "/sys/class/switch/hdmi/state",
@@ -761,28 +779,38 @@ class PlayerCoordinator(
             val file = java.io.File(path)
             if (file.exists()) {
                 try {
-                    val text = file.readText().trim()
-                    return text == "1" || text.equals("connected", ignoreCase = true)
+                    if (isConnectedText(file.readText())) return true
                 } catch (e: Exception) {}
             }
         }
+
+        // DRM connector status (e.g. /sys/class/drm/card0-HDMI-A-1/status)
         val drmDir = java.io.File("/sys/class/drm")
         if (drmDir.exists() && drmDir.isDirectory) {
             drmDir.listFiles()?.forEach { sub ->
                 if (sub.name.contains("HDMI", ignoreCase = true)) {
-                    val statusFile = java.io.File(sub, "status")
-                    if (statusFile.exists()) {
-                        try {
-                            val text = statusFile.readText().trim()
-                            if (text.equals("connected", ignoreCase = true)) return true
-                        } catch (e: Exception) {}
-                    }
+                    try {
+                        val text = java.io.File(sub, "status").readText()
+                        if (isConnectedText(text)) return true
+                    } catch (e: Exception) {}
                 }
             }
         }
+
+        // extcon 심볼릭 링크 스캔 (e.g. /sys/class/extcon/extcon*/state → "HDMI=1")
+        try {
+            java.io.File("/sys/class/extcon").listFiles()?.forEach { extcon ->
+                try {
+                    val text = java.io.File(extcon, "state").readText()
+                    if (isConnectedText(text)) return true
+                } catch (e: Exception) {}
+            }
+        } catch (e: Exception) {}
+
         val hasAnyHdmiFile = paths.any { java.io.File(it).exists() } ||
-                (drmDir.exists() && drmDir.isDirectory && drmDir.listFiles()?.any { it.name.contains("HDMI", ignoreCase = true) } == true)
-        if (!hasAnyHdmiFile) return true // Fallback to true if no status nodes exist
+                (drmDir.exists() && drmDir.isDirectory &&
+                    drmDir.listFiles()?.any { it.name.contains("HDMI", ignoreCase = true) } == true)
+        if (!hasAnyHdmiFile) return true
         return false
     }
 

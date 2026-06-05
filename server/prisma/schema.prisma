@@ -44,6 +44,7 @@ model Device {
   group      Group?    @relation(fields: [groupId], references: [id])
   storeId    String?
   store      Store?    @relation(fields: [storeId], references: [id])
+  order      Int       @default(0)
   createdAt  DateTime  @default(now())
   updatedAt  DateTime  @updatedAt
 }

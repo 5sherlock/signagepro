@@ -1685,7 +1685,6 @@ function App() {
                           position: 'absolute', top: 0, left: 0, right: 0, bottom: 0,
                           background: 'rgba(8, 12, 28, 0.86)',
                           backdropFilter: 'blur(2px)',
-                          borderRadius: '12px',
                           display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
                           zIndex: 5, gap: '8px',
                           border: '1px solid rgba(99,102,241,0.25)',
@@ -1946,9 +1945,27 @@ function App() {
                     {/* 재부팅 / 화면 ON·OFF 버튼 및 진단 버튼 */}
                     <div style={{ marginTop: '8px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '6px', flexWrap: 'wrap' }}>
                       <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                        {device.status === 'online' && device.hdmiConnected === false && (
-                          <div className="hdmi-warning-badge" style={{ marginTop: 0, alignSelf: 'center' }} title="HDMI 케이블 연결 유실 또는 TV 전원 꺼짐 감지">
+                        {device.status === 'online' && device.screenOff === false && device.hdmiConnected === false && (
+                          <div className="hdmi-warning-badge" style={{ marginTop: 0, alignSelf: 'center' }} title="HDMI 케이블 연결 유실 감지">
                             ⚠️ HDMI 분리됨
+                          </div>
+                        )}
+                        {device.status === 'online' && device.screenOff === true && (
+                          <div style={{
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            gap: '4px',
+                            background: 'rgba(148, 163, 184, 0.1)',
+                            border: '1px solid rgba(148, 163, 184, 0.25)',
+                            borderRadius: '4px',
+                            padding: '3px 8px',
+                            color: '#94a3b8',
+                            fontSize: '0.65rem',
+                            fontWeight: 600,
+                            marginTop: 0,
+                            alignSelf: 'center'
+                          }} title="화면이 꺼져 있어 HDMI 연결 상태를 확인할 수 없습니다.">
+                            🔌 화면 꺼짐 (상태 확인 불가)
                           </div>
                         )}
                         <button

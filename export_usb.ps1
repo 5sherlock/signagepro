@@ -10,7 +10,7 @@ param(
 
 $ROOT = $PSScriptRoot
 if (-not $ROOT) {
-    $ROOT = "c:\Users\amore\WorkSpace\signagepro"
+    $ROOT = "D:\WorkSpace\signagepro"
 }
 Set-Location $ROOT
 
@@ -189,3 +189,4 @@ Get-ChildItem $DEST -Recurse -File | ForEach-Object {
     $kb  = [math]::Round($_.Length/1KB,1)
     Write-Host ("  " + $rel + " (" + $kb + " KB)")
 }
+

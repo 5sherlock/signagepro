@@ -1,11 +1,11 @@
-<service>
+﻿<service>
 	<id>signageproserver.exe</id>
 	<name>SignagePro Server</name>
-	<description>오설록 SignagePro 원격 관리 서버</description>
+	<description>?ㅼ꽕濡?SignagePro ?먭꺽 愿由??쒕쾭</description>
 	<executable>C:\Program Files\nodejs\node.exe</executable>
-	<argument>C:\WorkSpace\signagepro\server\node_modules\node-windows\lib\wrapper.js</argument>
+	<argument>D:\WorkSpace\signagepro\server\node_modules\node-windows\lib\wrapper.js</argument>
 	<argument>--file</argument>
-	<argument>C:\WorkSpace\signagepro\server\index.js</argument>
+	<argument>D:\WorkSpace\signagepro\server\index.js</argument>
 	<argument>--scriptoptions=</argument>
 	<argument>--log</argument>
 	<argument>SignagePro Server wrapper</argument>
@@ -27,5 +27,5 @@
 		<password></password>
 		<allowservicelogon>true</allowservicelogon>
 	</serviceaccount>
-	<workingdirectory>C:\WorkSpace\signagepro\server</workingdirectory>
+	<workingdirectory>D:\WorkSpace\signagepro\server</workingdirectory>
 </service>

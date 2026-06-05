@@ -1,11 +1,11 @@
-# SignagePro - 원격 서버 안전 자동 백업 & 배포 통합 스크립트
-# 사용법: PowerShell을 관리자 권한으로 실행한 뒤 .\deploy_server.ps1 실행
+# SignagePro - ?먭꺽 ?쒕쾭 ?덉쟾 ?먮룞 諛깆뾽 & 諛고룷 ?듯빀 ?ㅽ겕由쏀듃
+# ?ъ슜踰? PowerShell??愿由ъ옄 沅뚰븳?쇰줈 ?ㅽ뻾????.\deploy_server.ps1 ?ㅽ뻾
 
 $ErrorActionPreference = "Stop"
 
-# ── 1. 경로 및 설정 정의 ──────────────────────────────────────────
-$ProjectRoot = "C:\signagepro"
-$BackupDir = "C:\signagepro_backups"
+# ?? 1. 寃쎈줈 諛??ㅼ젙 ?뺤쓽 ??????????????????????????????????????????
+$ProjectRoot = "D:\WorkSpace\signagepro"
+$BackupDir = "D:\WorkSpace\signagepro_backups"
 $DateStr = Get-Date -Format "yyyyMMdd_HHmmss"
 
 $DbSource = "$ProjectRoot\server\prisma\dev.db"
@@ -15,96 +15,95 @@ $UploadsSource = "$ProjectRoot\server\uploads"
 $UploadsBackupTarget = "$BackupDir\uploads_$DateStr"
 
 Write-Host "=============================================" -ForegroundColor Cyan
-Write-Host "🚀 SignagePro 원격 서버 안전 업데이트 & 자동 백업 시작" -ForegroundColor Cyan
+Write-Host "?? SignagePro ?먭꺽 ?쒕쾭 ?덉쟾 ?낅뜲?댄듃 & ?먮룞 諛깆뾽 ?쒖옉" -ForegroundColor Cyan
 Write-Host "=============================================" -ForegroundColor Cyan
 
-# ── 2. 백업 디렉토리 보장 및 백업 실행 ─────────────────────────────
+# ?? 2. 諛깆뾽 ?붾젆?좊━ 蹂댁옣 諛?諛깆뾽 ?ㅽ뻾 ?????????????????????????????
 if (!(Test-Path $BackupDir)) {
     New-Item -ItemType Directory -Force -Path $BackupDir | Out-Null
-    Write-Host "📂 백업 폴더가 존재하지 않아 새로 생성했습니다: $BackupDir" -ForegroundColor Yellow
+    Write-Host "?뱛 諛깆뾽 ?대뜑媛 議댁옱?섏? ?딆븘 ?덈줈 ?앹꽦?덉뒿?덈떎: $BackupDir" -ForegroundColor Yellow
 }
 
-Write-Host "⏱️ 1. 현재 시각 데이터 백업 작업을 시작합니다..." -ForegroundColor Green
+Write-Host "?깍툘 1. ?꾩옱 ?쒓컖 ?곗씠??諛깆뾽 ?묒뾽???쒖옉?⑸땲??.." -ForegroundColor Green
 
-# SQLite DB 백업
+# SQLite DB 諛깆뾽
 if (Test-Path $DbSource) {
     Copy-Item $DbSource $DbBackupTarget -Force
-    Write-Host "  ✅ DB 백업 완료: $DbBackupTarget" -ForegroundColor Green
+    Write-Host "  ??DB 諛깆뾽 ?꾨즺: $DbBackupTarget" -ForegroundColor Green
 } else {
-    Write-Host "  ⚠️ 백업할 원본 DB 파일이 없습니다. (신규 설치 상태 혹은 무시)" -ForegroundColor Yellow
+    Write-Host "  ?좑툘 諛깆뾽???먮낯 DB ?뚯씪???놁뒿?덈떎. (?좉퇋 ?ㅼ튂 ?곹깭 ?뱀? 臾댁떆)" -ForegroundColor Yellow
 }
 
-# Uploads 미디어 폴더 백업
+# Uploads 誘몃뵒???대뜑 諛깆뾽
 if (Test-Path $UploadsSource) {
-    # 폴더 통째로 복사
+    # ?대뜑 ?듭㎏濡?蹂듭궗
     Copy-Item $UploadsSource $UploadsBackupTarget -Recurse -Force
-    Write-Host "  ✅ 미디어 업로드 폴더 백업 완료: $UploadsBackupTarget" -ForegroundColor Green
+    Write-Host "  ??誘몃뵒???낅줈???대뜑 諛깆뾽 ?꾨즺: $UploadsBackupTarget" -ForegroundColor Green
 } else {
-    Write-Host "  ⚠️ 백업할 미디어 폴더가 존재하지 않습니다." -ForegroundColor Yellow
+    Write-Host "  ?좑툘 諛깆뾽??誘몃뵒???대뜑媛 議댁옱?섏? ?딆뒿?덈떎." -ForegroundColor Yellow
 }
 
-# ── 3. 노드 프로세스 강제 종료 (DB 파일 잠금 해제) ─────────────────
-Write-Host "`n⏱️ 2. 안전한 Git 동기화를 위해 노드 서버 및 PM2 데몬을 종료합니다..." -ForegroundColor Green
+# ?? 3. ?몃뱶 ?꾨줈?몄뒪 媛뺤젣 醫낅즺 (DB ?뚯씪 ?좉툑 ?댁젣) ?????????????????
+Write-Host "`n?깍툘 2. ?덉쟾??Git ?숆린?붾? ?꾪빐 ?몃뱶 ?쒕쾭 諛?PM2 ?곕が??醫낅즺?⑸땲??.." -ForegroundColor Green
 
 try {
-    # PM2 서비스 일시 정지 및 데몬 완전 킬
-    & pm2 stop signagepro-server 2>$null | Out-Null
+    # PM2 ?쒕퉬???쇱떆 ?뺤? 諛??곕が ?꾩쟾 ??    & pm2 stop signagepro-server 2>$null | Out-Null
     & pm2 kill 2>$null | Out-Null
-    Write-Host "  ✅ PM2 프로세스 중지 성공" -ForegroundColor Green
+    Write-Host "  ??PM2 ?꾨줈?몄뒪 以묒? ?깃났" -ForegroundColor Green
 } catch {}
 
-# 실행 중인 모든 node 프로세스 강제 종료 (SQLite Lock 원천 예방)
+# ?ㅽ뻾 以묒씤 紐⑤뱺 node ?꾨줈?몄뒪 媛뺤젣 醫낅즺 (SQLite Lock ?먯쿇 ?덈갑)
 $NodeProcesses = Get-Process -Name "node" -ErrorAction SilentlyContinue
 if ($NodeProcesses) {
     $NodeProcesses | Stop-Process -Force
-    Write-Host "  ✅ 실행 중이던 잔여 Node.js 프로세스 강제 종료 완료" -ForegroundColor Green
+    Write-Host "  ???ㅽ뻾 以묒씠???붿뿬 Node.js ?꾨줈?몄뒪 媛뺤젣 醫낅즺 ?꾨즺" -ForegroundColor Green
 } else {
-    Write-Host "  ✅ 가동 중인 잔여 Node 프로세스 없음 (안전)" -ForegroundColor Green
+    Write-Host "  ??媛??以묒씤 ?붿뿬 Node ?꾨줈?몄뒪 ?놁쓬 (?덉쟾)" -ForegroundColor Green
 }
 
 Start-Sleep -Seconds 2
 
-# ── 4. Git 코드 동기화 ─────────────────────────────────────────────
-Write-Host "`n⏱️ 3. 깃허브 원격 저장소에서 최신 코드를 안전하게 내려받습니다..." -ForegroundColor Green
+# ?€?€ 4. Git 肄붾뱶 ?숆린???€?€?€?€?€?€?€?€?€?€?€?€?€?€?€?€?€?€?€?€?€?€?€?€?€?€?€?€?€?€?€?€?€?€?€?€?€?€?€?€?€?€?€?€?€
+Write-Host "`n?깍툘 3. 源껎뿀釉??먭꺽 ?€?μ냼?먯꽌 理쒖떊 肄붾뱶瑜??덉쟾?섍쾶 ?대젮諛쏆뒿?덈떎..." -ForegroundColor Green
 Set-Location $ProjectRoot
 
-# 로컬 수정 사항이 꼬여서 충돌 나는 것을 방지하기 위해 리셋 후 Pull
+# 濡쒖뺄 ?섏젙 ?ы빆??瑗ъ뿬??異⑸룎 ?섎뒗 寃껋쓣 諛⑹??섍린 ?꾪빐 由ъ뀑 ??Pull
 & git reset --hard
 & git pull origin release/0.4.17
 Write-Host "  ✅ 최신 소스 코드 동기화 완료" -ForegroundColor Green
 
-# ── 5. 대시보드 및 모바일 빌드 검증 및 갱신 ─────────────────────────
-Write-Host "`n⏱️ 4. 대시보드 및 모바일 최신 리소스를 빌드합니다..." -ForegroundColor Green
+# ?€?€ 5. ?€?쒕낫??諛?紐⑤컮??鍮뚮뱶 寃€利?諛?媛깆떊 ?€?€?€?€?€?€?€?€?€?€?€?€?€?€?€?€?€?€?€?€?€?€?€?€?€
+Write-Host "`n?깍툘 4. ?€?쒕낫??諛?紐⑤컮??理쒖떊 由ъ냼?ㅻ? 鍮뚮뱶?⑸땲??.." -ForegroundColor Green
 Set-Location "$ProjectRoot\dashboard"
 
-# 대시보드 의존성 설치 및 프로덕션 빌드 실행
 & npm install
 & npm run build
-Write-Host "  ✅ 대시보드 컴파일 빌드 완료" -ForegroundColor Green
+Write-Host "  ????쒕낫??而댄뙆??鍮뚮뱶 ?꾨즺" -ForegroundColor Green
 
-# 모바일 의존성 설치 및 프로덕션 빌드 실행
+# 紐⑤컮???섏〈???ㅼ튂 諛??꾨줈?뺤뀡 鍮뚮뱶 ?ㅽ뻾
 Set-Location "$ProjectRoot\mobile"
 & npm install
 & npm run build
-Write-Host "  ✅ 모바일 대시보드 컴파일 빌드 완료" -ForegroundColor Green
+Write-Host "  ??紐⑤컮????쒕낫??而댄뙆??鍮뚮뱶 ?꾨즺" -ForegroundColor Green
 
-# ── 6. 서버 빌드 및 DB 마이그레이션 ───────────────────────────────
-Write-Host "`n⏱️ 5. 백엔드 의존성 설치 및 데이터베이스 스키마를 업데이트합니다..." -ForegroundColor Green
+# ?? 6. ?쒕쾭 鍮뚮뱶 諛?DB 留덉씠洹몃젅?댁뀡 ???????????????????????????????
+Write-Host "`n?깍툘 5. 諛깆뿏???섏〈???ㅼ튂 諛??곗씠?곕쿋?댁뒪 ?ㅽ궎留덈? ?낅뜲?댄듃?⑸땲??.." -ForegroundColor Green
 Set-Location "$ProjectRoot\server"
 & npm install
 & npx prisma generate
 & npx prisma db push --accept-data-loss
-Write-Host "  ✅ 백엔드 빌드 및 DB 업데이트 완료" -ForegroundColor Green
+Write-Host "  ??諛깆뿏??鍮뚮뱶 諛?DB ?낅뜲?댄듃 ?꾨즺" -ForegroundColor Green
 
-# ── 7. 서버 재기동 (PM2) ───────────────────────────────────────────
-Write-Host "`n⏱️ 6. 복구된 데이터와 소스로 서비스를 다시 구동합니다..." -ForegroundColor Green
+# ?? 7. ?쒕쾭 ?ш린??(PM2) ???????????????????????????????????????????
+Write-Host "`n?깍툘 6. 蹂듦뎄???곗씠?곗? ?뚯뒪濡??쒕퉬?ㅻ? ?ㅼ떆 援щ룞?⑸땲??.." -ForegroundColor Green
 
-# 단일 프로세스로 PM2 등록 및 시작
-& pm2 start index.js --name "signagepro-server" --interpreter "C:\Users\Administrator\AppData\Local\nvm\v20.19.0\node.exe"
+# ?⑥씪 ?꾨줈?몄뒪濡?PM2 ?깅줉 諛??쒖옉
+& pm2 start index.js --name "signagepro-server" --interpreter "C:\Program Files\nodejs\node.exe"
 & pm2 save
 
 Write-Host "`n=============================================" -ForegroundColor Cyan
-Write-Host "🎉 모든 백업, 소스 갱신 및 서비스 기동 작업이 성공적으로 완수되었습니다!" -ForegroundColor Green
-Write-Host "  - 백업 보존 위치: $BackupDir" -ForegroundColor Yellow
+Write-Host "?럦 紐⑤뱺 諛깆뾽, ?뚯뒪 媛깆떊 諛??쒕퉬??湲곕룞 ?묒뾽???깃났?곸쑝濡??꾩닔?섏뿀?듬땲??" -ForegroundColor Green
+Write-Host "  - 諛깆뾽 蹂댁〈 ?꾩튂: $BackupDir" -ForegroundColor Yellow
 Write-Host "=============================================" -ForegroundColor Cyan
+
 

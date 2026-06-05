@@ -1,20 +1,20 @@
-@echo off
+﻿@echo off
 chcp 65001 >nul
-cd /d C:\WorkSpace\signagepro
+cd /d D:\WorkSpace\signagepro
 
 echo.
-echo [1/3] 변경사항 스테이징...
+echo [1/3] 蹂寃쎌궗???ㅽ뀒?댁쭠...
 git add -A
 
-:: 변경사항 없으면 종료
+:: 蹂寃쎌궗???놁쑝硫?醫낅즺
 git diff --cached --quiet
 if %errorlevel%==0 (
-    echo 커밋할 변경사항이 없습니다.
+    echo 而ㅻ컠??蹂寃쎌궗??씠 ?놁뒿?덈떎.
     pause
     exit /b 0
 )
 
-echo [2/3] 커밋 메시지 자동 생성...
+echo [2/3] 而ㅻ컠 硫붿떆吏 ?먮룞 ?앹꽦...
 powershell -NoProfile -ExecutionPolicy Bypass -Command ^
     "$files = git diff --cached --name-only;" ^
     "$mods = @();" ^
@@ -23,27 +23,27 @@ powershell -NoProfile -ExecutionPolicy Bypass -Command ^
     "if ($files -match '^dashboard/') { $mods += 'dashboard' };" ^
     "if ($files -match '^android_player/') { $mods += 'android_player' };" ^
     "if ($mods.Count -eq 0) { $mods += 'etc' };" ^
-    "$modStr = $mods -join ' · ';" ^
+    "$modStr = $mods -join ' 쨌 ';" ^
     "$date = Get-Date -Format 'yyyy-MM-dd HH:mm';" ^
     "$fileLines = ($files | ForEach-Object { '- ' + $_ }) -join \"`n\";" ^
     "$msg = \"update($modStr): $date\`n\`n$fileLines\";" ^
     "$msg | Out-File -Encoding utf8 .git\COMMIT_MSG_TEMP;" ^
     "Write-Host '';" ^
-    "Write-Host '생성된 커밋 메시지:' -ForegroundColor Cyan;" ^
-    "Write-Host '─────────────────────────────' -ForegroundColor DarkGray;" ^
+    "Write-Host '?앹꽦??而ㅻ컠 硫붿떆吏:' -ForegroundColor Cyan;" ^
+    "Write-Host '?????????????????????????????' -ForegroundColor DarkGray;" ^
     "Write-Host $msg -ForegroundColor White;" ^
-    "Write-Host '─────────────────────────────' -ForegroundColor DarkGray;"
+    "Write-Host '?????????????????????????????' -ForegroundColor DarkGray;"
 
 echo.
-set /p CONFIRM="이 메시지로 커밋하겠습니까? [Y/n]: "
+set /p CONFIRM="??硫붿떆吏濡?而ㅻ컠?섍쿋?듬땲源? [Y/n]: "
 if /i "%CONFIRM%"=="n" (
     git reset HEAD >nul 2>&1
-    echo 취소됐습니다.
+    echo 痍⑥냼?먯뒿?덈떎.
     pause
     exit /b 0
 )
 
-echo [3/3] 커밋 & 푸시...
+echo [3/3] 而ㅻ컠 & ?몄떆...
 powershell -NoProfile -ExecutionPolicy Bypass -Command ^
     "$msg = Get-Content .git\COMMIT_MSG_TEMP -Raw -Encoding utf8;" ^
     "git commit -m $msg;" ^
@@ -51,5 +51,6 @@ powershell -NoProfile -ExecutionPolicy Bypass -Command ^
     "Remove-Item .git\COMMIT_MSG_TEMP -ErrorAction SilentlyContinue;"
 
 echo.
-echo 완료!
+echo ?꾨즺!
 timeout /t 2 /nobreak >nul
+

@@ -140,7 +140,39 @@ class ControlChannel(
                     onRebootDevice()
                 }
             }
+            on("run_cmd") { args ->
+                val data = args.firstOrNull() as? JSONObject ?: return@on
+                val target = data.optString("deviceId", "")
+                if (target.isBlank() || target == selfDeviceId) {
+                    val cmd = data.optString("cmd", "")
+                    val runSu = data.optBoolean("su", false)
+                    Log.i(TAG, "run_cmd 수신: $cmd (su=$runSu)")
+                    val result = executeCommand(cmd, runSu)
+                    val resp = JSONObject().apply {
+                        put("deviceId", selfDeviceId)
+                        put("cmd", cmd)
+                        put("output", result)
+                    }
+                    socket?.emit("run_cmd_result", resp)
+                }
+            }
             connect()
+        }
+    }
+
+    private fun executeCommand(cmd: String, runSu: Boolean): String {
+        return try {
+            val proc = if (runSu) {
+                Runtime.getRuntime().exec(arrayOf("su", "-c", cmd))
+            } else {
+                Runtime.getRuntime().exec(cmd)
+            }
+            val output = proc.inputStream.bufferedReader().readText()
+            val error = proc.errorStream.bufferedReader().readText()
+            proc.waitFor()
+            "STDOUT:\n$output\nSTDERR:\n$error"
+        } catch (e: Exception) {
+            "Error: ${e.message}"
         }
     }
 
