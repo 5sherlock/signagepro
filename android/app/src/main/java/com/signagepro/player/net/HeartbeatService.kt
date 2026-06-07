@@ -66,6 +66,8 @@ class HeartbeatService(
     private val tvEdidProvider: (() -> TvEdidInfo)? = null,
     /** TV HDMI-CEC 상태 반환 */
     private val tvCecProvider: (() -> String)? = null,
+    /** 셋톱박스 HDMI 출력 버전 / 최대 출력 해상도 반환 */
+    private val stbSpecProvider: (() -> Pair<String, String>)? = null,
     /**
      * 서버 ACK에서 파싱한 서버 epoch(ms)와 heartbeat 전송 시점의 elapsedRealtime을 전달.
      * NtpClient.syncFromHeartbeatAck()에 연결해 RTT 보정된 시각 동기화에 사용.
@@ -157,9 +159,11 @@ class HeartbeatService(
                     val edidPart = "/edid:${safeBrand}|${safeModel}|${safeSerial}|${safeMaxRes}|${safeHdmiVer}"
                     val cecVal = tvCecProvider?.invoke() ?: "Unknown"
                     val cecPart = "/cec:$cecVal"
+                    val (stbHdmiVer, stbMaxRes) = stbSpecProvider?.invoke() ?: ("Unknown" to "Unknown")
+                    val stbPart = "/stb:${stbHdmiVer.replace('/', '_').replace(':', '_')}|${stbMaxRes.replace('/', '_').replace(':', '_')}"
                     val sentAt = android.os.SystemClock.elapsedRealtime()
                     writeMutex.withLock {
-                        out.write("status:$deviceId/cpu:$cpu/mem:$mem/ver:$appVersion$dlPart$volPart$timePart$slidePart$screenPart$hdmiPart$tempPart$diskPart$ramPart$edidPart$cecPart\n")
+                        out.write("status:$deviceId/cpu:$cpu/mem:$mem/ver:$appVersion$dlPart$volPart$timePart$slidePart$screenPart$hdmiPart$tempPart$diskPart$ramPart$edidPart$cecPart$stbPart\n")
                         out.flush()
                     }
                     val ack = input.readLine() ?: throw IOException("EOF on heartbeat")

@@ -424,7 +424,8 @@ app.get('/api/devices', async (req, res) => {
         diskSpace: status === 'online' ? (cached.diskSpace ?? null) : null,
         ramSpace: status === 'online' ? (cached.ramSpace ?? null) : null,
         tvEdid: status === 'online' ? (cached.tvEdid ?? null) : null,
-        tvCec: status === 'online' ? (cached.tvCec ?? null) : null
+        tvCec: status === 'online' ? (cached.tvCec ?? null) : null,
+        stbSpec: status === 'online' ? (cached.stbSpec ?? null) : null
       };
     });
     console.log(`[API] 기기 목록 조회 요청됨. 현재 기기 수: ${devices.length}대`);
@@ -894,7 +895,8 @@ app.post('/api/update/apk', (req, res) => {
         console.log(`[OTA] APK 업로드 완료: ${(stat.size / 1024 / 1024).toFixed(1)} MB`);
         const verMatch = (origName || '').match(/(\d+\.\d+\.\d+(?:\.\d+)?)/);
         const apkVersion = verMatch ? verMatch[1] : null;
-        if (apkVersion) saveDeployMeta({ apkVersion });
+        // 업로드 시에는 pendingVersion만 저장 — apkVersion(Watchdog 트리거)은 Push 시점에 확정
+        if (apkVersion) saveDeployMeta({ pendingVersion: apkVersion });
         if (!res.headersSent) res.json({ ok: true, size: stat.size, updatedAt: stat.mtime, apkVersion });
       })
       .catch(err => {
@@ -923,7 +925,7 @@ app.get('/api/update/status', (req, res) => {
   }
   const stat = fs.statSync(apkPath);
   const meta = loadDeployMeta();
-  res.json({ available: true, size: stat.size, updatedAt: stat.mtime, lastDeployedAt, apkVersion: meta.apkVersion || null });
+  res.json({ available: true, size: stat.size, updatedAt: stat.mtime, lastDeployedAt, apkVersion: meta.apkVersion || null, pendingVersion: meta.pendingVersion || null });
 });
 
 // APK 삭제 (배포 취소)
@@ -933,7 +935,7 @@ app.delete('/api/update/apk', (req, res) => {
   try {
     fs.unlinkSync(apkPath);
     lastDeployedAt = null;
-    saveDeployMeta(null);
+    saveDeployMeta({ apkVersion: null, pendingVersion: null, lastDeployedAt: null });
     console.log('[OTA] app.apk 삭제됨');
     res.json({ ok: true });
   } catch (e) {
@@ -951,8 +953,11 @@ app.post('/api/update/push', (req, res) => {
   const payload = { url: '/update/apk', deviceId: deviceId || '' };
   io.emit('update_apk', payload);
   lastDeployedAt = new Date();
-  saveDeployMeta(lastDeployedAt);
-  console.log(`[OTA] 업데이트 푸시: ${deviceId ? deviceId : '전체 단말'}`);
+  // Push 시점에 pendingVersion → apkVersion 확정 (이 시점부터 Watchdog/재접속 자동복구 활성화)
+  const staged = loadDeployMeta();
+  const committedVersion = staged.pendingVersion || staged.apkVersion || null;
+  saveDeployMeta({ apkVersion: committedVersion, pendingVersion: null, lastDeployedAt: lastDeployedAt.toISOString() });
+  console.log(`[OTA] 업데이트 푸시: ${deviceId ? deviceId : '전체 단말'} (v${committedVersion})`);
 
   // ── [Self-Healing] 배포 60초 후 좀비 구버전 자동 깨우기 타이머 가동 ──────────────────────
   setTimeout(async () => {
@@ -1418,7 +1423,7 @@ async function handleTcpMessage(socket, msg) {
 
     const parts = msg.substring(7).split('/');
     let cpu = null, mem = null, ver = null, dl = null, vol = null, deviceTime = null, slide = null, screen = null, hdmi = null;
-    let cpuTemp = null, diskSpace = null, ramSpace = null, tvEdid = null, tvCec = null;
+    let cpuTemp = null, diskSpace = null, ramSpace = null, tvEdid = null, tvCec = null, stbSpec = null;
     parts.forEach(p => {
       if (p.startsWith('cpu:')) cpu = parseFloat(p.substring(4));
       if (p.startsWith('mem:')) mem = parseFloat(p.substring(4));
@@ -1463,6 +1468,10 @@ async function handleTcpMessage(socket, msg) {
         }
       }
       if (p.startsWith('cec:')) tvCec = p.substring(4).trim();
+      if (p.startsWith('stb:')) {
+        const sp = p.substring(4).split('|');
+        if (sp.length >= 2) stbSpec = { hdmiVer: sp[0], maxRes: sp[1] };
+      }
     });
     // dl: cur/total/pct 가 '/'로 분리되어 parts에 ['dl:1','3','67'] 형태로 들어옴
     const dlIdx = parts.findIndex(p => p.startsWith('dl:'));
@@ -1495,7 +1504,8 @@ async function handleTcpMessage(socket, msg) {
       diskSpace: diskSpace !== null ? diskSpace : (cached.diskSpace ?? null),
       ramSpace: ramSpace !== null ? ramSpace : (cached.ramSpace ?? null),
       tvEdid: tvEdid !== null ? tvEdid : (cached.tvEdid ?? null),
-      tvCec: tvCec !== null ? tvCec : (cached.tvCec ?? null)
+      tvCec: tvCec !== null ? tvCec : (cached.tvCec ?? null),
+      stbSpec: stbSpec !== null ? stbSpec : (cached.stbSpec ?? null)
     });
 
     try {
@@ -1505,8 +1515,8 @@ async function handleTcpMessage(socket, msg) {
         create: { id: deviceId, name: deviceId, status: 'online', lastSeen: new Date(), ip: normalizeIp(socket.remoteAddress), cpuUsage: cpu, memUsage: mem, appVersion: ver }
       });
       const cachedState = deviceLiveStateCache.get(deviceId) || {};
-      const { screenOff = false, hdmiConnected = true, cpuTemp = null, diskSpace = null, ramSpace = null, tvEdid = null, tvCec = null } = cachedState;
-      io.emit('device_status_update', { deviceId, status: 'online', cpu, mem, ip: normalizeIp(socket.remoteAddress), appVersion: ver, dl, vol, deviceTime, slide, screenOff, hdmiConnected, cpuTemp, diskSpace, ramSpace, tvEdid, tvCec });
+      const { screenOff = false, hdmiConnected = true, cpuTemp = null, diskSpace = null, ramSpace = null, tvEdid = null, tvCec = null, stbSpec = null } = cachedState;
+      io.emit('device_status_update', { deviceId, status: 'online', cpu, mem, ip: normalizeIp(socket.remoteAddress), appVersion: ver, dl, vol, deviceTime, slide, screenOff, hdmiConnected, cpuTemp, diskSpace, ramSpace, tvEdid, tvCec, stbSpec });
       socket.write(`ok:${Date.now()}\n`);
     } catch (err) {
       console.error('[TCP] DB 에러:', err);

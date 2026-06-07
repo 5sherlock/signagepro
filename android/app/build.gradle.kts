@@ -13,9 +13,9 @@ android {
     defaultConfig {
         applicationId = "com.signagepro.player"
         minSdk = 22                // Android 5.1.1 (RK3229 U4X+ CM)
-        targetSdk = 34             // 동일 디바이스에서 targetSdk 36도 설치 확인됨
-        versionCode = 22
-        versionName = "0.4.21"
+        targetSdk = 29             // V1-only 서명 유지: RK3229(API22) PM이 V2 블록을 못 읽음. Android 11+는 targetSdk<30이면 V2 강제 없음
+        versionCode = 24
+        versionName = "0.4.24"
 
         // 빌드 날짜를 BuildConfig에 자동 삽입 (관제 화면 버전 표시용)
         val buildDate = SimpleDateFormat("yyyy-MM-dd HH:mm").format(Date())
@@ -41,13 +41,17 @@ android {
             keyAlias = "signagepro"
             keyPassword = "signagepro2026"
             enableV1Signing = true   // Android 5.1.1 구형 ROM 호환
-            enableV2Signing = false
+            enableV2Signing = false  // RK3229 ROM이 V2 블록 파싱 불가 → targetSdk=29로 Android 11+ V2 강제 우회
             enableV3Signing = false
         }
     }
 
     buildFeatures {
         buildConfig = true
+    }
+
+    lint {
+        disable += "ExpiredTargetSdkVersion"  // Play Store 미배포 사이드로드 전용 — targetSdk=29 허용
     }
 
     buildTypes {

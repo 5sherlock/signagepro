@@ -469,9 +469,20 @@ class PlayerCoordinator(
     /** ACTION_VIEW로 시스템 설치 다이얼로그 호출 (Android 5.1.1 / API 22 호환). */
     private fun installViaActionView(apkFile: File) {
         try {
+            // Android 7.0+ : file:// URI는 FileUriExposedException 유발 → FileProvider로 content:// 변환
+            val uri = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+                androidx.core.content.FileProvider.getUriForFile(
+                    context,
+                    "${context.packageName}.fileprovider",
+                    apkFile
+                )
+            } else {
+                Uri.fromFile(apkFile)
+            }
             val intent = Intent(Intent.ACTION_VIEW).apply {
-                setDataAndType(Uri.fromFile(apkFile), "application/vnd.android.package-archive")
+                setDataAndType(uri, "application/vnd.android.package-archive")
                 addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
             }
             context.startActivity(intent)
             onStatus("설치 화면을 확인하세요")
@@ -556,6 +567,7 @@ class PlayerCoordinator(
             ramProvider = { metrics.ramSpace() },
             tvEdidProvider = { readTvEdid() },
             tvCecProvider = { checkTvCecPower() },
+            stbSpecProvider = { readStbDisplaySpec() },
             onServerEpoch = { epochMs, sentAt -> ntp.syncFromHeartbeatAck(epochMs, sentAt) }
         ).also { it.start() }
     }
@@ -737,6 +749,32 @@ class PlayerCoordinator(
             }
         }
         return TvEdidInfo("Unknown", "Unknown", "-", "Unknown", "Unknown")
+    }
+
+    private fun readStbDisplaySpec(): Pair<String, String> {
+        // supportedModes는 API 23+, Android 5.x(API 22) 기기에서 NoSuchMethodError 발생
+        if (android.os.Build.VERSION.SDK_INT < android.os.Build.VERSION_CODES.M) {
+            return "Unknown" to "Unknown"
+        }
+        return try {
+            val dm = context.getSystemService(android.content.Context.DISPLAY_SERVICE)
+                    as android.hardware.display.DisplayManager
+            val display = dm.getDisplay(android.view.Display.DEFAULT_DISPLAY)
+            val maxMode = display.supportedModes.maxByOrNull { it.physicalWidth.toLong() * it.physicalHeight }
+            val realMetrics = android.util.DisplayMetrics().also { display.getRealMetrics(it) }
+            val maxW = maxMode?.physicalWidth ?: realMetrics.widthPixels
+            val maxH = maxMode?.physicalHeight ?: realMetrics.heightPixels
+            val hdmiVer = when {
+                maxW >= 7680 -> "HDMI 2.1"
+                maxW >= 3840 -> "HDMI 2.0"
+                maxW >= 1920 -> "HDMI 1.4"
+                maxW > 0    -> "HDMI 1.3"
+                else        -> "Unknown"
+            }
+            hdmiVer to "${maxW}x${maxH}"
+        } catch (e: Throwable) {  // NoSuchMethodError(Error 계열) 포함 전체 포착
+            "Unknown" to "Unknown"
+        }
     }
 
     private fun checkTvCecPower(): String {

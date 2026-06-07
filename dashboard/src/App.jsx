@@ -1088,8 +1088,9 @@ function DeviceDiagnosticsModal({ device, onClose }) {
   const ramUsed = ram.total - ram.free;
   const ramUsedPct = ram.total > 0 ? Math.round((ramUsed / ram.total) * 100) : 0;
 
-  const edid = device.tvEdid || { brand: 'Unknown', model: 'Unknown', serial: '-', maxRes: 'Unknown', hdmiVer: 'Unknown' };
+  const edid = device.tvEdid || { brand: 'Unknown', model: 'Unknown', serial: '-', maxRes: 'Unknown' };
   const cec = device.tvCec || (device.status === 'online' ? (device.hdmiConnected ? '켜짐' : '꺼짐') : 'Unknown');
+  const stbSpec = device.stbSpec || { hdmiVer: 'Unknown', maxRes: 'Unknown' };
 
   const temp = device.cpuTemp || 0;
   const isTempHigh = temp > 75;
@@ -1126,10 +1127,6 @@ function DeviceDiagnosticsModal({ device, onClose }) {
                 </div>
               </div>
               <div className="diag-info-box">
-                <div className="diag-info-label">HDMI 버전 (최대)</div>
-                <div className="diag-info-value">{edid.hdmiVer || 'Unknown'}</div>
-              </div>
-              <div className="diag-info-box">
                 <div className="diag-info-label">TV 최대 해상도</div>
                 <div className="diag-info-value">{edid.maxRes || 'Unknown'}</div>
               </div>
@@ -1138,7 +1135,18 @@ function DeviceDiagnosticsModal({ device, onClose }) {
 
           <div className="diag-section">
             <h3 className="diag-section-title">📟 셋톱박스 하드웨어 상태</h3>
-            
+
+            <div className="diag-grid" style={{ marginBottom: '12px' }}>
+              <div className="diag-info-box">
+                <div className="diag-info-label">HDMI 최대 출력 버전</div>
+                <div className="diag-info-value">{stbSpec.hdmiVer}</div>
+              </div>
+              <div className="diag-info-box">
+                <div className="diag-info-label">최대 출력 해상도</div>
+                <div className="diag-info-value">{stbSpec.maxRes}</div>
+              </div>
+            </div>
+
             <div className="diag-hardware-container">
               <div className="diag-hardware-row">
                 <div className="diag-hw-label">
@@ -1302,7 +1310,8 @@ function App() {
                 diskSpace: newDev.diskSpace ?? oldDev.diskSpace ?? null,
                 ramSpace: newDev.ramSpace ?? oldDev.ramSpace ?? null,
                 tvEdid: newDev.tvEdid ?? oldDev.tvEdid ?? null,
-                tvCec: newDev.tvCec ?? oldDev.tvCec ?? null
+                tvCec: newDev.tvCec ?? oldDev.tvCec ?? null,
+                stbSpec: newDev.stbSpec ?? oldDev.stbSpec ?? null
               };
             }
             return newDev;
@@ -1427,7 +1436,8 @@ function App() {
                   diskSpace: update.diskSpace ?? d.diskSpace ?? null,
                   ramSpace: update.ramSpace ?? d.ramSpace ?? null,
                   tvEdid: update.tvEdid ?? d.tvEdid ?? null,
-                  tvCec: update.tvCec ?? d.tvCec ?? null
+                  tvCec: update.tvCec ?? d.tvCec ?? null,
+                  stbSpec: update.stbSpec ?? d.stbSpec ?? null
                 }
               : d
           );

@@ -258,7 +258,7 @@ const PlaylistPreviewModal = ({ items, deviceName, onClose }) => {
                       <div className="chunk-label">{it.media?.filename || 'Media'}</div>
                     </div>
                     <div className="chunk-transition-label">
-                      {itTrans.toUpperCase()} {(itTransTime/1000).toFixed(1)}s
+                      {itTrans === 'none' ? 'CUT' : `${itTrans.toUpperCase()} ${(itTransTime/1000).toFixed(1)}s`}
                     </div>
                   </div>
                 );
@@ -579,24 +579,30 @@ const MediaItemV4 = ({ item, onRemove, onChange }) => {
 // ── [V4] 전환 효과 브릿지 ───────────────────────────────────
 const TransitionBridgeV4 = ({ item, isLoop, onChange, onPreview }) => {
   const { transitionTime = 1000 } = item;
+  const isCut = (item.transition || 'fade') === 'none';
   return (
     <div className="transition-bridge-v4">
       <div className="bridge-line" />
       <div className="bridge-box">
-        <select 
-          className="mini-select" 
-          value={item.transition || 'fade'} 
-          onChange={e => onChange({ transition: e.target.value })}
+        <select
+          className="mini-select"
+          value={item.transition || 'fade'}
+          onChange={e => {
+            const val = e.target.value;
+            onChange({ transition: val, ...(val === 'none' ? { transitionTime: 0 } : {}) });
+          }}
         >
           <option value="fade">FADE</option>
           <option value="slide">SLIDE</option>
           <option value="dissolve">DISSOLVE</option>
-          <option value="none">없음</option>
+          <option value="none">CUT</option>
         </select>
-        <div className="bridge-time-row">
-          <input type="number" value={transitionTime} min={0} step={100} onChange={e => onChange({ transitionTime: Number(e.target.value) })} />
-          <span>ms</span>
-        </div>
+        {!isCut && (
+          <div className="bridge-time-row">
+            <input type="number" value={transitionTime} min={0} step={100} onChange={e => onChange({ transitionTime: Number(e.target.value) })} />
+            <span>ms</span>
+          </div>
+        )}
         <button className="bridge-preview-btn" onClick={onPreview}>미리보기</button>
       </div>
       <div className="bridge-line" />
