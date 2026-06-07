@@ -72,7 +72,12 @@ class HeartbeatService(
      * 서버 ACK에서 파싱한 서버 epoch(ms)와 heartbeat 전송 시점의 elapsedRealtime을 전달.
      * NtpClient.syncFromHeartbeatAck()에 연결해 RTT 보정된 시각 동기화에 사용.
      */
-    private val onServerEpoch: ((serverEpochMs: Long, sentAtElapsed: Long) -> Unit)? = null
+    private val onServerEpoch: ((serverEpochMs: Long, sentAtElapsed: Long) -> Unit)? = null,
+    /**
+     * 현재 자막 사이클 길이(ms) 반환. 0이면 자막 비활성. 대시보드 동기화용.
+     * null 반환 시 heartbeat에 포함하지 않음.
+     */
+    private val tickerSyncProvider: (() -> Long)? = null
 ) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var job: Job? = null
@@ -161,9 +166,12 @@ class HeartbeatService(
                     val cecPart = "/cec:$cecVal"
                     val (stbHdmiVer, stbMaxRes) = stbSpecProvider?.invoke() ?: ("Unknown" to "Unknown")
                     val stbPart = "/stb:${stbHdmiVer.replace('/', '_').replace(':', '_')}|${stbMaxRes.replace('/', '_').replace(':', '_')}"
+                    val tickerPart = tickerSyncProvider?.invoke()?.let { cycleMs ->
+                        if (cycleMs > 0L) "/ticker:$cycleMs" else "/ticker:0"
+                    } ?: ""
                     val sentAt = android.os.SystemClock.elapsedRealtime()
                     writeMutex.withLock {
-                        out.write("status:$deviceId/cpu:$cpu/mem:$mem/ver:$appVersion$dlPart$volPart$timePart$slidePart$screenPart$hdmiPart$tempPart$diskPart$ramPart$edidPart$cecPart$stbPart\n")
+                        out.write("status:$deviceId/cpu:$cpu/mem:$mem/ver:$appVersion$dlPart$volPart$timePart$slidePart$screenPart$hdmiPart$tempPart$diskPart$ramPart$edidPart$cecPart$stbPart$tickerPart\n")
                         out.flush()
                     }
                     val ack = input.readLine() ?: throw IOException("EOF on heartbeat")

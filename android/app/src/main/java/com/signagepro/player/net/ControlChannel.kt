@@ -23,6 +23,9 @@ class ControlChannel(
     private val onUpdateApk: (apkUrl: String) -> Unit = {},
     private val onReconnected: () -> Unit = {},
     private val onScheduleChanged: () -> Unit = {},
+    private val onTickerUpdated: () -> Unit = {},
+    /** 서버가 저장 즉시 직접 전송하는 ticker config (HTTP 왕복 없이 바로 적용) */
+    private val onTickerConfig: ((org.json.JSONObject?) -> Unit)? = null,
     /** 화면 켜기/끄기 명령 */
     private val onScreenControl: (on: Boolean) -> Unit = {},
     /** 볼륨 설정 명령 (0~15) */
@@ -95,6 +98,15 @@ class ControlChannel(
             on("screen_schedule") { _ ->
                 Log.i(TAG, "screen_schedule 이벤트 수신 → 스케줄 재조회")
                 onScheduleChanged()
+            }
+            on("ticker_updated") { _ ->
+                Log.i(TAG, "ticker_updated 이벤트 수신 → 자막 재조회")
+                onTickerUpdated()
+            }
+            on("ticker_config") { args ->
+                val data = args.firstOrNull() as? org.json.JSONObject
+                Log.i(TAG, "ticker_config 수신 → HTTP 없이 즉시 자막 적용")
+                onTickerConfig?.invoke(data)
             }
             on("screen_control") { args ->
                 val data = args.firstOrNull() as? JSONObject

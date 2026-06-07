@@ -59,7 +59,10 @@ class PlayerCoordinator(
     private val config: ConfigStore,
     private val renderer: MediaRenderer,
     private val onStatus: (String) -> Unit,
-    private val onDebug: (String) -> Unit = {}
+    private val onDebug: (String) -> Unit = {},
+    private val onTicker: ((com.signagepro.player.api.TickerConfigDto?) -> Unit)? = null,
+    /** 현재 자막 cycleMs 반환 (대시보드 동기화용). 0이면 자막 비활성. */
+    private val tickerCycleMsProvider: (() -> Long)? = null
 ) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
     private val ntp = NtpClient(context)
@@ -223,6 +226,10 @@ class PlayerCoordinator(
             // 스케줄 업데이트 후 로컬 캐시에 저장
             scheduleManager.update(device.schedules)
             scheduleStore.save(device.schedules)
+            // 자막 설정 적용
+            withContext(kotlinx.coroutines.Dispatchers.Main) {
+                onTicker?.invoke(device.tickerConfig)
+            }
             val groupId = device.groupId ?: error("기기가 그룹에 배정되지 않았습니다")
             val playlist = api.getPlaylist(groupId)
             store.save(playlist)
@@ -268,6 +275,22 @@ class PlayerCoordinator(
         } finally {
             dlStatus = null
             cache.trim(activeHashes)
+        }
+    }
+
+    /** ticker_updated fallback: 플레이리스트 재조회 없이 ticker config만 재조회 */
+    private fun refreshTicker() {
+        val deviceId = config.deviceId ?: return
+        val serverUrl = config.serverUrl ?: return
+        scope.launch {
+            try {
+                val device = ApiClient.get(serverUrl).getDevice(deviceId)
+                withContext(kotlinx.coroutines.Dispatchers.Main) {
+                    onTicker?.invoke(device.tickerConfig)
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "자막 설정 재조회 실패: ${e.message}")
+            }
         }
     }
 
@@ -568,7 +591,8 @@ class PlayerCoordinator(
             tvEdidProvider = { readTvEdid() },
             tvCecProvider = { checkTvCecPower() },
             stbSpecProvider = { readStbDisplaySpec() },
-            onServerEpoch = { epochMs, sentAt -> ntp.syncFromHeartbeatAck(epochMs, sentAt) }
+            onServerEpoch = { epochMs, sentAt -> ntp.syncFromHeartbeatAck(epochMs, sentAt) },
+            tickerSyncProvider = tickerCycleMsProvider
         ).also { it.start() }
     }
 
@@ -582,6 +606,31 @@ class PlayerCoordinator(
             onUpdateApk = { apkUrl -> downloadAndInstallApk(apkUrl) },
             onReconnected = { refreshPlaylist() },
             onScheduleChanged = { refreshPlaylist() },
+            onTickerUpdated = { refreshTicker() },   // fallback: ticker만 경량 재조회
+            onTickerConfig = { json ->               // 직접 전달: HTTP 왕복 없이 즉시 적용
+                val cfg = if (json == null) null else try {
+                    com.signagepro.player.api.TickerConfigDto(
+                        enabled     = json.optBoolean("enabled", false),
+                        text        = json.optString("text", ""),
+                        mode        = json.optString("mode", "individual"),
+                        position    = json.optString("position", "bottom"),
+                        speed       = json.optInt("speed", 150),
+                        direction   = json.optString("direction", "rtl"),
+                        fontSize    = json.optInt("fontSize", 48),
+                        fontFamily  = json.optString("fontFamily", "NotoSansKR-Regular"),
+                        fontBold    = json.optBoolean("fontBold", false),
+                        fontItalic  = json.optBoolean("fontItalic", false),
+                        textColor   = json.optString("textColor", "#FFFFFF"),
+                        bgColor     = json.optString("bgColor", "#000000"),
+                        bgOpacity   = json.optInt("bgOpacity", 65),
+                        deviceIndex = json.optInt("deviceIndex", 0),
+                        totalDevices= json.optInt("totalDevices", 1),
+                    ).takeIf { it.enabled && it.text.isNotBlank() }
+                } catch (e: Exception) {
+                    Log.w(TAG, "ticker_config 파싱 실패: ${e.message}"); null
+                }
+                scope.launch(kotlinx.coroutines.Dispatchers.Main) { onTicker?.invoke(cfg) }
+            },
             onScreenControl = { on -> scheduleManager.applyScreenStatePublic(on) },
             onSetVolume = { level ->
                 val max = audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC)

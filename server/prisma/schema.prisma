@@ -26,8 +26,31 @@ model Group {
   store     Store?     @relation(fields: [storeId], references: [id])
   devices   Device[]
   playlists Playlist[]
+  ticker    Ticker?
   createdAt DateTime   @default(now())
   updatedAt DateTime   @updatedAt
+}
+
+model Ticker {
+  id          String   @id @default(uuid())
+  groupId     String   @unique
+  group       Group    @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  enabled     Boolean  @default(false)
+  mode        String   @default("individual") // individual | group
+  text        String   @default("")
+  speed       Int      @default(150)          // px/sec (1920 기준)
+  direction   String   @default("rtl")        // rtl | ltr
+  position    String   @default("bottom")     // top | center | bottom
+  fontFamily  String   @default("NotoSansKR-Regular")
+  fontSize    Int      @default(48)
+  fontBold    Boolean  @default(false)
+  fontItalic  Boolean  @default(false)
+  textColor   String   @default("#FFFFFF")
+  bgColor     String   @default("#000000")
+  bgOpacity   Int      @default(65)           // 0-100
+  deviceOrder String   @default("[]")         // JSON: deviceId 배열 (물리적 순서)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
 }
 
 model Device {

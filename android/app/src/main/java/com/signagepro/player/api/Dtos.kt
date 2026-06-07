@@ -12,7 +12,27 @@ data class DeviceDto(
     val storeId: String?,
     val group: GroupDto?,
     val store: StoreDto?,
-    val schedules: List<ScheduleDto> = emptyList()
+    val schedules: List<ScheduleDto> = emptyList(),
+    val tickerConfig: TickerConfigDto? = null
+)
+
+@JsonClass(generateAdapter = true)
+data class TickerConfigDto(
+    val enabled: Boolean = false,
+    val mode: String = "individual",   // "individual" | "group"
+    val text: String = "",
+    val speed: Int = 150,              // px/sec (1920 기준)
+    val direction: String = "rtl",    // "rtl" | "ltr"
+    val position: String = "bottom",  // "top" | "center" | "bottom"
+    val fontFamily: String = "NotoSansKR-Regular",
+    val fontSize: Int = 48,
+    val fontBold: Boolean = false,
+    val fontItalic: Boolean = false,
+    val textColor: String = "#FFFFFF",
+    val bgColor: String = "#000000",
+    val bgOpacity: Int = 65,          // 0-100
+    val deviceIndex: Int = 0,
+    val totalDevices: Int = 1
 )
 
 @JsonClass(generateAdapter = true)

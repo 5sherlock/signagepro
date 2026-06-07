@@ -82,6 +82,13 @@
             android:padding="6dp"
             android:visibility="gone" />
 
+        <!-- 자막 뷰 — 미디어 레이어 위, 관리자 핫스팟 아래 -->
+        <com.signagepro.player.ui.TickerView
+            android:id="@+id/tickerView"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:visibility="gone" />
+
         <!--
             관리자 진입 핫스팟 — 우상단 모서리를 3초 이상 누르면 관리자 메뉴 표시.
             투명하므로 화면에 보이지 않음. 키오스크 현장 재설정용.

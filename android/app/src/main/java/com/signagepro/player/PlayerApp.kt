@@ -10,9 +10,12 @@ import android.util.Log
 import androidx.multidex.MultiDex
 import androidx.multidex.MultiDexApplication
 import com.signagepro.player.config.ConfigStore
+import com.signagepro.player.sync.NtpClient
 
 class PlayerApp : MultiDexApplication() {
     lateinit var config: ConfigStore
+        private set
+    lateinit var ntp: NtpClient
         private set
 
     override fun attachBaseContext(base: Context) {
@@ -24,6 +27,7 @@ class PlayerApp : MultiDexApplication() {
         super.onCreate()
         instance = this
         config = ConfigStore(this)
+        ntp = NtpClient(this)
         installCrashHandler()
         enableAdbTcp()
     }

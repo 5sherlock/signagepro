@@ -397,10 +397,11 @@ app.post('/api/groups', async (req, res) => {
 // 모든 기기 조회
 app.get('/api/devices', async (req, res) => {
   try {
-    const devices = await prisma.device.findMany({ 
-      include: { group: true, store: true },
-      orderBy: { order: 'asc' }
-    });
+    const [devices, tickers] = await Promise.all([
+      prisma.device.findMany({ include: { group: true, store: true }, orderBy: { order: 'asc' } }),
+      prisma.ticker.findMany(),
+    ]);
+    const tickerByGroup = Object.fromEntries(tickers.map(t => [t.groupId, t]));
     const now = Date.now();
     // DB status 를 그대로 믿지 않고, lastSeen 기준으로 실시간 재계산
     // → 스윕/소켓 close 이벤트가 미처 처리되지 않았을 때도 정확한 상태 반환
@@ -425,7 +426,16 @@ app.get('/api/devices', async (req, res) => {
         ramSpace: status === 'online' ? (cached.ramSpace ?? null) : null,
         tvEdid: status === 'online' ? (cached.tvEdid ?? null) : null,
         tvCec: status === 'online' ? (cached.tvCec ?? null) : null,
-        stbSpec: status === 'online' ? (cached.stbSpec ?? null) : null
+        stbSpec: status === 'online' ? (cached.stbSpec ?? null) : null,
+        tickerSync: status === 'online' ? (cached.tickerSync ?? null) : null,
+        tickerConfig: (() => {
+          const t = d.groupId ? tickerByGroup[d.groupId] : null;
+          if (!t || !t.enabled) return null;
+          const order = JSON.parse(t.deviceOrder || '[]');
+          const deviceIndex = order.indexOf(d.id);
+          const totalDevices = order.length || 1;
+          return { enabled: true, text: t.text, mode: t.mode, position: t.position, speed: t.speed, bgColor: t.bgColor, bgOpacity: t.bgOpacity, textColor: t.textColor, deviceIndex: deviceIndex < 0 ? 0 : deviceIndex, totalDevices, fontSize: t.fontSize || 48, fontBold: t.fontBold || false };
+        })(),
       };
     });
     console.log(`[API] 기기 목록 조회 요청됨. 현재 기기 수: ${devices.length}대`);
@@ -468,13 +478,39 @@ app.get('/api/devices/:id', async (req, res) => {
       where: {
         enabled: true,
         OR: [
-          { storeId: null,           deviceId: null },           // 전체 글로벌
-          { storeId: device.storeId, deviceId: null },           // 사업장 전용
-          {                          deviceId: req.params.id },  // 기기 전용
+          { storeId: null,           deviceId: null },
+          { storeId: device.storeId, deviceId: null },
+          {                          deviceId: req.params.id },
         ]
       }
     });
-    res.json({ ...device, schedules });
+    // 그룹 자막 설정 + 이 기기의 물리 순서(deviceIndex) 계산
+    let tickerConfig = null;
+    if (device.groupId) {
+      const ticker = await prisma.ticker.findUnique({ where: { groupId: device.groupId } });
+      if (ticker && ticker.enabled) {
+        const order = JSON.parse(ticker.deviceOrder || '[]');
+        const deviceIndex = order.indexOf(device.id);
+        tickerConfig = {
+          enabled:      ticker.enabled,
+          mode:         ticker.mode,
+          text:         ticker.text,
+          speed:        ticker.speed,
+          direction:    ticker.direction,
+          position:     ticker.position,
+          fontFamily:   ticker.fontFamily,
+          fontSize:     ticker.fontSize,
+          fontBold:     ticker.fontBold,
+          fontItalic:   ticker.fontItalic,
+          textColor:    ticker.textColor,
+          bgColor:      ticker.bgColor,
+          bgOpacity:    ticker.bgOpacity,
+          deviceIndex:  deviceIndex >= 0 ? deviceIndex : 0,
+          totalDevices: order.length > 0 ? order.length : 1,
+        };
+      }
+    }
+    res.json({ ...device, schedules, tickerConfig });
   } catch (err) {
     res.status(500).json({ error: '기기 조회 실패' });
   }
@@ -802,6 +838,58 @@ app.post('/api/groups/:groupId/playlist', async (req, res) => {
   } catch (err) {
     res.status(500).json({ error: '재생목록 저장 실패' });
   }
+});
+
+// --- 자막(Ticker) API ---
+
+// 그룹 자막 조회
+app.get('/api/groups/:groupId/ticker', async (req, res) => {
+  const { groupId } = req.params;
+  try {
+    const ticker = await prisma.ticker.findUnique({ where: { groupId } });
+    res.json(ticker || { groupId, enabled: false, mode: 'individual', text: '', speed: 150,
+      direction: 'rtl', position: 'bottom', fontFamily: 'NotoSansKR-Regular',
+      fontSize: 48, fontBold: false, fontItalic: false, textColor: '#FFFFFF',
+      bgColor: '#000000', bgOpacity: 65, deviceOrder: '[]' });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// 그룹 자막 저장 (upsert)
+app.post('/api/groups/:groupId/ticker', async (req, res) => {
+  const { groupId } = req.params;
+  const data = req.body;
+  try {
+    const ticker = await prisma.ticker.upsert({
+      where:  { groupId },
+      update: { ...data, updatedAt: new Date() },
+      create: { groupId, ...data },
+    });
+    // 각 기기에 deviceIndex 포함 ticker_config 직접 전송 (앱이 HTTP 왕복 없이 즉시 적용)
+    const order = JSON.parse(ticker.deviceOrder || '[]');
+    const totalDevices = order.length || 1;
+    order.forEach((devId, idx) => {
+      io.to(`device:${devId}`).emit('ticker_config', {
+        enabled: ticker.enabled,
+        text: ticker.text,
+        mode: ticker.mode,
+        position: ticker.position,
+        speed: ticker.speed,
+        direction: ticker.direction || 'rtl',
+        fontSize: ticker.fontSize || 48,
+        fontFamily: ticker.fontFamily || 'NotoSansKR-Regular',
+        fontBold: ticker.fontBold || false,
+        fontItalic: ticker.fontItalic || false,
+        textColor: ticker.textColor || '#FFFFFF',
+        bgColor: ticker.bgColor || '#000000',
+        bgOpacity: ticker.bgOpacity ?? 65,
+        deviceIndex: idx,
+        totalDevices,
+      });
+    });
+    // 대시보드 갱신용 브로드캐스트
+    io.emit('ticker_updated', { groupId });
+    res.json(ticker);
+  } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
 // --- OTA 업데이트 ---
@@ -1423,7 +1511,7 @@ async function handleTcpMessage(socket, msg) {
 
     const parts = msg.substring(7).split('/');
     let cpu = null, mem = null, ver = null, dl = null, vol = null, deviceTime = null, slide = null, screen = null, hdmi = null;
-    let cpuTemp = null, diskSpace = null, ramSpace = null, tvEdid = null, tvCec = null, stbSpec = null;
+    let cpuTemp = null, diskSpace = null, ramSpace = null, tvEdid = null, tvCec = null, stbSpec = null, tickerCycleMs = null;
     parts.forEach(p => {
       if (p.startsWith('cpu:')) cpu = parseFloat(p.substring(4));
       if (p.startsWith('mem:')) mem = parseFloat(p.substring(4));
@@ -1472,6 +1560,7 @@ async function handleTcpMessage(socket, msg) {
         const sp = p.substring(4).split('|');
         if (sp.length >= 2) stbSpec = { hdmiVer: sp[0], maxRes: sp[1] };
       }
+      if (p.startsWith('ticker:')) { const t = parseInt(p.substring(7)); if (!isNaN(t)) tickerCycleMs = t; }
     });
     // dl: cur/total/pct 가 '/'로 분리되어 parts에 ['dl:1','3','67'] 형태로 들어옴
     const dlIdx = parts.findIndex(p => p.startsWith('dl:'));
@@ -1505,7 +1594,11 @@ async function handleTcpMessage(socket, msg) {
       ramSpace: ramSpace !== null ? ramSpace : (cached.ramSpace ?? null),
       tvEdid: tvEdid !== null ? tvEdid : (cached.tvEdid ?? null),
       tvCec: tvCec !== null ? tvCec : (cached.tvCec ?? null),
-      stbSpec: stbSpec !== null ? stbSpec : (cached.stbSpec ?? null)
+      stbSpec: stbSpec !== null ? stbSpec : (cached.stbSpec ?? null),
+      // tickerCycleMs=0 → 자막 꺼짐(null로 초기화), null → 미포함(이전값 유지)
+      tickerSync: tickerCycleMs === null ? (cached.tickerSync ?? null)
+                : tickerCycleMs > 0 ? { cycleMs: tickerCycleMs, ntpMs: deviceTime ?? Date.now(), receivedAt: Date.now() }
+                : null
     });
 
     try {

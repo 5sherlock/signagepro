@@ -334,7 +334,17 @@ class MainActivity : AppCompatActivity() {
                     binding.debugText.text = msg
                     binding.debugText.visibility = if (msg.isBlank()) View.GONE else View.VISIBLE
                 }
-            }
+            },
+            onTicker = { cfg ->
+                runOnUiThread {
+                    if (cfg != null && cfg.enabled && cfg.text.isNotBlank()) {
+                        binding.tickerView.configure(cfg, PlayerApp.instance.ntp)
+                    } else {
+                        binding.tickerView.clear()
+                    }
+                }
+            },
+            tickerCycleMsProvider = { binding.tickerView.lastCycleMs }
         )
         coordinator!!.start()
     }

@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { Activity, Monitor, Film, Settings, LayoutGrid, Plus } from 'lucide-react';
+import { Activity, Monitor, Film, Settings, LayoutGrid, Plus, Subtitles } from 'lucide-react';
+import TickerManager from './components/TickerManager';
 import { io } from 'socket.io-client';
 import GroupManager from './components/GroupManager';
 import { SOCKET_URL, apiFetch, getToken } from './config';
@@ -441,7 +442,7 @@ function SettingsTab({ onUnauth, deviceOrder = {} }) {
     apiFetch(`${SOCKET_URL}/api/update/status`)
       .then(check401)
       .then(r => r.json())
-      .then(data => { setOtaStatus(data); if (data?.apkVersion) setServerApkVersion(data.apkVersion); })
+      .then(data => { setOtaStatus(data); const ver = data?.pendingVersion || data?.apkVersion; if (ver) setServerApkVersion(ver); })
       .catch(e => { if (e.message !== '401') setOtaStatus({ available: false }); });
 
   const refreshDevices = () =>
@@ -1200,17 +1201,31 @@ function DeviceDiagnosticsModal({ device, onClose }) {
   );
 }
 
+// Canvas-based text width measurement — matches Android's textPaint.measureText()
+const _tickerCanvas = typeof document !== 'undefined' ? document.createElement('canvas') : null;
+const _tickerCtx = _tickerCanvas ? _tickerCanvas.getContext('2d') : null;
+function measureTickerText(text, fontSize, bold) {
+  if (!_tickerCtx || !text) return text.length * fontSize * 0.9;
+  _tickerCtx.font = `${bold ? '700' : '400'} ${fontSize}px "Noto Sans KR", sans-serif`;
+  return _tickerCtx.measureText(text).width;
+}
+
 function App() {
   const [authed, setAuthed] = useState(!!getToken());
   const [selectedDiagDevice, setSelectedDiagDevice] = useState(null);
   const [activeTab, setActiveTab] = useState('dashboard');
+  const [tickerNow, setTickerNow] = useState(Date.now);
   const [currentDateTime, setCurrentDateTime] = useState(new Date());
 
   useEffect(() => {
-    const clockTimer = setInterval(() => {
-      setCurrentDateTime(new Date());
-    }, 1000);
+    const clockTimer = setInterval(() => setCurrentDateTime(new Date()), 1000);
     return () => clearInterval(clockTimer);
+  }, []);
+
+  // 자막 위치 계산용 타이머 (50ms = 20fps)
+  useEffect(() => {
+    const id = setInterval(() => setTickerNow(Date.now()), 50);
+    return () => clearInterval(id);
   }, []);
   const [devices, setDevicesState] = useState(() => {
     try {
@@ -1351,7 +1366,7 @@ function App() {
         .then(r => r.json())
         .then(d => {
           setApkAvailable(!!d.available);
-          setServerApkVersion(d.apkVersion || null);
+          setServerApkVersion(d.pendingVersion || d.apkVersion || null);
         })
         .catch(() => {
           setApkAvailable(false);
@@ -1522,6 +1537,10 @@ function App() {
             <Film size={20} />
             <span>미디어 스케줄링</span>
           </a>
+          <a className={`nav-item ${activeTab === 'ticker' ? 'active' : ''}`} onClick={() => setActiveTab('ticker')}>
+            <Subtitles size={20} />
+            <span>자막 관리</span>
+          </a>
           <a className={`nav-item ${activeTab === 'settings' ? 'active' : ''}`} onClick={() => setActiveTab('settings')}>
             <Settings size={20} />
             <span>환경설정</span>
@@ -1689,6 +1708,67 @@ function App() {
                         )}
                       </div>
 
+
+                      {/* 자막 오버레이 — Android TickerView와 동일한 수식 */}
+                      {device.tickerConfig?.enabled && device.status === 'online' && (() => {
+                        const tc = device.tickerConfig;
+                        const SCREEN_W = 1920;
+                        const SCREEN_H = 1080;
+                        // 실제 썸네일 크기: CSS로 지정된 width 기준, 16:9
+                        const THUMB_W = 280;
+                        const THUMB_H = THUMB_W * SCREEN_H / SCREEN_W; // 157.5px
+                        const scale = THUMB_W / SCREEN_W;
+
+                        const fontSize = tc.fontSize || 48;
+                        const speed = tc.speed || 50;
+                        const N = tc.mode === 'group' ? (tc.totalDevices || 1) : 1;
+                        const idx = tc.mode === 'group' ? (tc.deviceIndex || 0) : 0;
+
+                        // barH = fontSize × 2 (Android TickerView 그대로)
+                        const barHPx = fontSize * 2;                   // 실제 화면 px
+                        const barHPct = barHPx / SCREEN_H * 100;      // % of SCREEN_H
+
+                        // 위치 계산: Android가 cycleMs를 heartbeat로 보냈으면 그걸 그대로 사용
+                        // (폰트 측정값이 정확하므로 canvas 추정보다 훨씬 정밀)
+                        let posInCycleFull;
+                        if (device.tickerSync?.cycleMs > 0) {
+                          // Android NTP 기준 시각 + 서버수신 이후 경과시간으로 현재 위치 계산
+                          const { cycleMs: syncCycleMs, ntpMs, receivedAt } = device.tickerSync;
+                          const elapsed = tickerNow - receivedAt;
+                          const effectiveMs = ntpMs + elapsed;
+                          posInCycleFull = (effectiveMs % syncCycleMs) / 1000 * speed;
+                        } else {
+                          // fallback: canvas 측정 기반 추정
+                          const textWidthFull = measureTickerText(tc.text || '', fontSize, tc.fontBold || false);
+                          const cyclePxFull = N * SCREEN_W + textWidthFull;
+                          const cycleMs = (cyclePxFull / Math.max(1, speed)) * 1000;
+                          posInCycleFull = ((tickerNow % cycleMs) / 1000) * speed;
+                        }
+                        const virtualX = (N * SCREEN_W - posInCycleFull) * scale;
+                        const localX = virtualX - idx * THUMB_W;
+
+                        const r = parseInt((tc.bgColor||'#000').slice(1,3),16)||0;
+                        const g = parseInt((tc.bgColor||'#000').slice(3,5),16)||0;
+                        const b = parseInt((tc.bgColor||'#000').slice(5,7),16)||0;
+                        const bg = `rgba(${r},${g},${b},${(tc.bgOpacity??65)/100})`;
+
+                        // 바 세로 위치: Android와 동일한 계산
+                        const centerTop = (SCREEN_H - barHPx) / 2 / SCREEN_H * 100;
+                        const topVal = tc.position==='top' ? 0 : tc.position==='center' ? `${centerTop.toFixed(2)}%` : 'auto';
+                        const botVal = tc.position==='bottom' ? 0 : 'auto';
+
+                        // 썸네일 내 font-size: 실제 fontSize를 썸네일 비율로 스케일
+                        const thumbFontPx = (fontSize * scale).toFixed(2);
+
+                        return (
+                          <div style={{ position:'absolute', left:0, right:0, top:topVal, bottom:botVal, height:`${barHPct.toFixed(2)}%`, background:bg, overflow:'hidden', zIndex:4, display:'flex', alignItems:'center' }}>
+                            <span style={{ position:'absolute', whiteSpace:'nowrap', color:tc.textColor||'#fff', fontSize:`${thumbFontPx}px`, fontWeight: tc.fontBold ? 700 : 400, transform:`translateX(${localX}px)`, left:0, top:'50%', marginTop:'-0.5em' }}>
+                              {tc.text}
+                            </span>
+                          </div>
+                        );
+                      })()}
+
                       {/* 화면 꺼짐 오버레이 — 썸네일 영역에만 적용 */}
                       {device.screenOff && device.status === 'online' && serverOnline === true && (
                         <div style={{
@@ -1741,6 +1821,11 @@ function App() {
                             </div>
                           );
                         })()}
+                        {device.tickerConfig?.enabled && (
+                          <div style={{ display: 'inline-flex', alignItems: 'center', gap: '3px', background: 'rgba(56,189,248,0.12)', border: '1px solid rgba(56,189,248,0.3)', borderRadius: '4px', padding: '1px 6px', fontSize: '0.62rem', color: '#38bdf8', fontWeight: 600, marginTop: '3px' }}>
+                            ▶ 자막
+                          </div>
+                        )}
                         {deviceMeta[device.id] && (
                           <div style={{ marginTop: '4px' }}>
                             <div style={{ display: 'flex', alignItems: 'center', gap: '4px', marginBottom: '2px', overflow: 'hidden' }}>
@@ -2079,6 +2164,7 @@ function App() {
                   </div>
                 ))}
               </div>
+
             </div>
           </>
           );
@@ -2113,6 +2199,13 @@ function App() {
             />
           </div>
         )}
+        <div className="content-area" style={{ paddingTop: 0, padding: 0, display: activeTab === 'ticker' ? 'flex' : 'none', flexDirection: 'column', height: '100%' }}>
+          <TickerManager
+            token={localStorage.getItem('signagepro_token') || ''}
+            selectedStoreId={selectedStoreId}
+            stores={stores}
+          />
+        </div>
         {activeTab === 'settings' && (
           <SettingsTab onUnauth={onUnauth} deviceOrder={deviceOrder} />
         )}
