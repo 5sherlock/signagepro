@@ -263,16 +263,12 @@ io.on('connection', (socket) => {
       console.warn(`[OTA-Reconnect] ${deviceId} 버전 체크 실패: ${e.message}`);
     }
 
-    // 재연결 시 현재 스케줄 상태 즉시 복원
-    // (서버 재시작으로 크론이 재등록된 경우, 마지막 screen_control이 유실되므로 재전송)
+    // 재연결 시 screen_schedule 재전송 → 앱이 현재 스케줄 스스로 재평가
     try {
-      const screenOn = await getCurrentScheduledScreenState(deviceId);
-      if (screenOn !== null) {
-        socket.emit('screen_control', { deviceId, on: screenOn });
-        console.log(`[SCHED-Reconnect] ${deviceId}: 화면 ${screenOn ? 'ON' : 'OFF'} 상태 복원`);
-      }
+      socket.emit('screen_schedule');
+      console.log(`[SCHED-Reconnect] ${deviceId}: screen_schedule 재전송`);
     } catch (e) {
-      console.warn(`[SCHED-Reconnect] ${deviceId} 스케줄 복원 실패: ${e.message}`);
+      console.warn(`[SCHED-Reconnect] ${deviceId} 스케줄 재전송 실패: ${e.message}`);
     }
   });
 
@@ -1620,8 +1616,6 @@ app.post('/api/schedules/push', requireAuth, async (req, res) => {
 const activeCrons = [];
 
 async function runScreenCommand(deviceId, storeId, on) {
-  const adbPath = process.env.ADB_PATH || 'adb';
-  const keycode = on ? '224' : '223';
   const where = deviceId ? { id: deviceId }
               : storeId  ? { storeId }
               : {};
@@ -1632,17 +1626,11 @@ async function runScreenCommand(deviceId, storeId, on) {
     const socketsInRoom = await io.in(room).allSockets();
     if (socketsInRoom.size > 0) {
       io.to(room).emit('screen_control', { deviceId: device.id, on });
-      console.log(`[SCHED] 화면 ${on ? 'ON' : 'OFF'} → ${device.id} (Socket.io)`);
-      continue;
-    }
-    // Socket.io 룸 없을 때 ADB 폴백
-    const target = `${device.ip}:5555`;
-    try {
-      await adbExec(adbPath, ['connect', target], { timeout: 8000 });
-      await adbExec(adbPath, ['-s', target, 'shell', 'input', 'keyevent', keycode]);
-      console.log(`[SCHED] 화면 ${on ? 'ON' : 'OFF'} → ${device.id} (ADB ${target})`);
-    } catch (e) {
-      console.warn(`[SCHED] ${device.id} 명령 실패: ${e.message}`);
+      console.log(`[SCHED] 화면 ${on ? 'ON' : 'OFF'} → ${device.id} (Socket.io room)`);
+    } else {
+      // device room 없음 → screen_schedule 브로드캐스트로 앱이 스스로 판단
+      io.emit('screen_schedule');
+      console.log(`[SCHED] 화면 ${on ? 'ON' : 'OFF'} → ${device.id} (screen_schedule 브로드캐스트)`);
     }
   }
 }

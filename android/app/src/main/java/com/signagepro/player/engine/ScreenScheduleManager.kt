@@ -124,6 +124,8 @@ class ScreenScheduleManager(private val context: Context) {
     @Suppress("DEPRECATION")
     private fun turnScreenOn() {
         var success = false
+
+        // 1. WakeLock으로 화면 깨우기
         try {
             val wl = powerManager.newWakeLock(
                 PowerManager.SCREEN_BRIGHT_WAKE_LOCK or PowerManager.ACQUIRE_CAUSES_WAKEUP,
@@ -133,9 +135,28 @@ class ScreenScheduleManager(private val context: Context) {
             Log.i(TAG, "WakeLock 화면 켜기 완료")
             success = true
         } catch (e: Exception) {
-            Log.w(TAG, "WakeLock 화면 켜기 실패, su 쉘 시도: ${e.message}")
+            Log.w(TAG, "WakeLock 화면 켜기 실패: ${e.message}")
         }
 
+        // 2. MainActivity 포그라운드 복귀 — dpm.lockNow() 잠금화면 해제
+        // FLAG_SHOW_WHEN_LOCKED + FLAG_DISMISS_KEYGUARD 가 설정된 Activity를 앞으로 가져와
+        // 잠금화면을 통과하고 FLAG_KEEP_SCREEN_ON 으로 화면을 유지시킴
+        try {
+            val intent = android.content.Intent(context, com.signagepro.player.MainActivity::class.java).apply {
+                addFlags(
+                    android.content.Intent.FLAG_ACTIVITY_NEW_TASK or
+                    android.content.Intent.FLAG_ACTIVITY_SINGLE_TOP or
+                    android.content.Intent.FLAG_ACTIVITY_REORDER_TO_FRONT
+                )
+            }
+            context.startActivity(intent)
+            Log.i(TAG, "MainActivity 복귀 intent 전송 (잠금화면 해제)")
+            success = true
+        } catch (e: Exception) {
+            Log.w(TAG, "MainActivity 복귀 실패: ${e.message}")
+        }
+
+        // 3. su 폴백 (rooted 기기)
         if (!success) {
             try {
                 Log.i(TAG, "su -c input keyevent 224 쉘 명령어 호출")
