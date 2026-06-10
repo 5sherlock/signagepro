@@ -15,7 +15,10 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import java.util.Calendar
 
-class ScreenScheduleManager(private val context: Context) {
+class ScreenScheduleManager(
+    private val context: Context,
+    private val timeProvider: () -> Long = { System.currentTimeMillis() }
+) {
 
     @Volatile private var schedules: List<ScheduleDto> = emptyList()
     private var job: Job? = null
@@ -63,6 +66,7 @@ class ScreenScheduleManager(private val context: Context) {
     private fun checkAndExecute() {
         // 스케줄 시각은 KST(한국 표준시) 기준 — 기기 시스템 시간대와 무관하게 항상 Asia/Seoul 사용
         val cal = Calendar.getInstance(java.util.TimeZone.getTimeZone("Asia/Seoul"))
+        cal.timeInMillis = timeProvider()
         val hour = cal.get(Calendar.HOUR_OF_DAY)
         val minute = cal.get(Calendar.MINUTE)
         // Calendar: SUNDAY=1 → 0, MONDAY=2 → 1 ... SATURDAY=7 → 6
@@ -91,6 +95,7 @@ class ScreenScheduleManager(private val context: Context) {
      */
     fun evaluateNow() {
         val cal = Calendar.getInstance(java.util.TimeZone.getTimeZone("Asia/Seoul"))
+        cal.timeInMillis = timeProvider()
         val dayOfWeek = cal.get(Calendar.DAY_OF_WEEK) - 1
         val currentTime = "%02d:%02d".format(
             cal.get(Calendar.HOUR_OF_DAY), cal.get(Calendar.MINUTE)
@@ -123,9 +128,7 @@ class ScreenScheduleManager(private val context: Context) {
 
     @Suppress("DEPRECATION")
     private fun turnScreenOn() {
-        var success = false
-
-        // 1. WakeLock으로 화면 깨우기
+        // 1. WakeLock으로 화면 켜기
         try {
             val wl = powerManager.newWakeLock(
                 PowerManager.SCREEN_BRIGHT_WAKE_LOCK or PowerManager.ACQUIRE_CAUSES_WAKEUP,
@@ -133,7 +136,6 @@ class ScreenScheduleManager(private val context: Context) {
             )
             wl.acquire(3_000L)
             Log.i(TAG, "WakeLock 화면 켜기 완료")
-            success = true
         } catch (e: Exception) {
             Log.w(TAG, "WakeLock 화면 켜기 실패: ${e.message}")
         }
@@ -151,25 +153,20 @@ class ScreenScheduleManager(private val context: Context) {
             }
             context.startActivity(intent)
             Log.i(TAG, "MainActivity 복귀 intent 전송 (잠금화면 해제)")
-            success = true
         } catch (e: Exception) {
             Log.w(TAG, "MainActivity 복귀 실패: ${e.message}")
         }
 
-        // 3. su 폴백 (rooted 기기)
-        if (!success) {
-            try {
-                Log.i(TAG, "su -c input keyevent 224 쉘 명령어 호출")
-                Runtime.getRuntime().exec(arrayOf("su", "-c", "input keyevent 224"))
-                success = true
-            } catch (e: Exception) {
-                Log.e(TAG, "su screen on 쉘 실행 실패: ${e.message}")
-            }
+        // 3. su 폴백 (rooted 기기) — WAKEUP keyevent는 WakeLock/MainActivity 성공 여부와 관계없이
+        // 실질적인 HDMI/물리 디스플레이를 깨우기 위해 항상 실행을 시도합니다.
+        try {
+            Log.i(TAG, "su -c input keyevent 224 쉘 명령어 호출")
+            Runtime.getRuntime().exec(arrayOf("su", "-c", "input keyevent 224"))
+        } catch (e: Exception) {
+            Log.e(TAG, "su screen on 쉘 실행 실패: ${e.message}")
         }
 
-        if (success) {
-            onScreenStateChange?.invoke(true)
-        }
+        onScreenStateChange?.invoke(true)
     }
 
     private fun turnScreenOff() {

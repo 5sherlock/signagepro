@@ -73,7 +73,7 @@ class PlayerCoordinator(
     private var loopJob: Job? = null
     private var heartbeat: HeartbeatService? = null
     private var control: ControlChannel? = null
-    private val scheduleManager = ScreenScheduleManager(context)
+    private val scheduleManager = ScreenScheduleManager(context) { ntp.now() }
 
     /** 다운로드 진행 상태 — heartbeat에 포함. "cur/total/pct" 형식 */
     @Volatile private var dlStatus: String? = null
