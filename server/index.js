@@ -1,5 +1,6 @@
 require('dotenv').config();
 const express = require('express');
+const rateLimit = require('express-rate-limit');
 const cors = require('cors');
 const net = require('net');
 const { PrismaClient } = require('@prisma/client');
@@ -30,6 +31,7 @@ console.log(`[ADB] 감지된 ADB 경로: ${GLOBAL_ADB_PATH}`);
 
 const prisma = new PrismaClient();
 const app = express();
+app.set('trust proxy', 1); // X-Forwarded-For 신뢰 (pm2/nginx 프록시 환경)
 
 // 메모리에 보관할 기기별 실시간 상태 캐시 (deviceTime, slide, dl, vol, vu)
 const deviceLiveStateCache = new Map();
@@ -82,10 +84,13 @@ app.use(express.json());
 
 // ── 인증 ─────────────────────────────────────────────────────────────────────
 
-app.post('/api/auth/login', (req, res) => {
+const loginLimiter = rateLimit({ windowMs: 15 * 60 * 1000, max: 5, standardHeaders: true, legacyHeaders: false });
+app.post('/api/auth/login', loginLimiter, (req, res) => {
   if (!adminPassword) return res.json({ token: 'dev-mode' }); // 개발 모드
-  if (req.body.password !== adminPassword)
-    return res.status(401).json({ error: '비밀번호가 틀렸습니다.' });
+  if (req.body.password !== adminPassword) {
+    const remaining = req.rateLimit.remaining;
+    return res.status(401).json({ error: '비밀번호가 틀렸습니다.', remaining });
+  }
   const token = crypto.randomBytes(32).toString('hex');
   sessions.set(token, Date.now() + 24 * 60 * 60 * 1000);
   res.json({ token });
@@ -110,7 +115,6 @@ app.post('/api/auth/logout', (req, res) => {
 const requireAuth = (req, res, next) => {
   if (!adminPassword) return next(); // adminPassword 미설정 시 개방
   const token = req.headers.authorization?.slice(7);
-  if (token === 'dev-mode') return next();
   const expiry = sessions.get(token);
   if (!expiry || expiry < Date.now()) {
     sessions.delete(token);
@@ -121,9 +125,9 @@ const requireAuth = (req, res, next) => {
 
 // 기기 전용 GET API는 인증 제외 (Android 앱이 직접 호출)
 const DEVICE_OPEN = [
-  '/api/time',
-  /^\/api\/devices\/[^/]+$/,
-  /^\/api\/groups\/[^/]+\/playlist$/,
+  '/time',
+  /^\/devices\/[^/]+$/,
+  /^\/groups\/[^/]+\/playlist$/,
 ];
 app.use('/api', (req, res, next) => {
   if (req.path.startsWith('/auth/')) return next();
@@ -181,6 +185,51 @@ const io = new Server(httpServer, {
   allowEIO3: true
 });
 
+// 현재 시각 기준으로 스케줄 상 화면이 ON/OFF 중 어느 상태여야 하는지 계산
+// 오늘 가장 마지막으로 발화했어야 할 이벤트(on/off) 기준
+async function getCurrentScheduledScreenState(deviceId) {
+  const device = await prisma.device.findUnique({ where: { id: deviceId } });
+  if (!device) return null;
+
+  const schedules = await prisma.screenSchedule.findMany({
+    where: {
+      enabled: true,
+      OR: [
+        { storeId: null, deviceId: null },
+        { storeId: device.storeId, deviceId: null },
+        { deviceId },
+      ]
+    }
+  });
+  if (schedules.length === 0) return null;
+
+  // KST 기준 현재 요일·분
+  const nowUtcMs = Date.now();
+  const kstMs = nowUtcMs + 9 * 60 * 60 * 1000;
+  const kst = new Date(kstMs);
+  const dayOfWeek = kst.getUTCDay();
+  const currentMinutes = kst.getUTCHours() * 60 + kst.getUTCMinutes();
+
+  let lastEventTime = -1;
+  let lastEventOn = null;
+
+  for (const s of schedules) {
+    const days = s.days.split(',').map(Number);
+    if (!days.includes(dayOfWeek)) continue;
+    if (s.onTime) {
+      const [h, m] = s.onTime.split(':').map(Number);
+      const t = h * 60 + m;
+      if (t <= currentMinutes && t > lastEventTime) { lastEventTime = t; lastEventOn = true; }
+    }
+    if (s.offTime) {
+      const [h, m] = s.offTime.split(':').map(Number);
+      const t = h * 60 + m;
+      if (t <= currentMinutes && t > lastEventTime) { lastEventTime = t; lastEventOn = false; }
+    }
+  }
+  return lastEventOn; // 오늘 아직 아무 이벤트도 안 지났으면 null
+}
+
 // --- Socket.io 웹 플레이어 연결 처리 ---
 io.on('connection', (socket) => {
   // Android ControlChannel이 연결 직후 자신의 deviceId를 등록
@@ -212,6 +261,18 @@ io.on('connection', (socket) => {
       }
     } catch (e) {
       console.warn(`[OTA-Reconnect] ${deviceId} 버전 체크 실패: ${e.message}`);
+    }
+
+    // 재연결 시 현재 스케줄 상태 즉시 복원
+    // (서버 재시작으로 크론이 재등록된 경우, 마지막 screen_control이 유실되므로 재전송)
+    try {
+      const screenOn = await getCurrentScheduledScreenState(deviceId);
+      if (screenOn !== null) {
+        socket.emit('screen_control', { deviceId, on: screenOn });
+        console.log(`[SCHED-Reconnect] ${deviceId}: 화면 ${screenOn ? 'ON' : 'OFF'} 상태 복원`);
+      }
+    } catch (e) {
+      console.warn(`[SCHED-Reconnect] ${deviceId} 스케줄 복원 실패: ${e.message}`);
     }
   });
 
