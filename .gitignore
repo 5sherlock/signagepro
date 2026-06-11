@@ -46,6 +46,12 @@ server/uploads/
 
 # APK 배포 파일 (바이너리, 용량 큼)
 server/update/*.apk
+server/update/*.idsig
+*.apk
+*.idsig
+
+# 임시/프롬프트 파일
+bootanimation_prompt.txt
 
 # Android 빌드 결과물
 android/app/build/
