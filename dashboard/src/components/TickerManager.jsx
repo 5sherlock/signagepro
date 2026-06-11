@@ -73,7 +73,7 @@ function SortableDeviceChip({ id, name }) {
 const btnStyle = { background: 'none', border: 'none', cursor: 'pointer', padding: 0 };
 const sideLabel = { fontSize: '0.72rem', fontWeight: 700, color: '#64748b', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: '4px' };
 
-export default function TickerManager({ token, selectedStoreId: propStoreId, stores: propStores }) {
+export default function TickerManager({ token, selectedStoreId: propStoreId, stores: propStores, onStoreSelect }) {
   const [stores, setStores]               = useState(propStores || []);
   const [selectedStore, setSelectedStore] = useState(null);
   const [groups, setGroups]               = useState([]);
@@ -83,6 +83,7 @@ export default function TickerManager({ token, selectedStoreId: propStoreId, sto
   const [orderedIds, setOrderedIds]       = useState([]);
   const [saving, setSaving]               = useState(false);
   const [saved, setSaved]                 = useState(false);
+  const [saveError, setSaveError]         = useState('');
   const [presets, setPresets]             = useState(loadPresets);
   const [presetName, setPresetName]       = useState('');
 
@@ -104,13 +105,14 @@ export default function TickerManager({ token, selectedStoreId: propStoreId, sto
 
   const loadStore = useCallback(async (store) => {
     setSelectedStore(store);
+    onStoreSelect?.(store.id);
     setSelectedGroup(null);
     setTicker(DEFAULT_TICKER);
     setDevices([]);
     setOrderedIds([]);
     const all = await fetch(`${API}/api/groups`, { headers }).then(r => r.json()).catch(() => []);
     setGroups(Array.isArray(all) ? all.filter(g => g.storeId === store.id) : []);
-  }, []);
+  }, [onStoreSelect]);
 
   const loadGroup = useCallback(async (group) => {
     setSelectedGroup(group);
@@ -135,14 +137,21 @@ export default function TickerManager({ token, selectedStoreId: propStoreId, sto
 
   const save = async () => {
     if (!selectedGroup) return;
-    setSaving(true);
-    await fetch(`${API}/api/groups/${selectedGroup.id}/ticker`, {
-      method: 'POST', headers,
-      body: JSON.stringify({ ...ticker, deviceOrder: JSON.stringify(orderedIds) }),
-    });
-    setSaving(false);
-    setSaved(true);
-    setTimeout(() => setSaved(false), 2000);
+    setSaving(true); setSaveError('');
+    try {
+      const r = await fetch(`${API}/api/groups/${selectedGroup.id}/ticker`, {
+        method: 'POST', headers,
+        body: JSON.stringify({ ...ticker, deviceOrder: JSON.stringify(orderedIds) }),
+      });
+      if (!r.ok) {
+        const d = await r.json().catch(() => ({}));
+        setSaveError(d.error || `저장 실패 (${r.status})`);
+        return;
+      }
+      setSaved(true);
+      setTimeout(() => setSaved(false), 2000);
+    } catch { setSaveError('서버 연결 오류'); }
+    finally { setSaving(false); }
   };
 
   const update = (field, value) => setTicker(t => ({ ...t, [field]: value }));
@@ -261,27 +270,36 @@ export default function TickerManager({ token, selectedStoreId: propStoreId, sto
           </div>
         ) : (<>
 
-          {/* 활성화 토글 */}
+          {/* 활성화 토글 + 저장 */}
           <div className="glass-card" style={{ padding: '20px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
             <div>
               <div style={{ fontWeight: 600, fontSize: '1rem', color: '#f1f5f9' }}>자막 활성화</div>
               <div style={{ fontSize: '0.78rem', color: '#64748b', marginTop: '2px' }}>{selectedGroup.name} 그룹</div>
             </div>
-            <label style={{ display: 'flex', alignItems: 'center', gap: '10px', cursor: 'pointer' }}>
-              <div onClick={() => update('enabled', !ticker.enabled)} style={{
-                width: '48px', height: '26px', borderRadius: '13px', position: 'relative',
-                background: ticker.enabled ? '#3b82f6' : '#1e293b',
-                border: '1px solid rgba(255,255,255,0.1)', transition: 'background 0.2s',
-              }}>
-                <div style={{ position: 'absolute', top: '3px', left: ticker.enabled ? '24px' : '3px', width: '18px', height: '18px', borderRadius: '50%', background: '#fff', transition: 'left 0.2s' }} />
+            <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
+              <label style={{ display: 'flex', alignItems: 'center', gap: '10px', cursor: 'pointer' }}>
+                <div onClick={() => update('enabled', !ticker.enabled)} style={{
+                  width: '48px', height: '26px', borderRadius: '13px', position: 'relative',
+                  background: ticker.enabled ? '#3b82f6' : '#1e293b',
+                  border: '1px solid rgba(255,255,255,0.1)', transition: 'background 0.2s',
+                }}>
+                  <div style={{ position: 'absolute', top: '3px', left: ticker.enabled ? '24px' : '3px', width: '18px', height: '18px', borderRadius: '50%', background: '#fff', transition: 'left 0.2s' }} />
+                </div>
+                <span style={{ color: ticker.enabled ? '#3b82f6' : '#475569', fontSize: '0.85rem', fontWeight: 600 }}>
+                  {ticker.enabled ? 'ON' : 'OFF'}
+                </span>
+              </label>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', alignItems: 'flex-end' }}>
+                <button onClick={save} disabled={saving}
+                  style={{ padding: '8px 22px', borderRadius: '8px', border: 'none', background: saved ? '#10b981' : saveError ? '#ef4444' : '#3b82f6', color: '#fff', fontWeight: 700, fontSize: '0.85rem', cursor: saving ? 'not-allowed' : 'pointer', opacity: saving ? 0.7 : 1, transition: 'background 0.3s' }}>
+                  {saved ? '✓ 저장됨' : saving ? '저장 중…' : '저장'}
+                </button>
+                {saveError && <div style={{ fontSize: '0.72rem', color: '#ef4444' }}>{saveError}</div>}
               </div>
-              <span style={{ color: ticker.enabled ? '#3b82f6' : '#475569', fontSize: '0.85rem', fontWeight: 600 }}>
-                {ticker.enabled ? 'ON' : 'OFF'}
-              </span>
-            </label>
+            </div>
           </div>
 
-          {ticker.enabled && (<>
+          <div style={{ opacity: ticker.enabled ? 1 : 0.45, pointerEvents: ticker.enabled ? 'auto' : 'none', transition: 'opacity 0.2s', display: 'flex', flexDirection: 'column', gap: '20px' }}><>
 
             {/* 자막 내용 */}
             <div className="glass-card" style={{ padding: '20px', display: 'flex', flexDirection: 'column', gap: '16px' }}>
@@ -470,13 +488,8 @@ export default function TickerManager({ token, selectedStoreId: propStoreId, sto
               `}</style>
             </div>
 
-          </>)}
+          </></div>
 
-          {/* 저장 버튼 */}
-          <button onClick={save} disabled={saving}
-            style={{ padding: '12px 32px', borderRadius: '10px', border: 'none', background: saved ? '#10b981' : '#3b82f6', color: '#fff', fontWeight: 700, fontSize: '0.95rem', cursor: saving ? 'not-allowed' : 'pointer', opacity: saving ? 0.7 : 1, alignSelf: 'flex-start', transition: 'background 0.3s' }}>
-            {saved ? '✓ 저장됨' : saving ? '저장 중…' : '저장'}
-          </button>
 
         </>)}
       </div>

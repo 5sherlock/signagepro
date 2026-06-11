@@ -756,6 +756,8 @@ const DeviceRowV4 = ({ device, items, isDirty, onDrop, onRemoveItem, onChangeIte
 // ── 메인 MediaManager ─────────────────────────────────────
 const MediaManager = ({ stores = [], groups = [], devices = [], selectedStoreId, setSelectedStoreId, fetchDevices, deviceOrder = {}, onDeviceOrderChange }) => {
   const [mediaList, setMediaList] = useState([]);
+  const [bulkTransition, setBulkTransition] = useState('fade');
+  const [bulkDuration, setBulkDuration] = useState(1000);
   const [showArchived, setShowArchived] = useState(false); // 보관함(미사용) 표시 여부
   const [usedMediaIds, setUsedMediaIds] = useState(new Set()); // 저장 후 사용 중인 ID
   const [archiveSort, setArchiveSort] = useState('date-desc'); // 'date-desc' | 'date-asc' | 'ext' | 'size-desc'
@@ -1142,7 +1144,53 @@ const MediaManager = ({ stores = [], groups = [], devices = [], selectedStoreId,
             {storeGroups.map(g => <option key={g.id} value={g.id}>{g.name}</option>)}
           </select>
         </div>
-        <div style={{ display: 'flex', gap: 20, alignItems: 'center' }}>
+        <div style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
+          {/* 일괄 전환 컨트롤 */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '4px 10px', background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.08)', borderRadius: 8 }}>
+            <span style={{ fontSize: '0.72rem', color: '#64748b', whiteSpace: 'nowrap' }}>전체 전환:</span>
+            <select
+              value={bulkTransition}
+              onChange={e => setBulkTransition(e.target.value)}
+              className="glass-select"
+              style={{ fontSize: '0.75rem', padding: '2px 4px' }}
+            >
+              <option value="fade">FADE</option>
+              <option value="slide">SLIDE</option>
+              <option value="dissolve">DISSOLVE</option>
+              <option value="none">CUT</option>
+            </select>
+            {bulkTransition !== 'none' && (
+              <>
+                <input
+                  type="number"
+                  value={bulkDuration}
+                  min={0}
+                  step={100}
+                  onChange={e => setBulkDuration(Number(e.target.value))}
+                  style={{ width: 64, fontSize: '0.75rem', padding: '2px 6px', background: '#1e293b', border: '1px solid #334155', borderRadius: 5, color: '#f1f5f9', textAlign: 'right' }}
+                />
+                <span style={{ fontSize: '0.7rem', color: '#64748b' }}>ms</span>
+              </>
+            )}
+            <button
+              onClick={() => {
+                setLanes(prev => {
+                  const updated = {};
+                  Object.entries(prev).forEach(([devId, items]) => {
+                    updated[devId] = items.map(item => ({
+                      ...item,
+                      transition: bulkTransition,
+                      transitionTime: bulkTransition === 'none' ? 0 : bulkDuration,
+                    }));
+                  });
+                  return updated;
+                });
+              }}
+              style={{ fontSize: '0.72rem', padding: '3px 8px', borderRadius: 5, border: '1px solid rgba(59,130,246,0.5)', background: 'rgba(59,130,246,0.15)', color: '#60a5fa', cursor: 'pointer', whiteSpace: 'nowrap' }}
+            >
+              일괄 적용
+            </button>
+          </div>
           <button className={`btn-deploy ${isDirty ? '' : 'inactive'}`} onClick={handleSave} disabled={saving || !isDirty}>
             <Save size={18} style={{ marginRight: 8 }} /> {saving ? '저장 중...' : '변경사항 저장 및 배포'}
           </button>

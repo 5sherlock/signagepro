@@ -486,7 +486,7 @@ function SettingsTab({ onUnauth, deviceOrder = {} }) {
     checkAdbStatus();
     const t = setInterval(refreshDevices, 10000);
 
-    // 소켓으로 기기 진행률 수신
+    // 공유 소켓 재사용 — cleanup에서 disconnect 대신 off()만 호출해야 메인 소켓이 끊기지 않음
     const socket = io(SOCKET_URL);
 
     // OTA: 기기가 서버에서 APK 다운로드하는 진행률
@@ -544,7 +544,11 @@ function SettingsTab({ onUnauth, deviceOrder = {} }) {
       });
     });
 
-    return () => { clearInterval(t); socket.disconnect(); };
+    return () => {
+      clearInterval(t);
+      socket.off('device_status_update');
+      socket.off('adb_install_progress');
+    };
   }, []);
 
   const handleApkUpload = (e) => {
@@ -1211,7 +1215,7 @@ function measureTickerText(text, fontSize, bold) {
 }
 
 function App() {
-  const [authed, setAuthed] = useState(!!getToken());
+  const [authed, setAuthed] = useState(false);
   const [selectedDiagDevice, setSelectedDiagDevice] = useState(null);
   const [activeTab, setActiveTab] = useState('dashboard');
   const [tickerNow, setTickerNow] = useState(Date.now);
@@ -1220,6 +1224,14 @@ function App() {
   useEffect(() => {
     const clockTimer = setInterval(() => setCurrentDateTime(new Date()), 1000);
     return () => clearInterval(clockTimer);
+  }, []);
+
+  useEffect(() => {
+    const token = getToken();
+    if (!token) return;
+    apiFetch(`${SOCKET_URL}/api/auth/verify`)
+      .then(r => { if (r.ok) setAuthed(true); else localStorage.removeItem('SIGNAGE_TOKEN'); })
+      .catch(() => {});
   }, []);
 
   // 자막 위치 계산용 타이머 (50ms = 20fps)
@@ -1412,9 +1424,12 @@ function App() {
     fetchStores();
     fetchSchedules();
 
+    console.log('[socket] connecting to', SOCKET_URL);
     const socket = io(SOCKET_URL);
+    socket.on('connect_error', (err) => console.error('[socket] connect_error', err.message, err));
 
     socket.on('connect', () => {
+      console.log('[socket] connected', socket.id);
       setServerOnline(true);
       // 재연결 시 DB 실제 상태로 동기화 (끊긴 동안 놓친 offline 이벤트 복구)
       fetchDevices();
@@ -1474,6 +1489,7 @@ function App() {
     });
 
     socket.on('screen_schedule', () => fetchSchedules());
+    socket.on('ticker_updated', () => fetchDevices());
 
     // 폴백 폴링: Socket.io 이벤트 유실 대비 — 15초마다 DB 실제 상태로 강제 동기화
     // 서버 GET /api/devices가 lastSeen 기반으로 실시간 재계산하므로 폴링만으로도 정확히 감지됨
@@ -2201,9 +2217,10 @@ function App() {
         )}
         <div className="content-area" style={{ paddingTop: 0, padding: 0, display: activeTab === 'ticker' ? 'flex' : 'none', flexDirection: 'column', height: '100%' }}>
           <TickerManager
-            token={localStorage.getItem('signagepro_token') || ''}
+            token={getToken()}
             selectedStoreId={selectedStoreId}
             stores={stores}
+            onStoreSelect={setSelectedStoreId}
           />
         </div>
         {activeTab === 'settings' && (

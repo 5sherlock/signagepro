@@ -62,12 +62,21 @@ function saveAdminPassword(newPw) {
   }
 }
 
-// 세션 토큰 저장소 (메모리, 24시간 유효)
-const sessions = new Map();
-setInterval(() => {
-  const now = Date.now();
-  for (const [token, expiry] of sessions) if (expiry < now) sessions.delete(token);
-}, 60 * 60 * 1000);
+// HMAC 서명 토큰 — 서버 재시작 후에도 adminPassword로 검증 가능
+function createToken() {
+  const expiry = (Date.now() + 7 * 24 * 60 * 60 * 1000).toString(16);
+  const sig = crypto.createHmac('sha256', adminPassword).update(expiry).digest('hex');
+  return `${expiry}.${sig}`;
+}
+function verifySignedToken(token) {
+  const dot = token.indexOf('.');
+  if (dot < 0) return false;
+  const expiry = token.slice(0, dot);
+  const sig = token.slice(dot + 1);
+  const expected = crypto.createHmac('sha256', adminPassword).update(expiry).digest('hex');
+  if (sig !== expected) return false;
+  return Date.now() < parseInt(expiry, 16);
+}
 
 app.use(cors({
   origin: '*',
@@ -83,13 +92,36 @@ app.use(express.json());
 
 // ── 인증 ─────────────────────────────────────────────────────────────────────
 
+const loginAttempts = new Map(); // ip → { count, lockedUntil }
+const MAX_ATTEMPTS  = 5;
+const LOCKOUT_MS    = 15 * 60 * 1000; // 15분
+
 app.post('/api/auth/login', (req, res) => {
-  if (!adminPassword) return res.json({ token: 'dev-mode' }); // 개발 모드
-  if (req.body.password !== adminPassword)
-    return res.status(401).json({ error: '비밀번호가 틀렸습니다.' });
-  const token = crypto.randomBytes(32).toString('hex');
-  sessions.set(token, Date.now() + 24 * 60 * 60 * 1000);
-  res.json({ token });
+  if (!adminPassword) return res.json({ token: 'dev-mode' });
+
+  const ip  = req.ip || req.connection.remoteAddress;
+  const now = Date.now();
+  const rec = loginAttempts.get(ip) || { count: 0, lockedUntil: 0 };
+
+  if (rec.lockedUntil > now) {
+    const mins = Math.ceil((rec.lockedUntil - now) / 60000);
+    return res.status(429).json({ error: `너무 많은 시도입니다. ${mins}분 후 다시 시도하세요.` });
+  }
+
+  if (req.body.password !== adminPassword) {
+    rec.count += 1;
+    if (rec.count >= MAX_ATTEMPTS) {
+      rec.lockedUntil = now + LOCKOUT_MS;
+      rec.count = 0;
+      loginAttempts.set(ip, rec);
+      return res.status(429).json({ error: '비밀번호 5회 오류. 15분 동안 잠금됩니다.' });
+    }
+    loginAttempts.set(ip, rec);
+    return res.status(401).json({ error: `비밀번호가 틀렸습니다. (${MAX_ATTEMPTS - rec.count}회 남음)` });
+  }
+
+  loginAttempts.delete(ip);
+  res.json({ token: createToken() });
 });
 
 app.post('/api/auth/change-password', (req, res) => {
@@ -99,32 +131,28 @@ app.post('/api/auth/change-password', (req, res) => {
   if (!newPassword || newPassword.length < 4)
     return res.status(400).json({ error: '새 비밀번호는 4자 이상이어야 합니다.' });
   saveAdminPassword(newPassword);
-  sessions.clear(); // 기존 세션 모두 무효화
+  // 비밀번호 변경 시 기존 토큰 자동 무효화 (HMAC 키가 바뀌므로 별도 처리 불필요)
   res.json({ ok: true });
 });
 
 app.post('/api/auth/logout', (req, res) => {
-  sessions.delete(req.headers.authorization?.slice(7));
-  res.json({ ok: true });
+  res.json({ ok: true }); // 클라이언트에서 토큰 삭제; 서버 저장소 없음
 });
 
 const requireAuth = (req, res, next) => {
-  if (!adminPassword) return next(); // adminPassword 미설정 시 개방
+  if (!adminPassword) return next();
   const token = req.headers.authorization?.slice(7);
   if (token === 'dev-mode') return next();
-  const expiry = sessions.get(token);
-  if (!expiry || expiry < Date.now()) {
-    sessions.delete(token);
-    return res.status(401).json({ error: '인증이 필요합니다.' });
-  }
-  next();
+  if (token && verifySignedToken(token)) return next();
+  return res.status(401).json({ error: '인증이 필요합니다.' });
 };
 
 // 기기 전용 GET API는 인증 제외 (Android 앱이 직접 호출)
+// app.use('/api', ...) 내부에서 req.path는 /api 제거된 상대경로임
 const DEVICE_OPEN = [
-  '/api/time',
-  /^\/api\/devices\/[^/]+$/,
-  /^\/api\/groups\/[^/]+\/playlist$/,
+  '/time',
+  /^\/devices\/[^/]+$/,
+  /^\/groups\/[^/]+\/playlist$/,
 ];
 app.use('/api', (req, res, next) => {
   if (req.path.startsWith('/auth/')) return next();
@@ -134,6 +162,8 @@ app.use('/api', (req, res, next) => {
   if (open && req.method === 'GET') return next();
   requireAuth(req, res, next);
 });
+app.get('/api/auth/verify', requireAuth, (req, res) => res.json({ ok: true }));
+
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 
 // Ensure uploads folder exists
@@ -184,6 +214,10 @@ const io = new Server(httpServer, {
 
 // --- Socket.io 웹 플레이어 연결 처리 ---
 io.on('connection', (socket) => {
+  console.log(`[Socket.io] 연결됨 id=${socket.id} origin=${socket.handshake.headers.origin}`);
+  socket.on('disconnect', (reason) => {
+    console.log(`[Socket.io] 끊김 id=${socket.id} reason=${reason}`);
+  });
   // Android ControlChannel이 연결 직후 자신의 deviceId를 등록
   socket.on('register_device', async (data) => {
     const deviceId = typeof data === 'object' ? data?.deviceId : String(data);
@@ -779,16 +813,33 @@ app.delete('/api/media/:id', async (req, res) => {
 // 3. 특정 그룹의 재생목록 조회
 app.get('/api/groups/:groupId/playlist', async (req, res) => {
   const { groupId } = req.params;
-  const playlist = await prisma.playlist.findFirst({
-    where: { groupId },
-    include: {
-      medias: {
-        include: { media: true },
-        orderBy: { order: 'asc' }
-      }
-    }
-  });
-  res.json(playlist || { medias: [] });
+  const [playlist, ticker] = await Promise.all([
+    prisma.playlist.findFirst({
+      where: { groupId },
+      include: { medias: { include: { media: true }, orderBy: { order: 'asc' } } }
+    }),
+    prisma.ticker.findUnique({ where: { groupId } }),
+  ]);
+
+  const tickerConfig = (ticker && ticker.enabled) ? {
+    enabled:    true,
+    text:       ticker.text,
+    mode:       ticker.mode,
+    speed:      ticker.speed,
+    direction:  ticker.direction,
+    position:   ticker.position,
+    fontSize:   ticker.fontSize,
+    fontFamily: ticker.fontFamily,
+    fontBold:   ticker.fontBold,
+    fontItalic: ticker.fontItalic,
+    textColor:  ticker.textColor,
+    bgColor:    ticker.bgColor,
+    bgOpacity:  ticker.bgOpacity,
+    deviceOrder:  ticker.deviceOrder, // 기기가 자신의 index를 직접 계산
+    repeatCount:  ticker.repeatCount ?? 0,
+  } : { enabled: false };
+
+  res.json({ ...(playlist || { medias: [] }), tickerConfig });
 });
 
 // 4. 그룹 재생목록 저장 (덮어쓰기 방식)
@@ -864,29 +915,40 @@ app.post('/api/groups/:groupId/ticker', async (req, res) => {
       update: { ...data, updatedAt: new Date() },
       create: { groupId, ...data },
     });
-    // 각 기기에 deviceIndex 포함 ticker_config 직접 전송 (앱이 HTTP 왕복 없이 즉시 적용)
+    // 각 기기에 ticker_config 직접 전송
     const order = JSON.parse(ticker.deviceOrder || '[]');
-    const totalDevices = order.length || 1;
-    order.forEach((devId, idx) => {
-      io.to(`device:${devId}`).emit('ticker_config', {
-        enabled: ticker.enabled,
-        text: ticker.text,
-        mode: ticker.mode,
-        position: ticker.position,
-        speed: ticker.speed,
-        direction: ticker.direction || 'rtl',
-        fontSize: ticker.fontSize || 48,
-        fontFamily: ticker.fontFamily || 'NotoSansKR-Regular',
-        fontBold: ticker.fontBold || false,
-        fontItalic: ticker.fontItalic || false,
-        textColor: ticker.textColor || '#FFFFFF',
-        bgColor: ticker.bgColor || '#000000',
-        bgOpacity: ticker.bgOpacity ?? 65,
-        deviceIndex: idx,
-        totalDevices,
+    if (ticker.enabled) {
+      const totalDevices = order.length || 1;
+      order.forEach((devId, idx) => {
+        io.to(`device:${devId}`).emit('ticker_config', {
+          enabled: true,
+          text: ticker.text,
+          mode: ticker.mode,
+          position: ticker.position,
+          speed: ticker.speed,
+          direction: ticker.direction || 'rtl',
+          fontSize: ticker.fontSize || 48,
+          fontFamily: ticker.fontFamily || 'NotoSansKR-Regular',
+          fontBold: ticker.fontBold || false,
+          fontItalic: ticker.fontItalic || false,
+          textColor: ticker.textColor || '#FFFFFF',
+          bgColor: ticker.bgColor || '#000000',
+          bgOpacity: ticker.bgOpacity ?? 65,
+          repeatCount: ticker.repeatCount ?? 0,
+          deviceIndex: idx,
+          totalDevices,
+        });
       });
-    });
-    // 대시보드 갱신용 브로드캐스트
+    } else {
+      // 끄기: deviceOrder + 그룹 소속 기기 모두에 전송 (order가 비어있어도 동작)
+      const group = await prisma.group.findUnique({ where: { id: groupId }, include: { devices: true } });
+      const allIds = [...new Set([...order, ...(group?.devices || []).map(d => d.id)])];
+      allIds.forEach(devId => {
+        io.to(`device:${devId}`).emit('ticker_config', { enabled: false });
+      });
+    }
+    // Android refreshPlaylist() + 대시보드 양쪽 트리거
+    io.emit('playlist_updated', { groupId });
     io.emit('ticker_updated', { groupId });
     res.json(ticker);
   } catch (err) { res.status(500).json({ error: err.message }); }

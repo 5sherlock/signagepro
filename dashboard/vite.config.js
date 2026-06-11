@@ -16,9 +16,14 @@ export default defineConfig({
     __BUILD_DATE__: JSON.stringify(buildDate),
   },
   server: {
-    host: true, // 0.0.0.0 바인딩 → 외부 IP로 접근 가능
+    host: true,
+    port: 3000,
+    proxy: {
+      '/api': { target: 'http://localhost:3001', changeOrigin: true },
+      '/socket.io': { target: 'http://localhost:3001', changeOrigin: true, ws: true },
+      '/uploads': { target: 'http://localhost:3001', changeOrigin: true },
+    },
     watch: {
-      // Windows에서 외부 편집기로 수정 시 파일 변경 감지 안 되는 문제 해결
       usePolling: true,
       interval: 500,
     },

@@ -49,6 +49,7 @@ model Ticker {
   bgColor     String   @default("#000000")
   bgOpacity   Int      @default(65)           // 0-100
   deviceOrder String   @default("[]")         // JSON: deviceId 배열 (물리적 순서)
+  repeatCount Int      @default(0)            // 0=무한, 1~20=지정 횟수
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 }

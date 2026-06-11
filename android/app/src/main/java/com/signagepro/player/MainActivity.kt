@@ -278,7 +278,7 @@ class MainActivity : AppCompatActivity() {
 
         val config = PlayerApp.instance.config
         binding.deviceIdInput.setText(config.deviceId ?: "")
-        binding.serverUrlInput.setText(config.serverUrl ?: "http://192.168.0.25:3000")
+        binding.serverUrlInput.setText(config.serverUrl ?: "http://192.168.0.25:3001")
         binding.deviceSecretInput.setText(config.deviceSecret ?: "")
 
         binding.saveButton.setOnClickListener {
