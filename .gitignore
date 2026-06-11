@@ -57,6 +57,9 @@ bootanimation_prompt.txt
 android/app/build/
 android/.gradle/
 android/local.properties
+android_mobile/.gradle/
+android_mobile/app/build/
+android_mobile/local.properties
 
 # 서버 로그 (런타임 생성)
 server-stdout.log
