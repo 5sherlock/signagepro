@@ -5,8 +5,7 @@ import { SOCKET_URL, apiFetch } from '../config';
 export default function GroupManager({ devices, fetchDevices, stores, fetchStores, groups, fetchGroups, selectedStoreId, setSelectedStoreId }) {
   const [newStoreName, setNewStoreName] = useState('');
   const [newGroupName, setNewGroupName] = useState('');
-  const [newDeviceId, setNewDeviceId] = useState('');
-  const [newDeviceName, setNewDeviceName] = useState('');
+
   const [draggedDeviceId, setDraggedDeviceId] = useState(null);
   const [dragOverDeviceId, setDragOverDeviceId] = useState(null);
 
@@ -70,19 +69,6 @@ export default function GroupManager({ devices, fetchDevices, stores, fetchStore
     }).then(() => {
       setNewGroupName('');
       fetchGroups();
-    });
-  };
-
-  const handleRegisterDevice = () => {
-    if (!newDeviceId.trim() || !newDeviceName.trim() || !selectedStoreId) return;
-    apiFetch(`${SOCKET_URL}/api/devices`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ id: newDeviceId.trim(), name: newDeviceName.trim(), storeId: selectedStoreId })
-    }).then(() => {
-      setNewDeviceId('');
-      setNewDeviceName('');
-      if (fetchDevices) fetchDevices();
     });
   };
 
@@ -355,30 +341,6 @@ export default function GroupManager({ devices, fetchDevices, stores, fetchStore
               </div>
             </h2>
             
-            {/* 기기 수동 등록 폼 */}
-            <div style={{ background: 'rgba(0,0,0,0.1)', border: '1px solid var(--glass-border)', borderRadius: '12px', padding: '16px', marginBottom: '24px' }}>
-              <h3 style={{ fontSize: '0.9rem', color: 'var(--text-secondary)', marginBottom: '12px', display: 'flex', alignItems: 'center', gap: '6px' }}>
-                <HardDrive size={16} /> 신규 기기 등록
-              </h3>
-              <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap' }}>
-                <input 
-                  type="text" 
-                  placeholder="ID / MAC" 
-                  value={newDeviceId}
-                  onChange={(e) => setNewDeviceId(e.target.value)}
-                  style={{ flex: 1, minWidth: '150px', padding: '10px 16px', borderRadius: '8px', border: '1px solid var(--glass-border)', background: 'rgba(0,0,0,0.3)', color: '#fff', outline: 'none' }}
-                />
-                <input 
-                  type="text" 
-                  placeholder="기기 별칭" 
-                  value={newDeviceName}
-                  onChange={(e) => setNewDeviceName(e.target.value)}
-                  style={{ flex: 1, minWidth: '150px', padding: '10px 16px', borderRadius: '8px', border: '1px solid var(--glass-border)', background: 'rgba(0,0,0,0.3)', color: '#fff', outline: 'none' }}
-                />
-                <button className="btn btn-primary" onClick={handleRegisterDevice}>기기 등록</button>
-              </div>
-            </div>
-
             {/* 구역 추가 폼 */}
             <div style={{ display: 'flex', gap: '8px', marginBottom: '32px' }}>
               <input 

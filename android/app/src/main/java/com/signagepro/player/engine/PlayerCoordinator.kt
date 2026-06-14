@@ -10,6 +10,7 @@ import android.media.AudioManager
 import android.media.audiofx.Visualizer
 import android.net.Uri
 import android.os.Build
+import android.os.Environment
 import android.util.Log
 import com.signagepro.player.InstallReceiver
 import com.signagepro.player.SignageDeviceAdmin
@@ -247,8 +248,11 @@ class PlayerCoordinator(
     }
 
     private suspend fun prefetchAll(serverUrl: String, playlist: PlaylistDto) {
+        val selfDeviceId = config.deviceId ?: ""
+        // 자기 deviceId에 매칭되거나 전체 공통인 항목만 필터링
+        val filtered = playlist.medias.filter { it.targetDeviceId == null || it.targetDeviceId == selfDeviceId }
         // 중복 hash 제거 — 같은 파일을 여러 기기에 배치해도 한 번만 다운로드
-        val uniqueItems = playlist.medias.distinctBy { it.media.hash ?: it.media.id }
+        val uniqueItems = filtered.distinctBy { it.media.hash ?: it.media.id }
         val total = uniqueItems.size
         val activeHashes = mutableSetOf<String>()
 
@@ -336,7 +340,7 @@ class PlayerCoordinator(
 
                 val apkFile = withContext(Dispatchers.IO) {
                     // 외부 저장소 사용 — 패키지 인스톨러가 접근 가능한 위치
-                    val dir = context.getExternalCacheDir() ?: context.cacheDir
+                    val dir = context.cacheDir
                     val tmp = File(dir, "update.apk")
                     val request = Request.Builder().url(fullUrl).build()
                     ApiClient.http().newCall(request).execute().use { resp ->
@@ -397,10 +401,15 @@ class PlayerCoordinator(
                         if (pmFallback) {
                             kotlinx.coroutines.delay(3000)
                             android.os.Process.killProcess(android.os.Process.myPid())
+                        } else {
+                            onStatus("업데이트 실패 — 폴백 설치 실패")
+                            kotlinx.coroutines.delay(3000)
+                            onStatus("")
                         }
+                    } else {
+                        // STATUS_SUCCESS 시 InstallReceiver 가 killProcess 처리
+                        return@launch
                     }
-                    // STATUS_SUCCESS 시 InstallReceiver 가 killProcess 처리
-                    return@launch
                 }
                 InstallReceiver.pending = null
 
@@ -431,6 +440,14 @@ class PlayerCoordinator(
         return try {
             val installer = context.packageManager.packageInstaller
             val params = PackageInstaller.SessionParams(PackageInstaller.SessionParams.MODE_FULL_INSTALL)
+            if (Build.VERSION.SDK_INT >= 26) {
+                try {
+                    val method = params.javaClass.getMethod("setRequestDowngrade", Boolean::class.javaPrimitiveType)
+                    method.invoke(params, true)
+                } catch (e: Exception) {
+                    Log.w(TAG, "setRequestDowngrade reflection failed: ${e.message}")
+                }
+            }
             val sessionId = installer.createSession(params)
             installer.openSession(sessionId).use { session ->
                 session.openWrite("package", 0, apkFile.length()).use { out ->
@@ -459,10 +476,10 @@ class PlayerCoordinator(
      * exitCode==0 && "Success" 포함 시 true.
      */
     private fun trySilentInstallPm(apkFile: File): Boolean {
-        // 1순위: root(su) 경유 — 설치 확인 다이얼로그 없이 자동 설치
+        // 1순위: root(su) 경유 — 설치 확인 다이얼로그 없이 자동 설치 (다운그레이드 -d 허용)
         try {
             val proc = Runtime.getRuntime().exec(arrayOf(
-                "su", "-c", "cp \"${apkFile.absolutePath}\" /data/local/tmp/update.apk && chmod 777 /data/local/tmp/update.apk && pm install -r /data/local/tmp/update.apk && rm /data/local/tmp/update.apk && sleep 2 && am start -n com.signagepro.player/.MainActivity"
+                "su", "-c", "cp \"${apkFile.absolutePath}\" /data/local/tmp/update.apk && chmod 777 /data/local/tmp/update.apk && pm install -r -d /data/local/tmp/update.apk && rm /data/local/tmp/update.apk && sleep 2 && am start -n com.signagepro.player/.MainActivity"
             ))
             val exitCode = proc.waitFor()
             val output = proc.inputStream.bufferedReader().readText()
@@ -473,10 +490,10 @@ class PlayerCoordinator(
             Log.w(TAG, "su pm install 실행 불가: ${e.message}")
         }
 
-        // 2순위: 일반 pm install (root 없는 일부 ROM 허용)
+        // 2순위: 일반 pm install (root 없는 일부 ROM 허용, 다운그레이드 -d 허용)
         return try {
             val proc = Runtime.getRuntime().exec(arrayOf(
-                "sh", "-c", "pm install -r \"${apkFile.absolutePath}\" && sleep 2 && am start -n com.signagepro.player/.MainActivity"
+                "sh", "-c", "pm install -r -d \"${apkFile.absolutePath}\" && sleep 2 && am start -n com.signagepro.player/.MainActivity"
             ))
             val exitCode = proc.waitFor()
             val output = proc.inputStream.bufferedReader().readText()
@@ -492,15 +509,32 @@ class PlayerCoordinator(
     /** ACTION_VIEW로 시스템 설치 다이얼로그 호출 (Android 5.1.1 / API 22 호환). */
     private fun installViaActionView(apkFile: File) {
         try {
+            // Android 6 이하 구형 ROM: getExternalCacheDir()은 시스템 인스톨러가 못 읽는 ROM 버그 존재.
+            // /sdcard/ 루트로 복사하면 PackageManager가 접근 가능한 공개 경로가 된다.
+            val installFile = if (Build.VERSION.SDK_INT < Build.VERSION_CODES.N) {
+                try {
+                    @Suppress("DEPRECATION")
+                    val pub = File(Environment.getExternalStorageDirectory(), "signagepro-update.apk")
+                    apkFile.copyTo(pub, overwrite = true)
+                    pub.setReadable(true, false)
+                    pub
+                } catch (e: Exception) {
+                    Log.w(TAG, "공개 경로 복사 실패, 원본 사용: ${e.message}")
+                    apkFile
+                }
+            } else {
+                apkFile
+            }
+
             // Android 7.0+ : file:// URI는 FileUriExposedException 유발 → FileProvider로 content:// 변환
             val uri = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
                 androidx.core.content.FileProvider.getUriForFile(
                     context,
                     "${context.packageName}.fileprovider",
-                    apkFile
+                    installFile
                 )
             } else {
-                Uri.fromFile(apkFile)
+                Uri.fromFile(installFile)
             }
             val intent = Intent(Intent.ACTION_VIEW).apply {
                 setDataAndType(uri, "application/vnd.android.package-archive")
@@ -560,7 +594,8 @@ class PlayerCoordinator(
         val uri = try { URI(serverUrl) } catch (e: Exception) { null }
         val host = uri?.host ?: return
         val httpPort = uri.port
-        val tcpPort = if (httpPort == 3000) 10081 else 10080
+        // dev 백엔드(HTTP 3000=Vite 프록시 / 3001=API 직결) → TCP 10081, 그 외(운영) → TCP 10080
+        val tcpPort = if (httpPort == 3000 || httpPort == 3001) 10081 else 10080
 
         heartbeat?.stop()
         val versionName = runCatching {

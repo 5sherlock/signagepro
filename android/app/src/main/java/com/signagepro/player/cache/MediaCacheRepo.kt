@@ -66,7 +66,8 @@ class MediaCacheRepo(
             val target = File(baseDir, fileNameFor(media, hash))
             val tmp = File(baseDir, "${target.name}.${System.nanoTime()}.part")
 
-            val url = serverUrl.trimEnd('/') + media.path
+            val url = if (media.path.startsWith("http")) media.path
+                      else serverUrl.trimEnd('/') + media.path
             val request = Request.Builder().url(url).build()
             try {
                 ApiClient.http().newCall(request).execute().use { resp ->

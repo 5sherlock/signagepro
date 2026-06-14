@@ -152,9 +152,9 @@ export default function Player() {
       >
         {isCurrent ? (
           item.media.type === 'video' ? (
-            <video src={`${SOCKET_URL}${item.media.path}`} autoPlay muted loop style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+            <video src={item.media.path.startsWith('http') ? item.media.path : `${SOCKET_URL}${item.media.path}`} autoPlay muted loop style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
           ) : (
-            <img src={`${SOCKET_URL}${item.media.path}`} style={{ width: '100%', height: '100%', objectFit: 'cover' }} alt="" />
+            <img src={item.media.path.startsWith('http') ? item.media.path : `${SOCKET_URL}${item.media.path}`} style={{ width: '100%', height: '100%', objectFit: 'cover' }} alt="" />
           )
         ) : null}
       </div>

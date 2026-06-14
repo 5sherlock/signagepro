@@ -180,7 +180,7 @@ export default function DevicePreview({ groupId, deviceId, onUpdate, pcAudio = f
         <video
           key={media.path}
           ref={videoElRef}
-          src={`${SOCKET_URL}${media.path}`}
+          src={media.path.startsWith('http') ? media.path : `${SOCKET_URL}${media.path}`}
           autoPlay
           muted={!pcAudio || devVol === 0}
           loop
@@ -195,7 +195,7 @@ export default function DevicePreview({ groupId, deviceId, onUpdate, pcAudio = f
     }
     return (
       <img
-        src={`${SOCKET_URL}${media.path}`}
+        src={media.path.startsWith('http') ? media.path : `${SOCKET_URL}${media.path}`}
         alt="Preview"
         style={{ width: '100%', height: '100%', objectFit: 'cover' }}
       />

@@ -1,12 +1,13 @@
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Outfit:wght@400;500;600;700&family=Noto+Sans+KR:wght@400;700&display=swap');
 
+@import './components/TransitionDivider.css';
+@import './components/MediaManager.css';
+@import './components/PreviewModal.css';
+
 @keyframes card-ticker {
   from { transform: translateX(0); }
   to   { transform: translateX(-200%); }
 }
-@import './components/TransitionDivider.css';
-@import './components/MediaManager.css';
-@import './components/PreviewModal.css';
 
 /* number input 브라우저 기본 스피너(화살표) 제거 */
 input[type="number"]::-webkit-inner-spin-button,
@@ -289,15 +290,15 @@ select option {
 }
 
 .dashboard-grid.count-4 {
-  grid-template-columns: repeat(2, 1fr);
+  grid-template-columns: repeat(4, 1fr);
 }
 
 .dashboard-grid.count-5 {
-  grid-template-columns: repeat(3, 1fr);
+  grid-template-columns: repeat(5, 1fr);
 }
 
 .dashboard-grid.count-6 {
-  grid-template-columns: repeat(3, 1fr);
+  grid-template-columns: repeat(6, 1fr);
 }
 
 .dashboard-grid.count-many {

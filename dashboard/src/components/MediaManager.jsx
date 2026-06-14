@@ -61,7 +61,7 @@ const API = SOCKET_URL;
 // ── 미디어 렌더러 ─────────────────────────────────────────
 const MediaThumb = ({ path, style = {} }) => {
   if (!path) return <div style={{ background: '#111', ...style }} />;
-  const url = `${API}${path}`;
+  const url = path.startsWith('http') ? path : `${API}${path}`;
   const isVideo = /\.(mp4|webm|mov)$/i.test(path);
   if (isVideo) return <video src={url} muted loop autoPlay playsInline style={{ objectFit: 'contain', ...style }} />;
   return <img src={url} alt="" style={{ objectFit: 'contain', ...style }} />;
@@ -111,7 +111,7 @@ const getTrackOverlay = (transType, transTime, preWait, track) => {
 // ── 프리미어 스타일 필름스트립 (트랙 폭에 비례해 썸네일 반복) ────────────
 const TrackFilmstrip = ({ item }) => {
   if (!item?.media?.path) return null;
-  const url = `${API}${item.media.path}`;
+  const url = item.media.path.startsWith('http') ? item.media.path : `${API}${item.media.path}`;
   const isVideo = /\.(mp4|webm|mov)$/i.test(item.media.path);
   const frames = Array.from({ length: 40 });
   
@@ -358,7 +358,7 @@ const TransitionPreviewModal = ({ currentItem, nextItem, onChange, onClose }) =>
   const renderMedia = (item) => {
     if (!item?.media?.path) return <div className="preview-media-empty">미디어 없음</div>;
     const isVideo = /\.(mp4|webm|mov)$/i.test(item.media.path);
-    const url = `${API}${item.media.path}`;
+    const url = item.media.path.startsWith('http') ? item.media.path : `${API}${item.media.path}`;
     // 항상 원본 비율 유지(contain)하여 이미지가 잘리지 않게 함
     const fit = 'contain';
     return isVideo ? <video src={url} autoPlay muted style={{ width: '100%', height: '100%', objectFit: fit }} /> : <img src={url} alt="" style={{ width: '100%', height: '100%', objectFit: fit }} />;
@@ -620,7 +620,13 @@ const DeviceRowV4 = ({ device, items, isDirty, onDrop, onRemoveItem, onChangeIte
   useEffect(() => {
     const el = timelineRef.current;
     if (!el) return;
-    const onWheel = e => { e.preventDefault(); el.scrollLeft += e.deltaY; };
+    const onWheel = e => {
+      // 가로 오버플로(스크롤 필요)가 있을 때만 휠을 가로채 가로 스크롤로 전환.
+      // 작게보기(wrap)처럼 가로 오버플로가 없으면 기본 세로 스크롤 허용.
+      if (el.scrollWidth <= el.clientWidth) return;
+      e.preventDefault();
+      el.scrollLeft += e.deltaY;
+    };
     el.addEventListener('wheel', onWheel, { passive: false });
     return () => el.removeEventListener('wheel', onWheel);
   }, []);
@@ -756,9 +762,12 @@ const DeviceRowV4 = ({ device, items, isDirty, onDrop, onRemoveItem, onChangeIte
 // ── 메인 MediaManager ─────────────────────────────────────
 const MediaManager = ({ stores = [], groups = [], devices = [], selectedStoreId, setSelectedStoreId, fetchDevices, deviceOrder = {}, onDeviceOrderChange }) => {
   const [mediaList, setMediaList] = useState([]);
-  const [bulkTransition, setBulkTransition] = useState('fade');
-  const [bulkDuration, setBulkDuration] = useState(1000);
+  const [bulkTransition, setBulkTransition] = useState('dissolve');
+  const [bulkDuration, setBulkDuration] = useState(2000);
+  const [bulkSlideDuration, setBulkSlideDuration] = useState(10); // 이미지 표시 시간(초) 일괄값
+  const [timelineCompact, setTimelineCompact] = useState(true); // 타임라인 작게보기(한눈에) — 기본값
   const [showArchived, setShowArchived] = useState(false); // 보관함(미사용) 표시 여부
+  const [librarySmall, setLibrarySmall] = useState(false);
   const [usedMediaIds, setUsedMediaIds] = useState(new Set()); // 저장 후 사용 중인 ID
   const [archiveSort, setArchiveSort] = useState('date-desc'); // 'date-desc' | 'date-asc' | 'ext' | 'size-desc'
   const [collapsedExts, setCollapsedExts] = useState(new Set()); // 접힌 확장자 그룹 키
@@ -877,7 +886,7 @@ const MediaManager = ({ stores = [], groups = [], devices = [], selectedStoreId,
   }, [deployPanel]);
 
   const handleDrop = (deviceId, media, insertIdx = null) => {
-    const newItem = { mediaId: media.id, media, duration: 10, transition: 'dissolve', transitionTime: 1000, slideDirection: 'right', _key: `${media.id}-${Date.now()}` };
+    const newItem = { mediaId: media.id, media, duration: 10, transition: 'dissolve', transitionTime: 2000, slideDirection: 'right', _key: `${media.id}-${Date.now()}` };
     setLanes(prev => {
       const updated = { ...prev };
       const current = [...(updated[deviceId] || [])];
@@ -994,8 +1003,8 @@ const MediaManager = ({ stores = [], groups = [], devices = [], selectedStoreId,
 
   const uploadOneFile = (file) => new Promise((resolve, reject) => {
     const form = new FormData();
+    if (selectedStoreId) form.append('storeId', selectedStoreId); // 텍스트 필드를 파일보다 먼저 (multer req.body 보장)
     form.append('file', file);
-    form.append('storeId', selectedStoreId);
     const xhr = new XMLHttpRequest();
     xhr.open('POST', `${API}/api/media`);
     const token = localStorage.getItem('SIGNAGE_TOKEN') || '';
@@ -1081,6 +1090,7 @@ const MediaManager = ({ stores = [], groups = [], devices = [], selectedStoreId,
     <div
       key={media.id}
       className="library-item"
+      data-filename={media.filename}
       style={{
         cursor: libDragPos && libDragMediaRef.current?.id === media.id ? 'grabbing' : 'grab',
         userSelect: 'none',
@@ -1110,6 +1120,9 @@ const MediaManager = ({ stores = [], groups = [], devices = [], selectedStoreId,
       </button>
     </div>
   );
+
+  // 보관함: 현재 그룹 플레이리스트에 사용되지 않은(미사용) 미디어만 노출
+  const archivedList = mediaList.filter(m => !usedMediaIds.has(m.id));
 
   return (
     <div className="mm-root" style={{ cursor: libDragPos ? 'grabbing' : undefined }}>
@@ -1172,6 +1185,17 @@ const MediaManager = ({ stores = [], groups = [], devices = [], selectedStoreId,
                 <span style={{ fontSize: '0.7rem', color: '#64748b' }}>ms</span>
               </>
             )}
+            <span style={{ width: 1, height: 18, background: 'rgba(255,255,255,0.12)', margin: '0 2px' }} />
+            <span style={{ fontSize: '0.72rem', color: '#64748b', whiteSpace: 'nowrap' }}>표시 시간:</span>
+            <input
+              type="number"
+              value={bulkSlideDuration}
+              min={1}
+              step={1}
+              onChange={e => setBulkSlideDuration(Number(e.target.value))}
+              style={{ width: 56, fontSize: '0.75rem', padding: '2px 6px', background: '#1e293b', border: '1px solid #334155', borderRadius: 5, color: '#f1f5f9', textAlign: 'right' }}
+            />
+            <span style={{ fontSize: '0.7rem', color: '#64748b' }}>초</span>
             <button
               onClick={() => {
                 setLanes(prev => {
@@ -1181,6 +1205,7 @@ const MediaManager = ({ stores = [], groups = [], devices = [], selectedStoreId,
                       ...item,
                       transition: bulkTransition,
                       transitionTime: bulkTransition === 'none' ? 0 : bulkDuration,
+                      duration: Math.max(1, bulkSlideDuration),
                     }));
                   });
                   return updated;
@@ -1245,6 +1270,7 @@ const MediaManager = ({ stores = [], groups = [], devices = [], selectedStoreId,
           <div className="mm-library-header">
             <span className="mm-library-title">에셋 라이브러리</span>
             <div style={{ display: 'flex', gap: 6 }}>
+              <button className="icon-btn" onClick={() => setLibrarySmall(v => !v)} title={librarySmall ? '크게 보기' : '작게 보기'} style={{ fontSize: '0.6rem', fontWeight: 700, color: librarySmall ? '#60a5fa' : undefined }}>{librarySmall ? '2열' : '4열'}</button>
               <button className="icon-btn" onClick={() => fileRef.current?.click()} title="업로드" disabled={!!uploadProgress}><Upload size={14} /></button>
               <button className="icon-btn icon-btn-danger" onClick={handleDeleteAllMedia} disabled={mediaList.length === 0 || !!uploadProgress} title="전체 삭제"><Trash2 size={14} /></button>
             </div>
@@ -1261,9 +1287,11 @@ const MediaManager = ({ stores = [], groups = [], devices = [], selectedStoreId,
           )}
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '4px 8px', fontSize: '0.72rem', background: '#1e293b', borderBottom: '1px solid #334155' }}>
             <span style={{ color: '#94a3b8' }}>
-              {usedMediaIds.size > 0 && !showArchived
-                ? `사용 중 ${usedMediaIds.size}개 / 전체 ${mediaList.length}개`
-                : `전체 ${mediaList.length}개`}
+              {showArchived
+                ? `미사용 ${archivedList.length}개 / 전체 ${mediaList.length}개`
+                : usedMediaIds.size > 0
+                  ? `사용 중 ${usedMediaIds.size}개 / 전체 ${mediaList.length}개`
+                  : `전체 ${mediaList.length}개`}
             </span>
             <button
               onClick={() => setShowArchived(v => !v)}
@@ -1273,7 +1301,7 @@ const MediaManager = ({ stores = [], groups = [], devices = [], selectedStoreId,
             </button>
           </div>
           {showArchived ? (
-            <div ref={libraryListRef} className="mm-library-list archive-mode">
+            <div ref={libraryListRef} className={`mm-library-list archive-mode${librarySmall ? ' small-view' : ''}`}>
               {/* 정렬 버튼 */}
               <div className="archive-sort-bar">
                 <button className={`sort-btn ${archiveSort === 'date-desc' ? 'active' : ''}`} onClick={() => setArchiveSort('date-desc')}>최신순</button>
@@ -1285,7 +1313,7 @@ const MediaManager = ({ stores = [], groups = [], devices = [], selectedStoreId,
               {archiveSort === 'size-desc' ? (
                 /* 용량순: 플랫 그리드 */
                 <div className="archive-ext-grid" style={{ padding: '6px' }}>
-                  {[...mediaList]
+                  {[...archivedList]
                     .sort((a, b) => (b.size || 0) - (a.size || 0))
                     .map(media => renderLibraryItem(media, true))}
                 </div>
@@ -1293,7 +1321,7 @@ const MediaManager = ({ stores = [], groups = [], devices = [], selectedStoreId,
                 /* 확장자별 그룹 (날짜 무관) */
                 (() => {
                   const byExt = {};
-                  mediaList.forEach(media => {
+                  archivedList.forEach(media => {
                     const ext = media.filename.includes('.') ? media.filename.split('.').pop().toLowerCase() : 'unknown';
                     if (!byExt[ext]) byExt[ext] = [];
                     byExt[ext].push(media);
@@ -1321,7 +1349,7 @@ const MediaManager = ({ stores = [], groups = [], devices = [], selectedStoreId,
                 })()
               ) : (
                 /* 날짜별 그룹 */
-                getArchivedGroups(mediaList, archiveSort).map(({ dateKey, exts }) => (
+                getArchivedGroups(archivedList, archiveSort).map(({ dateKey, exts }) => (
                   <div key={dateKey} className="archive-date-group">
                     <div className="archive-date-label">📅 {dateKey}</div>
                     {exts.map(({ ext, items }) => {
@@ -1346,14 +1374,14 @@ const MediaManager = ({ stores = [], groups = [], devices = [], selectedStoreId,
                 ))
               )}
 
-              {mediaList.length === 0 && (
+              {archivedList.length === 0 && (
                 <div style={{ padding: 16, color: '#475569', fontSize: '0.75rem', textAlign: 'center' }}>
-                  업로드된 미디어가 없습니다
+                  {mediaList.length === 0 ? '업로드된 미디어가 없습니다' : '미사용 미디어가 없습니다 (전부 사용 중)'}
                 </div>
               )}
             </div>
           ) : (
-            <div ref={libraryListRef} className="mm-library-list">
+            <div ref={libraryListRef} className={`mm-library-list${librarySmall ? ' small-view' : ''}`}>
               {mediaList
                 .filter(media => usedMediaIds.size === 0 || usedMediaIds.has(media.id))
                 .map(media => renderLibraryItem(media))}
@@ -1364,6 +1392,13 @@ const MediaManager = ({ stores = [], groups = [], devices = [], selectedStoreId,
         <div className="mm-timeline-area">
           <div className="mm-timeline-header">
             <span className="mm-timeline-title">재생목록 타임라인</span>
+            <button
+              className="timeline-compact-toggle"
+              onClick={() => setTimelineCompact(v => !v)}
+              title={timelineCompact ? '크게 보기' : '작게 보기 (한눈에)'}
+            >
+              {timelineCompact ? '◰ 크게 보기' : '▦ 작게 보기'}
+            </button>
           </div>
 
           <DndContext
@@ -1379,7 +1414,7 @@ const MediaManager = ({ stores = [], groups = [], devices = [], selectedStoreId,
             }}
           >
             <SortableContext items={groupDevices.map(d => d.id)} strategy={verticalListSortingStrategy}>
-              <div className="mm-lanes">
+              <div className={`mm-lanes${timelineCompact ? ' compact' : ''}`}>
                 {groupDevices.map(device => (
                   <DeviceRowV4
                     key={device.id}

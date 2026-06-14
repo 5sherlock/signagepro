@@ -162,18 +162,22 @@
   flex: 1;
   overflow-y: auto;
   padding: 8px;
-  columns: 2;
-  column-gap: 6px;
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 6px;
+  align-content: start;
+  align-items: start;
+}
+
+.mm-library-list.small-view {
+  grid-template-columns: repeat(4, 1fr);
 }
 
 .library-item {
-  break-inside: avoid;
-  display: inline-block;
   width: 100%;
-  margin-bottom: 6px;
   position: relative;
-  border-radius: 6px;
-  overflow: hidden;
+  display: flex;
+  flex-direction: column;
   cursor: grab;
   background: #0f172a;
   border: 1px solid #1e293b;
@@ -186,20 +190,48 @@
 
 .library-item-thumb {
   width: 100%;
+  flex: 0 0 auto;
   background: #000;
   line-height: 0;
 }
 
-.library-item-name {
+.library-item-thumb img,
+.library-item-thumb video {
+  width: 100%;
+  height: auto;
   display: block;
+}
+
+.library-item-name {
+  flex: 0 0 auto;
+}
+
+.library-item-name {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
   padding: 4px 6px;
-  font-size: 0.72rem;
-  color: #94a3b8;
-  white-space: nowrap;
+  font-size: 0.66rem;
+  color: #e2e8f0;
+  white-space: normal;
+  word-break: break-all;
   overflow: hidden;
-  text-overflow: ellipsis;
-  line-height: 1.5;
+  line-height: 1.35;
   background: #0f172a;
+  border-top: 1px solid #1e293b;
+  transition: all 0.15s;
+}
+
+.library-item:hover .library-item-name {
+  white-space: normal;
+  word-break: break-all;
+  color: #e2e8f0;
+  background: #1e293b;
+}
+
+.small-view .library-item-name {
+  font-size: 0.55rem;
+  padding: 3px 4px;
 }
 
 .library-item-del {
@@ -332,9 +364,13 @@
 
 .archive-ext-grid {
   display: grid;
-  grid-template-columns: repeat(1, 1fr);
+  grid-template-columns: repeat(2, 1fr);
   gap: 6px;
   padding: 4px 6px 6px;
+}
+
+.small-view .archive-ext-grid {
+  grid-template-columns: repeat(4, 1fr);
 }
 
 .icon-btn-danger:hover:not(:disabled) {
@@ -356,8 +392,9 @@
 
 .mm-timeline-header {
   display: flex;
-  justify-content: space-between;
+  justify-content: flex-start;
   align-items: center;
+  gap: 12px;
   margin-bottom: 24px;
 }
 
@@ -1280,5 +1317,111 @@
   min-width: 100px;
   text-align: right;
   flex-shrink: 0;
+}
+
+/* ── 타임라인 작게보기 (한눈에) ───────────────────────────── */
+.timeline-compact-toggle {
+  font-size: 0.72rem;
+  padding: 4px 12px;
+  border-radius: 6px;
+  border: 1px solid #334155;
+  background: rgba(255, 255, 255, 0.04);
+  color: #93c5fd;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 0.15s;
+}
+.timeline-compact-toggle:hover {
+  background: rgba(59, 130, 246, 0.15);
+  border-color: rgba(59, 130, 246, 0.5);
+}
+
+/* 작게보기: 세로 스크롤 제거 — 기기 수만큼 화면 높이를 나눠 가져 항상 한 화면에 들어감 */
+.mm-timeline-area:has(.mm-lanes.compact) {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.mm-lanes.compact {
+  flex: 1;
+  min-height: 0;
+  gap: 8px;
+  padding: 8px;
+}
+.mm-lanes.compact .device-row-v4 {
+  flex: 1 1 0;       /* 기기 수와 무관하게 균등 분배 (4·5·6개 모두 한 화면) */
+  min-height: 0;
+  overflow: hidden;
+  padding: 6px 10px;
+}
+.mm-lanes.compact .device-card-v4 {
+  min-height: 0;
+  width: 130px;
+  min-width: 130px;
+  padding: 24px 10px 8px;
+}
+.mm-lanes.compact .device-full-preview-btn {
+  margin-top: 8px;
+  padding: 5px;
+  font-size: 0.62rem;
+}
+.mm-lanes.compact .media-card-thumb {
+  aspect-ratio: 16 / 10;
+}
+
+/* 카드 축소 */
+.mm-lanes.compact .device-timeline-v4 {
+  padding: 0 10px;
+  flex-wrap: wrap;
+  overflow-x: hidden;
+  row-gap: 6px;
+}
+.mm-lanes.compact .media-card-v4 {
+  width: 92px;
+  border-radius: 7px;
+  box-shadow: 0 3px 6px rgba(0, 0, 0, 0.35);
+}
+.mm-lanes.compact .media-card-grip {
+  display: none;
+}
+.mm-lanes.compact .media-card-name {
+  padding: 3px 4px;
+  font-size: 0.6rem;
+}
+.mm-lanes.compact .media-card-duration {
+  padding: 3px 4px;
+  gap: 3px;
+}
+.mm-lanes.compact .media-card-duration span {
+  font-size: 0.58rem;
+}
+.mm-lanes.compact .media-card-duration .duration-input {
+  width: 30px;
+  font-size: 0.6rem;
+  padding: 1px 3px;
+}
+
+/* 전환 브릿지: 작게보기에선 전환 타입만 작게, 시간/미리보기 숨김 */
+.mm-lanes.compact .transition-bridge-v4 {
+  padding: 0 4px;
+}
+.mm-lanes.compact .bridge-box {
+  width: auto;
+  min-width: 0;
+  padding: 3px 4px;
+  gap: 2px;
+}
+.mm-lanes.compact .bridge-box .mini-select {
+  font-size: 0.55rem;
+  padding: 1px 2px;
+  max-width: 62px;
+}
+.mm-lanes.compact .bridge-time-row,
+.mm-lanes.compact .bridge-preview-btn,
+.mm-lanes.compact .loop-badge {
+  display: none;
+}
+.mm-lanes.compact .bridge-line {
+  min-height: 8px;
 }
 

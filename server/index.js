@@ -13,6 +13,37 @@ const crypto = require('crypto');
 const { execFile } = require('child_process');
 const os = require('os');
 const cron = require('node-cron');
+const { S3Client, PutObjectCommand, DeleteObjectCommand } = require('@aws-sdk/client-s3');
+
+// R2 클라이언트 (환경변수 미설정 시 null → 로컬 저장소 폴백)
+const r2 = process.env.R2_ENDPOINT ? new S3Client({
+  region: 'auto',
+  endpoint: process.env.R2_ENDPOINT,
+  credentials: {
+    accessKeyId: process.env.R2_ACCESS_KEY,
+    secretAccessKey: process.env.R2_SECRET_KEY,
+  },
+}) : null;
+
+async function uploadToR2(localPath, key, mimeType) {
+  if (!r2) return null;
+  await r2.send(new PutObjectCommand({
+    Bucket: process.env.R2_BUCKET,
+    Key: key,
+    Body: fs.createReadStream(localPath),
+    ContentType: mimeType,
+  }));
+  return `${process.env.R2_PUBLIC_URL}/${key}`;
+}
+
+async function deleteFromR2(key) {
+  if (!r2) return;
+  try {
+    await r2.send(new DeleteObjectCommand({ Bucket: process.env.R2_BUCKET, Key: key }));
+  } catch (e) {
+    console.error('[R2] 삭제 실패:', e.message);
+  }
+}
 
 // ADB 실행 경로 계산 (프로젝트 로컬 server/bin/adb.exe가 존재하면 우선적으로 적용)
 const getAdbPath = () => {
@@ -30,6 +61,16 @@ console.log(`[ADB] 감지된 ADB 경로: ${GLOBAL_ADB_PATH}`);
 
 const prisma = new PrismaClient();
 const app = express();
+
+// ── 프록시 신뢰 & 실제 클라이언트 IP 식별 ──────────────────────────────────────
+// 운영은 Cloudflare 터널(cloudflared) 뒤에 있어 들어오는 연결의 출발지가 loopback이다.
+// loopback만 신뢰하면 LAN 직접 접속 클라이언트의 X-Forwarded-For 위조는 무시된다.
+// 실제 클라이언트 IP는 Cloudflare가 세팅하는 CF-Connecting-IP를 우선 사용한다.
+// (전제: origin :PORT는 터널을 통해서만 외부 노출 — 직접 노출 시 CF-Connecting-IP 위조 가능)
+app.set('trust proxy', 'loopback');
+function getClientIp(req) {
+  return req.headers['cf-connecting-ip'] || req.ip || req.socket?.remoteAddress || '';
+}
 
 // 메모리에 보관할 기기별 실시간 상태 캐시 (deviceTime, slide, dl, vol, vu)
 const deviceLiveStateCache = new Map();
@@ -85,7 +126,7 @@ app.use(cors({
 }));
 app.options('/{*path}', cors()); // FormData + Authorization 등 복잡한 요청의 프리플라이트 OPTIONS 명시 처리
 app.use((req, res, next) => {
-  console.log(`[REQ] ${new Date().toISOString()} ${req.ip} ${req.method} ${req.url}`);
+  console.log(`[REQ] ${new Date().toISOString()} ${getClientIp(req)} ${req.method} ${req.url}`);
   next();
 });
 app.use(express.json());
@@ -99,7 +140,7 @@ const LOCKOUT_MS    = 15 * 60 * 1000; // 15분
 app.post('/api/auth/login', (req, res) => {
   if (!adminPassword) return res.json({ token: 'dev-mode' });
 
-  const ip  = req.ip || req.connection.remoteAddress;
+  const ip  = getClientIp(req);
   const now = Date.now();
   const rec = loginAttempts.get(ip) || { count: 0, lockedUntil: 0 };
 
@@ -615,7 +656,6 @@ app.post('/api/media', (req, res, next) => {
   });
 }, async (req, res) => {
   if (!req.file) return res.status(400).json({ error: '파일이 없습니다.' });
-  const { storeId } = req.body;
 
   const type = req.file.mimetype.startsWith('video/') ? 'video' : 'image';
 
@@ -629,19 +669,25 @@ app.post('/api/media', (req, res, next) => {
         .on('error', reject);
     });
 
+    // R2 업로드 시도 (설정 있으면 R2, 없으면 로컬 경로 사용)
+    const r2Url = await uploadToR2(req.file.path, req.file.filename, req.file.mimetype);
+    const mediaPath = r2Url || `/uploads/${req.file.filename}`;
+
+    // R2 업로드 성공 시 로컬 임시 파일 삭제
+    if (r2Url) fs.unlink(req.file.path, () => {});
+
     const media = await prisma.media.create({
       data: {
         filename: req.file.originalname,
-        path: `/uploads/${req.file.filename}`,
+        path: mediaPath,
         type,
         size: req.file.size,
         hash,
-        storeId: storeId || null
+        storeId: req.body.storeId || null
       }
     });
     res.json(media);
   } catch (err) {
-    // 실패 시 업로드된 파일 정리
     if (req.file?.path) fs.unlink(req.file.path, () => {});
     console.error('[API] 미디어 저장 실패:', err.message);
     res.status(500).json({ error: `미디어 저장 실패: ${err.message}` });
@@ -753,7 +799,7 @@ app.get('/api/media', async (req, res) => {
 app.delete('/api/media', async (req, res) => {
   const { storeId } = req.query;
   const where = storeId ? { storeId } : {};
-  console.log(`[API] 미디어 전체 삭제 요청: storeId=${storeId}`);
+  console.log(`[API] 미디어 삭제 요청 (storeId=${storeId || '전체'})`);
   
   try {
     const medias = await prisma.media.findMany({ where });
@@ -764,13 +810,14 @@ app.delete('/api/media', async (req, res) => {
       where: { mediaId: { in: mediaIds } }
     });
     
-    // 2. 파일시스템에서 삭제
+    // 2. 파일 삭제 (R2 또는 로컬)
     for (const media of medias) {
-      // media.path가 '/uploads/...' 형태이므로 앞에 '.'을 붙이거나 path.join을 정확히 해야 함
-      const filePath = path.join(__dirname, media.path);
-      console.log(`[API] 파일 삭제 시도: ${filePath}`);
-      if (fs.existsSync(filePath)) {
-        fs.unlinkSync(filePath);
+      if (media.path.startsWith('http')) {
+        const key = media.path.split('/').pop();
+        await deleteFromR2(key);
+      } else {
+        const filePath = path.join(__dirname, media.path);
+        if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
       }
     }
     
@@ -798,10 +845,13 @@ app.delete('/api/media/:id', async (req, res) => {
     // 2. DB에서 미디어 삭제
     await prisma.media.delete({ where: { id: media.id } });
     
-    // 3. 파일시스템에서 삭제
-    const filePath = path.join(__dirname, media.path);
-    if (fs.existsSync(filePath)) {
-      fs.unlinkSync(filePath);
+    // 3. R2 또는 로컬 파일 삭제
+    if (media.path.startsWith('http')) {
+      const key = media.path.split('/').pop();
+      await deleteFromR2(key);
+    } else {
+      const filePath = path.join(__dirname, media.path);
+      if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
     }
     res.json({ success: true });
   } catch (err) {

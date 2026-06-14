@@ -68,7 +68,7 @@ export default function LoginScreen({ onLogin }) {
         body: JSON.stringify({ password: pw }),
       });
       const d = await r.json();
-      if (!r.ok) { setError(d.error || '로그인 실패'); return; }
+      if (!r.ok) { setError(d.error || '로그인 실패'); setPw(''); return; }
       localStorage.setItem('SIGNAGE_TOKEN', d.token);
       onLogin();
     } catch { setError('서버에 연결할 수 없습니다.'); }
