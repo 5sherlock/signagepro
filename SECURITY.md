@@ -4,14 +4,14 @@
 > **실제 코드(`server/index.js`) 및 실측 환경 토폴로지** 기준으로 상태를 재검증했습니다.
 > 환경 구성(포트/폴더/브랜치)은 [DEPLOYMENT.md](DEPLOYMENT.md) 참조.
 
-대상: dev(3001) · staging(3300) 로컬 백엔드 + 현장/운영 서버(`jeju-osuloc:3300`). <span style="color:red;text-decoration:line-through">원격 운영 서버(https://signage-pro.com, Cloudflare 터널 노출)</span> → **Cloudflare 차단·Tailscale 전환(2026-06-13)**.
+대상: dev(3001) · staging(3300) 로컬 백엔드 + 현장/운영 서버(`jeju-osulloc:3300`). <span style="color:red;text-decoration:line-through">원격 운영 서버(https://signage-pro.com, Cloudflare 터널 노출)</span> → **Cloudflare 차단·Tailscale 전환(2026-06-13)**.
 점검 방식: 코드 리뷰 + 외부 블랙박스 관점.
 
 > **기준 코드: `dev` 브랜치(dea5d59).** 본 문서의 line 번호·"패치됨" 판정은 모두 dev 기준이다. 보안 작업은 dev에서 진행하고, dev→staging→main 승격 후 staging에서 재검증한다.
 >
 > ⚠️ **운영 실상태 경고 (2026-06-13):** dev→staging→main 승격이 **한 번도 수행된 적 없음.** 운영이 받는 `main`은 **v0.4.27(1e8a80e, 06-07)** 로 dev보다 뒤처져 있고, **로그인 rate-limit/잠금 기능이 아예 없다**(아래 2.1의 "패치됨"은 dev 한정). 즉 **운영의 실제 노출 수준은 본 문서보다 더 나쁠 수 있다** — 승격 전까지는 dev 패치가 운영에 반영되지 않는다. 운영 실버전은 AnyDesk로 직접 확인 필요.
 >
-> 🔄 **인프라 변경 (2026-06-13 — Tailscale 전환):** Cloudflare 공개 터널(`signage-pro.com`) **차단 완료**(현장 서버 cloudflared 중지/비활성) → **Tailscale 사설망 전환.** 현장 서버(jeju-osuloc 100.122.76.95)·기기·관리 PC를 tailnet으로 묶고 MagicDNS(`jeju-osuloc:3300`)로 접속. **dev-204 루팅 + Tailscale 원격 ADB 작동 확인**(`adb connect 100.75.80.108:5555`). → **인터넷 직접 노출이 tailnet 내부로 축소**돼 아래 취약점들의 공개 위험이 크게 낮아짐.
+> 🔄 **인프라 변경 (2026-06-13 — Tailscale 전환):** Cloudflare 공개 터널(`signage-pro.com`) **차단 완료**(현장 서버 cloudflared 중지/비활성) → **Tailscale 사설망 전환.** 현장 서버(jeju-osulloc 100.122.76.95)·기기·관리 PC를 tailnet으로 묶고 MagicDNS(`jeju-osulloc:3300`)로 접속. **dev-204 루팅 + Tailscale 원격 ADB 작동 확인**(`adb connect 100.75.80.108:5555`). → **인터넷 직접 노출이 tailnet 내부로 축소**돼 아래 취약점들의 공개 위험이 크게 낮아짐.
 > **단, 잔존 공개 포트포워딩**(field `121.189.102.108:3300`, dev `211.184.50.200:3001`)이 아직 인터넷에 열려 있음 → 기기 Tailscale 전환 완료 후 닫을 것. 그전까지 §3.2~3.13은 그 포트로 여전히 노출.
 
 ---
@@ -98,7 +98,7 @@ dev · staging · 운영이 **동일한 비밀값**을 쓰고 있어, 환경을 
 
 #### 🟡 3.6 CORS 전체 허용
 - 위치: [index.js:122](server/index.js#L122)(HTTP), [index.js:252](server/index.js#L252)(Socket.io) — `origin: '*'`.
-- 조치: 실제 사용 출처만 허용 <span style="color:red;text-decoration:line-through">(https://signage-pro.com)</span> → 이제 **Tailscale 주소(`jeju-osuloc:3300` 등)** 기준.
+- 조치: 실제 사용 출처만 허용 <span style="color:red;text-decoration:line-through">(https://signage-pro.com)</span> → 이제 **Tailscale 주소(`jeju-osulloc:3300` 등)** 기준.
 
 #### 🟡 3.7 `/uploads` 무인증 공개
 - 위치: [index.js:208](server/index.js#L208) — `express.static`이 인증 없이 노출.
@@ -153,7 +153,7 @@ dev · staging · 운영이 **동일한 비밀값**을 쓰고 있어, 환경을 
 ## 4. 인프라 보안 (Cloudflare · 공유기)
 
 ### <span style="color:red;text-decoration:line-through">Cloudflare (signage-pro.com)</span> → ✅ 2026-06-13 차단·Tailscale로 대체
-- **현재: Cloudflare 터널 차단 완료.** 현장 서버(jeju-osuloc)의 `Cloudflared` 서비스 중지/비활성 → `signage-pro.com` 다운. 접근은 **Tailscale**(`jeju-osuloc:3300` / MagicDNS, tailnet `tailafea2d.ts.net`)로 전환.
+- **현재: Cloudflare 터널 차단 완료.** 현장 서버(jeju-osulloc)의 `Cloudflared` 서비스 중지/비활성 → `signage-pro.com` 다운. 접근은 **Tailscale**(`jeju-osulloc:3300` / MagicDNS, tailnet `tailafea2d.ts.net`)로 전환.
 - <span style="color:red;text-decoration:line-through">확정: https://signage-pro.com → 원격 운영 서버 IP:3300 으로 Cloudflare 터널링. 운영 API·대시보드가 외부 공개 상태이며 모든 취약점이 외부 노출.</span> (차단됨)
 - <span style="color:red;text-decoration:line-through">즉효 완충: Cloudflare Access(Zero Trust) 인증 게이트, WAF Rate Limiting Rule, Bot Fight Mode 즉시 적용 권장.</span> (터널 차단으로 **불필요**)
 - ⚠️ **잔존 공개 포트포워딩 (남은 과제)**: field `121.189.102.108:3300`, dev `211.184.50.200:3001` 은 아직 라우터 포워딩으로 인터넷 노출. **기기 Tailscale 전환 완료 후 이 포워딩들을 닫으면** 완전 비공개(Tailscale 전용)가 됨. 그전까지 §3.2~3.13 취약점이 이 포트로 노출.

@@ -1,6 +1,6 @@
 # SignagePro 백업 계획 (현장 서버)
 
-> 작성: 2026-06-13. 대상: 현장/운영 서버 **jeju-osuloc** (Windows, `C:\signagepro`, C:/D: 드라이브 분리).
+> 작성: 2026-06-13. 대상: 현장/운영 서버 **jeju-osulloc** (Windows, `C:\signagepro`, C:/D: 드라이브 분리).
 > 원칙: **3-2-1** — 데이터 3벌 · 매체 2종 · **오프사이트 1벌**. (C:만/D:만으론 부족 — 매장 화재·도난·랜섬웨어 대비 오프사이트 필수)
 
 ---
@@ -56,7 +56,7 @@
 3. **시크릿 백업 암호화** — `.env`·`keystore`를 클라우드/외부에 **평문 금지**. restic/Duplicati 암호화 사용.
 4. **keystore는 다중·오프사이트·암호화** 보관 — 잃으면 복구 불가.
 5. **복구 테스트 주기적** — 복원 안 해본 백업은 백업이 아님. 분기 1회라도 테스트 복원.
-6. 백업 대상 서버는 **현장 서버(jeju-osuloc)** — AnyDesk 또는 Tailscale ADB/원격으로 접근해 설정.
+6. 백업 대상 서버는 **현장 서버(jeju-osulloc)** — AnyDesk 또는 Tailscale ADB/원격으로 접근해 설정.
 
 ---
 
@@ -84,6 +84,6 @@
 ---
 
 ## 참고 — 관련 문서
-- 인프라/접속: Tailscale(`jeju-osuloc:3300`, MagicDNS), Cloudflare 차단됨 → [SECURITY.md](SECURITY.md)
+- 인프라/접속: Tailscale(`jeju-osulloc:3300`, MagicDNS), Cloudflare 차단됨 → [SECURITY.md](SECURITY.md)
 - 배포 토폴로지 → [DEPLOYMENT.md](DEPLOYMENT.md)
 - 미디어 저장 방식(로컬 `/uploads` vs R2): 현재 R2 사용 여부는 현장 서버 `.env`로 확인. private 지향이면 로컬+Tailscale 권장.
