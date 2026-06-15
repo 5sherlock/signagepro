@@ -1,0 +1,2057 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>SignagePro - DID 구축 비용 견적/청구서 빌더</title>
+  
+  <!-- Noto Sans KR 구글 폰트 로드 -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@300;400;500;700;900&display=swap" rel="stylesheet">
+  
+  <style>
+    :root {
+      --primary-color: #1e3d2f;      /* 오설록 딥 그린 */
+      --primary-hover: #142920;
+      --primary-light: #f1f6f3;
+      --accent-color: #5c7c64;       /* 차 잎사귀 세이지 그린 */
+      --accent-light: #e6ede8;
+      --bg-color: #f3f5f4;           /* 부드러운 회색/연두 톤 백그라운드 */
+      --card-bg: #ffffff;
+      --text-dark: #2c3e35;
+      --text-muted: #627d70;
+      --border-color: #d1dcd5;
+      --shadow-sm: 0 2px 4px rgba(30, 61, 47, 0.05);
+      --shadow-md: 0 4px 12px rgba(30, 61, 47, 0.08);
+      --shadow-lg: 0 10px 25px rgba(30, 61, 47, 0.12);
+      --border-radius-sm: 6px;
+      --border-radius-md: 10px;
+      --border-radius-lg: 16px;
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+      font-family: 'Noto Sans KR', sans-serif;
+    }
+
+    body {
+      background-color: var(--bg-color);
+      color: var(--text-dark);
+      line-height: 1.6;
+      padding: 24px;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+    }
+
+    /* 상단 네비게이션 헤더 */
+    header {
+      background-color: var(--primary-color);
+      color: white;
+      padding: 20px 32px;
+      border-radius: var(--border-radius-lg);
+      margin-bottom: 24px;
+      box-shadow: var(--shadow-md);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    .header-logo {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .header-logo svg {
+      fill: currentColor;
+      width: 28px;
+      height: 28px;
+    }
+
+    .header-logo h1 {
+      font-size: 1.4rem;
+      font-weight: 700;
+      letter-spacing: -0.02em;
+    }
+
+    .header-logo span {
+      background-color: var(--accent-color);
+      font-size: 0.75rem;
+      padding: 3px 8px;
+      border-radius: 20px;
+      font-weight: 500;
+    }
+
+    .header-info {
+      text-align: right;
+      font-size: 0.85rem;
+      opacity: 0.85;
+    }
+
+    /* 메인 컨테이너 레이아웃 */
+    .main-container {
+      display: flex;
+      gap: 24px;
+      flex: 1;
+      max-width: 1600px;
+      margin: 0 auto;
+      width: 100%;
+    }
+
+    /* 왼쪽 제어 영역 */
+    .control-panel {
+      flex: 1.2;
+      display: flex;
+      flex-direction: column;
+      gap: 20px;
+      min-width: 420px;
+    }
+
+    /* 오른쪽 문서 미리보기 영역 */
+    .preview-panel {
+      flex: 2;
+      background: var(--card-bg);
+      border-radius: var(--border-radius-lg);
+      box-shadow: var(--shadow-lg);
+      padding: 40px;
+      border: 1px solid var(--border-color);
+      min-width: 760px;
+      position: relative;
+      align-self: flex-start;
+    }
+
+    /* 제어 섹션 카드 공통 스타일 */
+    .control-card {
+      background: var(--card-bg);
+      border-radius: var(--border-radius-lg);
+      padding: 24px;
+      box-shadow: var(--shadow-md);
+      border: 1px solid var(--border-color);
+    }
+
+    .control-card h3 {
+      font-size: 1.1rem;
+      color: var(--primary-color);
+      margin-bottom: 16px;
+      border-bottom: 2px solid var(--primary-light);
+      padding-bottom: 8px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    /* 프리셋 퀵 버튼 */
+    .preset-grid {
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 10px;
+    }
+
+    .btn-preset {
+      background-color: var(--primary-light);
+      border: 1px solid var(--border-color);
+      color: var(--primary-color);
+      padding: 12px;
+      border-radius: var(--border-radius-md);
+      font-weight: 500;
+      cursor: pointer;
+      text-align: left;
+      transition: all 0.2s ease;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    .btn-preset:hover {
+      background-color: var(--accent-light);
+      border-color: var(--accent-color);
+      transform: translateY(-1px);
+    }
+
+    .btn-preset.active {
+      background-color: var(--primary-color);
+      border-color: var(--primary-color);
+      color: white;
+    }
+
+    .btn-preset .desc {
+      font-size: 0.75rem;
+      opacity: 0.75;
+      display: block;
+      margin-top: 3px;
+      font-weight: 400;
+    }
+
+    /* 라이디오 옵션 카드 디자인 */
+    .option-group-title {
+      font-weight: 700;
+      font-size: 0.9rem;
+      color: var(--text-dark);
+      margin-top: 12px;
+      margin-bottom: 8px;
+    }
+
+    .card-options-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+      gap: 12px;
+      margin-bottom: 16px;
+    }
+
+    .card-option {
+      border: 2px solid var(--border-color);
+      border-radius: var(--border-radius-md);
+      padding: 12px;
+      cursor: pointer;
+      position: relative;
+      transition: all 0.2s ease;
+    }
+
+    .card-option:hover {
+      background-color: var(--primary-light);
+      border-color: var(--accent-color);
+    }
+
+    .card-option.selected {
+      border-color: var(--primary-color);
+      background-color: var(--primary-light);
+    }
+
+    .card-option input[type="radio"] {
+      position: absolute;
+      top: 12px;
+      right: 12px;
+      accent-color: var(--primary-color);
+    }
+
+    .card-option-title {
+      font-size: 0.9rem;
+      font-weight: 700;
+      color: var(--primary-color);
+      margin-bottom: 4px;
+    }
+
+    .card-option-desc {
+      font-size: 0.75rem;
+      color: var(--text-muted);
+      line-height: 1.4;
+    }
+
+    /* 보완 추천 항목 체크박스 목록 */
+    .checklist {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+
+    .checklist-item {
+      display: flex;
+      align-items: flex-start;
+      gap: 12px;
+      padding: 12px;
+      border-radius: var(--border-radius-md);
+      background-color: var(--primary-light);
+      border: 1px solid transparent;
+      cursor: pointer;
+      transition: all 0.2s ease;
+    }
+
+    .checklist-item:hover {
+      border-color: var(--accent-color);
+      background-color: var(--accent-light);
+    }
+
+    .checklist-item input[type="checkbox"] {
+      margin-top: 4px;
+      width: 16px;
+      height: 16px;
+      accent-color: var(--primary-color);
+      cursor: pointer;
+    }
+
+    .checklist-info {
+      flex: 1;
+    }
+
+    .checklist-title {
+      font-size: 0.9rem;
+      font-weight: 700;
+      color: var(--primary-color);
+      display: flex;
+      justify-content: space-between;
+    }
+
+    .checklist-title span.price {
+      font-family: monospace;
+      color: var(--text-dark);
+    }
+
+    .checklist-desc {
+      font-size: 0.75rem;
+      color: var(--text-muted);
+      margin-top: 2px;
+    }
+
+    /* 가이드 모달/비교카드 */
+    .guide-box {
+      background-color: var(--accent-light);
+      border-left: 4px solid var(--accent-color);
+      padding: 16px;
+      border-radius: 0 var(--border-radius-md) var(--border-radius-md) 0;
+      font-size: 0.82rem;
+      color: var(--primary-color);
+    }
+
+    .guide-box strong {
+      display: block;
+      margin-bottom: 6px;
+      font-size: 0.9rem;
+    }
+
+    .guide-box table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-top: 8px;
+    }
+
+    .guide-box th, .guide-box td {
+      border: 1px solid #c8d7cd;
+      padding: 6px;
+      text-align: left;
+    }
+
+    .guide-box th {
+      background-color: #dce7e0;
+      font-weight: 700;
+    }
+
+    /* 하단 액션 버튼 그룹 */
+    .action-group {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+
+    .btn-action {
+      padding: 14px;
+      border-radius: var(--border-radius-md);
+      font-weight: 700;
+      font-size: 1rem;
+      cursor: pointer;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      gap: 10px;
+      transition: all 0.2s ease;
+      border: none;
+    }
+
+    .btn-primary {
+      background-color: var(--primary-color);
+      color: white;
+    }
+
+    .btn-primary:hover {
+      background-color: var(--primary-hover);
+      box-shadow: 0 4px 10px rgba(30, 61, 47, 0.25);
+    }
+
+    .btn-secondary {
+      background-color: white;
+      border: 1px solid var(--border-color);
+      color: var(--text-dark);
+    }
+
+    .btn-secondary:hover {
+      background-color: var(--primary-light);
+      border-color: var(--primary-color);
+    }
+
+    /* ────────────────────────── */
+    /* A4 문서 레이아웃 디자인   */
+    /* ────────────────────────── */
+    
+    .document-header {
+      text-align: center;
+      margin-bottom: 40px;
+      position: relative;
+    }
+
+    .document-title {
+      font-size: 2.2rem;
+      font-weight: 900;
+      letter-spacing: 0.3em;
+      border-bottom: 3px double var(--primary-color);
+      display: inline-block;
+      padding-bottom: 8px;
+      margin-bottom: 12px;
+      color: var(--primary-color);
+    }
+
+    .document-meta-row {
+      display: flex;
+      justify-content: space-between;
+      margin-bottom: 24px;
+      gap: 20px;
+    }
+
+    /* 수신자 정보 */
+    .meta-client {
+      width: 48%;
+      display: flex;
+      flex-direction: column;
+      justify-content: flex-end;
+    }
+
+    .client-title-row {
+      border-bottom: 1px solid var(--primary-color);
+      padding-bottom: 4px;
+      margin-bottom: 8px;
+    }
+
+    .client-input {
+      font-size: 1.15rem;
+      font-weight: 700;
+      border: none;
+      background: transparent;
+      width: 100%;
+      color: var(--primary-color);
+    }
+
+    .client-input:focus {
+      outline: none;
+      background-color: var(--primary-light);
+    }
+
+    .client-label {
+      font-size: 0.85rem;
+      color: var(--text-dark);
+      margin-top: 4px;
+    }
+
+    /* 공급자 정보 */
+    .meta-provider {
+      width: 48%;
+      border: 1px solid var(--primary-color);
+      font-size: 0.8rem;
+    }
+
+    .provider-table {
+      width: 100%;
+      border-collapse: collapse;
+    }
+
+    .provider-table td {
+      border: 1px solid var(--primary-color);
+      padding: 6px 8px;
+      vertical-align: middle;
+    }
+
+    .provider-label {
+      background-color: var(--primary-light);
+      font-weight: 700;
+      text-align: center;
+      width: 70px;
+      color: var(--primary-color);
+      font-size: 0.75rem;
+    }
+
+    .provider-input {
+      width: 100%;
+      border: none;
+      background: transparent;
+      font-size: 0.8rem;
+      font-weight: 500;
+    }
+
+    .provider-input:focus {
+      outline: none;
+      background-color: var(--primary-light);
+    }
+
+    /* 총액 표시 카드 */
+    .summary-bar {
+      border: 2px solid var(--primary-color);
+      background-color: var(--primary-light);
+      padding: 14px 20px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 24px;
+      border-radius: var(--border-radius-sm);
+    }
+
+    .summary-label {
+      font-size: 1rem;
+      font-weight: 700;
+      color: var(--primary-color);
+    }
+
+    .summary-value {
+      font-size: 1.3rem;
+      font-weight: 900;
+      color: var(--primary-color);
+    }
+
+    .summary-korean {
+      font-size: 0.85rem;
+      color: var(--text-muted);
+      margin-top: 4px;
+      text-align: right;
+    }
+
+    /* 내역 테이블 */
+    .details-table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-bottom: 24px;
+      font-size: 0.82rem;
+    }
+
+    .details-table th {
+      background-color: var(--primary-color);
+      color: white;
+      border: 1px solid var(--primary-color);
+      padding: 10px 6px;
+      font-weight: 700;
+      text-align: center;
+    }
+
+    .details-table td {
+      border: 1px solid var(--border-color);
+      padding: 8px 6px;
+      vertical-align: middle;
+      position: relative;
+    }
+
+    .details-table tr:hover td {
+      background-color: #fcfdfe;
+    }
+
+    .col-no { text-align: center; width: 4%; }
+    .col-category { width: 12%; }
+    .col-item { width: 24%; }
+    .col-spec { width: 18%; }
+    .col-price { width: 13%; text-align: right; }
+    .col-qty { width: 7%; text-align: center; }
+    .col-total { width: 12%; text-align: right; font-weight: 700; }
+    .col-action { width: 6%; text-align: center; }
+    .col-delete { width: 4%; text-align: center; }
+
+    .tr-service td {
+      background-color: #f0fdf4 !important; /* Soft green */
+    }
+    .badge-service {
+      background-color: #22c55e;
+      color: white;
+      padding: 2px 6px;
+      border-radius: 4px;
+      font-size: 0.7rem;
+      font-weight: 700;
+      display: inline-block;
+    }
+
+    .tbl-input {
+      width: 100%;
+      border: none;
+      background: transparent;
+      font-size: 0.82rem;
+      padding: 4px;
+    }
+
+    .tbl-input:focus {
+      outline: none;
+      background-color: var(--primary-light);
+    }
+
+    .tbl-input.text-right {
+      text-align: right;
+    }
+
+    .tbl-input.text-center {
+      text-align: center;
+    }
+
+    /* 테이블 행 삭제 버튼 */
+    .btn-row-del {
+      background: none;
+      border: none;
+      color: #ef4444;
+      cursor: pointer;
+      font-size: 1.1rem;
+      line-height: 1;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      width: 20px;
+      height: 20px;
+      border-radius: 50%;
+      transition: background-color 0.2s;
+    }
+
+    .btn-row-del:hover {
+      background-color: #fee2e2;
+    }
+
+    /* 품목 추가 행 */
+    .add-row-container {
+      display: flex;
+      justify-content: flex-end;
+      margin-bottom: 24px;
+    }
+
+    .btn-add-row {
+      background-color: white;
+      border: 1px dashed var(--accent-color);
+      color: var(--accent-color);
+      padding: 8px 16px;
+      border-radius: var(--border-radius-sm);
+      cursor: pointer;
+      font-weight: 700;
+      font-size: 0.8rem;
+      transition: all 0.2s;
+    }
+
+    .btn-add-row:hover {
+      background-color: var(--accent-light);
+      border-style: solid;
+    }
+
+    /* 세무 서머리 및 서명 영역 */
+    .doc-footer-container {
+      display: flex;
+      justify-content: space-between;
+      gap: 20px;
+      margin-top: 32px;
+    }
+
+    .notes-box {
+      width: 55%;
+    }
+
+    .notes-title {
+      font-size: 0.85rem;
+      font-weight: 700;
+      color: var(--primary-color);
+      border-bottom: 1px solid var(--border-color);
+      padding-bottom: 4px;
+      margin-bottom: 8px;
+    }
+
+    .notes-textarea {
+      width: 100%;
+      height: 120px;
+      border: 1px solid transparent;
+      background: transparent;
+      font-size: 0.78rem;
+      resize: none;
+      line-height: 1.5;
+      color: var(--text-dark);
+    }
+
+    .notes-textarea:focus {
+      outline: none;
+      border-color: var(--border-color);
+      background-color: var(--primary-light);
+    }
+
+    .tax-summary-box {
+      width: 40%;
+    }
+
+    .tax-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.82rem;
+    }
+
+    .tax-table td {
+      padding: 8px;
+      border: 1px solid var(--border-color);
+    }
+
+    .tax-label {
+      background-color: var(--primary-light);
+      font-weight: 700;
+      color: var(--primary-color);
+      width: 40%;
+      text-align: center;
+    }
+
+    .tax-value {
+      text-align: right;
+      font-weight: 700;
+    }
+
+    /* 서인 란 */
+    .sign-row {
+      text-align: right;
+      margin-top: 40px;
+      font-size: 0.9rem;
+      font-weight: 500;
+      color: var(--text-dark);
+    }
+
+    .sign-space {
+      display: inline-block;
+      width: 100px;
+      border-bottom: 1px solid var(--text-dark);
+      margin-left: 8px;
+      text-align: center;
+      position: relative;
+    }
+
+    .sign-stamp {
+      position: absolute;
+      right: 15px;
+      top: -15px;
+      width: 40px;
+      height: 40px;
+      border: 2px dashed #ef4444;
+      border-radius: 50%;
+      color: #ef4444;
+      font-size: 0.6rem;
+      font-weight: 900;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      transform: rotate(15deg);
+      opacity: 0.7;
+      pointer-events: none;
+    }
+
+    /* 알림 메시지 배너 */
+    .alert-banner {
+      background-color: var(--primary-light);
+      border: 1px solid var(--border-color);
+      border-radius: var(--border-radius-md);
+      padding: 16px;
+      margin-bottom: 20px;
+      font-size: 0.85rem;
+      color: var(--primary-color);
+    }
+
+    .alert-banner strong {
+      display: block;
+      margin-bottom: 4px;
+    }
+
+    /* ────────────────────────── */
+    /* 인쇄 전용 CSS (@media print) */
+    /* ────────────────────────── */
+    @media print {
+      body {
+        background-color: white;
+        padding: 0;
+        margin: 0;
+        color: black;
+      }
+
+      header, 
+      .control-panel, 
+      .btn-add-row, 
+      .col-action, 
+      .col-delete,
+      .add-row-container,
+      .alert-banner {
+        display: none !important;
+      }
+
+      .main-container {
+        display: block;
+        max-width: 100%;
+        margin: 0;
+      }
+
+      .preview-panel {
+        width: 100%;
+        min-width: 100%;
+        border: none;
+        box-shadow: none;
+        padding: 0;
+        background: transparent;
+      }
+
+      .tbl-input, 
+      .client-input, 
+      .provider-input, 
+      .notes-textarea {
+        background: transparent !important;
+        border: none !important;
+        padding: 0 !important;
+      }
+
+      /* 인쇄 시 지저분한 테두리들 정리 */
+      .provider-table td, 
+      .details-table th, 
+      .details-table td, 
+      .tax-table td {
+        border-color: #000000 !important;
+      }
+      
+      .details-table th {
+        background-color: #f1f6f3 !important;
+        color: #000000 !important;
+      }
+
+      .summary-bar {
+        border-color: #000000 !important;
+        background-color: #f1f6f3 !important;
+      }
+      
+      .summary-label, .summary-value {
+        color: #000000 !important;
+      }
+      
+      .server-comparison-box {
+        border-color: #000000 !important;
+        background-color: #f1f6f3 !important;
+      }
+      .comparison-col {
+        border-color: #000000 !important;
+        background-color: white !important;
+      }
+      .comparison-col.active {
+        border-color: #000000 !important;
+        background-color: #e2ede5 !important;
+      }
+      .badge-select {
+        display: none !important;
+      }
+    }
+
+    /* 서버 비교 상자 스타일 */
+    .server-comparison-box {
+      border: 1px solid var(--border-color);
+      background-color: var(--primary-light);
+      padding: 12px 16px;
+      border-radius: var(--border-radius-sm);
+      margin-bottom: 24px;
+      font-size: 0.76rem;
+      line-height: 1.5;
+    }
+    .server-comparison-title {
+      font-size: 0.82rem;
+      font-weight: 700;
+      color: var(--primary-color);
+      margin-bottom: 8px;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .server-comparison-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 16px;
+    }
+    .comparison-col {
+      background-color: white;
+      padding: 8px 12px;
+      border-radius: 4px;
+      border: 1px solid var(--border-color);
+      transition: all 0.2s ease;
+    }
+    .comparison-col strong {
+      display: block;
+      color: var(--text-dark);
+      margin-bottom: 4px;
+      border-bottom: 1px solid var(--border-color);
+      padding-bottom: 2px;
+    }
+    .comparison-col.active {
+      border: 2px solid var(--primary-color) !important;
+      box-shadow: 0 2px 8px rgba(37, 99, 235, 0.08);
+      background-color: #fcfdfe;
+    }
+    .badge-select {
+      background-color: var(--primary-color);
+      color: white;
+      padding: 1px 4px;
+      border-radius: 3px;
+      font-size: 0.65rem;
+      float: right;
+      font-weight: 700;
+    }
+  </style>
+</head>
+<body>
+
+  <!-- 웹 탑 바 -->
+  <header>
+    <div class="header-logo">
+      <svg viewBox="0 0 24 24">
+        <path d="M19,3H5C3.89,3 3,3.89 3,5V19C3,20.11 3.89,21 5,21H19C20.11,21 21,20.11 21,19V5C21,3.89 20.11,3 19,3M19,19H5V5H19V19M12,6A6,6 0 0,0 6,12A6,6 0 0,0 12,18A6,6 0 0,0 18,12A6,6 0 0,0 12,6M12,16A4,4 0 0,1 8,12A4,4 0 0,1 12,8A4,4 0 0,1 16,12A4,4 0 0,1 12,16Z" />
+      </svg>
+      <h1>SignagePro</h1>
+      <span>비용 견적 & 청구 빌더</span>
+    </div>
+    <div class="header-info">
+      <strong>상태:</strong> 오설록 제주점 4K 최적화 모드 | <strong>사용자:</strong> 외주 담당자용
+    </div>
+  </header>
+
+  <div class="main-container">
+    
+    <!-- LEFT: 컨트롤 패널 -->
+    <div class="control-panel">
+      
+      <!-- 프리셋 선택 카드 -->
+      <div class="control-card">
+        <h3>
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2v20M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>
+          프로젝트 시나리오 프리셋
+        </h3>
+        <div class="preset-grid">
+          <button class="btn-preset active" onclick="loadPreset('osulloc_4k')">
+            <div>
+              <strong>오설록 4K 추천 최종 청구안 (B2B 권장)</strong>
+              <span class="desc">4K 셋톱박스 5대 + 클라우드 서버 + 개발 기술료 + 설치비 + 제주 출장 경비 포함</span>
+            </div>
+          </button>
+          <button class="btn-preset" onclick="loadPreset('osulloc_local')">
+            <div>
+              <strong>오설록 현장 PC 서버 구축안</strong>
+              <span class="desc">FHD 셋톱박스 5대 + 현장 데스크탑 서버 하드웨어 + 기술료 포함 (출장비 제외)</span>
+            </div>
+          </button>
+          <button class="btn-preset" onclick="loadPreset('excel_raw')">
+            <div>
+              <strong>엑셀 원본 데이터 (단순 로드)</strong>
+              <span class="desc">수정 없는 DID 셋탑 및 서버 구매 요청서(26.06.02).xlsx 원본 내용</span>
+            </div>
+          </button>
+        </div>
+      </div>
+
+      <!-- 하드웨어 및 서버 옵션 -->
+      <div class="control-card">
+        <h3>
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="2" width="20" height="8" rx="2" ry="2"/><rect x="2" y="14" width="20" height="8" rx="2" ry="2"/><line x1="6" y1="6" x2="6.01" y2="6"/><line x1="6" y1="18" x2="6.01" y2="18"/></svg>
+          핵심 하드웨어 및 운영 인프라 설정
+        </h3>
+        
+        <div class="option-group-title">1. DID 셋톱박스 하드웨어 모델</div>
+        <div class="card-options-grid" style="grid-template-columns: 1fr; gap: 8px;">
+          <div class="card-option selected" id="opt-box-quber" onclick="toggleSetTop('4k_quber')">
+            <input type="radio" name="settop" checked>
+            <div class="card-option-title">큐버 QR5G-M110S 4K (추천)</div>
+            <div class="card-option-desc">4K B2B 미디어 플레이어 | 단가: ₩320,000<br>안드로이드 산업용, 4K 지원, 5G 네트워크 연결</div>
+          </div>
+          <div class="card-option" id="opt-box-4k" onclick="toggleSetTop('4k_krizer')">
+            <input type="radio" name="settop">
+            <div class="card-option-title">크라이저 RT4X PRO 2 4K</div>
+            <div class="card-option-desc">일반 보급형 | 단가: ₩276,000<br>4K 화질 지원 안드로이드 셋톱</div>
+          </div>
+          <div class="card-option" id="opt-box-fhd" onclick="toggleSetTop('fhd_krizer')">
+            <input type="radio" name="settop">
+            <div class="card-option-title">크라이저 U4X CM V2 FHD</div>
+            <div class="card-option-desc">일반 보급형 | 단가: ₩268,000<br>FHD 광고 플레이어 기본형</div>
+          </div>
+        </div>
+
+        <div class="option-group-title">2. 중앙 서버 구축 아키텍처</div>
+        <div class="card-options-grid">
+          <div class="card-option selected" id="opt-server-cloud" onclick="toggleServer('cloud')">
+            <input type="radio" name="server" checked>
+            <div class="card-option-title">클라우드 가상 서버</div>
+            <div class="card-option-desc">AWS / Cafe24 임대<br>H/W 구매 없음 (세팅비 청구)<br>원격 관리 및 장기 운영 적합</div>
+          </div>
+          <div class="card-option" id="opt-server-local" onclick="toggleServer('local')">
+            <input type="radio" name="server">
+            <div class="card-option-title">현장 물리 PC 서버</div>
+            <div class="card-option-desc">데스크탑 본체 구매 (140만원)<br>매장 내 설치 및 로컬 운영<br>월 고정 임대료 없음</div>
+          </div>
+        </div>
+
+        <div class="option-group-title">3. 세금 계산 방식 (부가세)</div>
+        <div class="card-options-grid">
+          <div class="card-option selected" id="opt-vat-separate" onclick="toggleVat('separate')">
+            <input type="radio" name="vat" checked>
+            <div class="card-option-title">부가세 별도</div>
+            <div class="card-option-desc">부가가치세를 최종 합산금액에 가산하지 않고 공급가액만 표시합니다.</div>
+          </div>
+          <div class="card-option" id="opt-vat-included" onclick="toggleVat('included')">
+            <input type="radio" name="vat">
+            <div class="card-option-title">부가세 포함</div>
+            <div class="card-option-desc">공급가액 합계에 10% 부가가치세를 가산하여 최종 총액을 계산합니다.</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 서버 도입 방식 상세 가이드 (상주 외주 담당자를 위한 조언) -->
+      <div class="control-card">
+        <h3>
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>
+          서버 현장 vs 클라우드 아키텍처 비교 가이드
+        </h3>
+        <div class="guide-box">
+          <strong>💡 오설록 상주 협력업체 담당자 팁 (Cloudflare vs 외부 클라우드)</strong>
+          현재 매장에 상주하고 계시므로 초기 네트워크 구성 및 현장 서버 PC 조립 설치는 매우 수월합니다. 단, 개발자가 추천하는 연간 유지보수 포함 클라우드 서버와 비교하여 최적의 안을 결정해 주십시오.
+          <table>
+            <thead>
+              <tr>
+                <th>비교 항목</th>
+                <th>현장 PC 서버 + Cloudflare 터널</th>
+                <th>외부 클라우드 서비스 (AWS 등)</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><strong>기본 구조</strong></td>
+                <td>매장 내 PC 설치 + Cloudflare 외부 터널 개방 (무료)</td>
+                <td>인터넷 데이터센터 가상 서버(VPS) 임대</td>
+              </tr>
+              <tr>
+                <td><strong>초기 H/W 비용</strong></td>
+                <td><strong>약 140만 원</strong> (조립 PC 하드웨어 구매)</td>
+                <td><strong>0원</strong> (H/W 구매 비용 없음)</td>
+              </tr>
+              <tr>
+                <td><strong>월 유지 비용</strong></td>
+                <td><strong>0원</strong> (전기세 외 고정 비용 없음, 터널 무료)</td>
+                <td><strong>유지보수 범위 내 포함</strong> (개발사 가상 서버 비용 대납)</td>
+              </tr>
+              <tr>
+                <td><strong>미디어 전송 속도</strong></td>
+                <td><strong>매우 빠름</strong> (매장 내 로컬 기가비트 LAN 전송)</td>
+                <td><strong>인터넷 영향 받음</strong> (4K 영상 전송 시 업로드 병목)</td>
+              </tr>
+              <tr>
+                <td><strong>외부 원격 제어</strong></td>
+                <td><strong>기본 지원</strong> (공인 IP/포트 개방 없이 HTTPS 보안 노출)</td>
+                <td><strong>기본 지원</strong> (공인 IP를 통한 다중 매장 확장)</td>
+              </tr>
+              <tr>
+                <td><strong>유지관리 주체</strong></td>
+                <td><strong>상주 담당자 직접 관리</strong> (부품 노후 및 장애 조치 필요)</td>
+                <td><strong>데이터센터 인프라</strong> (하드웨어 고장 관리 없음)</td>
+              </tr>
+              <tr>
+                <td><strong>인터넷 단절 시</strong></td>
+                <td><strong>정상 작동 및 제어 가능</strong> (로컬 네트워크 연결 유지)</td>
+                <td><strong>로컬 네트워크 제어 가능</strong> (로컬 캐시 재생 및 현장 제어 지원)</td>
+              </tr>
+            </tbody>
+          </table>
+          <p style="margin-top: 8px; font-weight: 500;">
+            ※ 유지보수 및 비용의 장기적 합리성을 위해, 매월 이용료가 개발사 유지보수 계약 내에 녹아 있는 <strong>클라우드 가상 서버</strong> 방식이 운영 관점에서 가장 적극 권장됩니다.
+          </p>
+        </div>
+      </div>
+
+      <!-- 보완 추천 항목 체크박스 -->
+      <div class="control-card">
+        <h3>
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
+          빠진 비용 항목 추천 (B2B 비용 보완)
+        </h3>
+        <div class="checklist">
+          
+          <label class="checklist-item" onclick="toggleRecommendItem(this, 'dev_server_fee')">
+            <input type="checkbox" id="chk-dev-server" checked>
+            <div class="checklist-info">
+              <div class="checklist-title">
+                <span>서버 구축 기술료</span>
+                <span class="price">₩1,500,000</span>
+              </div>
+              <div class="checklist-desc">백엔드 API 서버, 데이터베이스(Prisma/SQLite) 구축 및 환경 구성 기술료</div>
+            </div>
+          </label>
+
+          <label class="checklist-item" onclick="toggleRecommendItem(this, 'dev_dashboard_fee')">
+            <input type="checkbox" id="chk-dev-dashboard" checked>
+            <div class="checklist-info">
+              <div class="checklist-title">
+                <span>대시보드 구축 기술료</span>
+                <span class="price">₩2,500,000</span>
+              </div>
+              <div class="checklist-desc">기기 5대 일괄 모니터링, 스케줄링 UI, 미디어 배포용 웹 대시보드 구축료</div>
+            </div>
+          </label>
+
+          <label class="checklist-item" onclick="toggleRecommendItem(this, 'install_labor')">
+            <input type="checkbox" id="chk-install" checked>
+            <div class="checklist-info">
+              <div class="checklist-title">
+                <span>디바이스 현장 연동 및 설치비</span>
+                <span class="price">₩500,000</span>
+              </div>
+              <div class="checklist-desc">5개 기기 마운트 작업 및 전원/네트워크 세팅, 하트비트 연결 검증 (기당 10만원)</div>
+            </div>
+          </label>
+
+          <label class="checklist-item" onclick="toggleRecommendItem(this, 'jeju_travel')">
+            <input type="checkbox" id="chk-travel" checked>
+            <div class="checklist-info">
+              <div class="checklist-title">
+                <span>제주 현장 출장 경비</span>
+                <span class="price">₩600,000</span>
+              </div>
+              <div class="checklist-desc">오설록 제주점 설치 출장을 위한 교통비(왕복 항공), 숙박비, 렌터카 및 식대 (2인 기준)</div>
+            </div>
+          </label>
+
+          <label class="checklist-item" onclick="toggleRecommendItem(this, 'hdmi_consumables')">
+            <input type="checkbox" id="chk-consumables" checked>
+            <div class="checklist-info">
+              <div class="checklist-title">
+                <span>HDMI 2.0 케이블 및 벽면 마운트</span>
+                <span class="price">₩150,000</span>
+              </div>
+              <div class="checklist-desc">4K 지원 전용 HDMI 2.0 케이블 5개 및 셋톱박스 고정용 스마트 브라켓 자재비</div>
+            </div>
+          </label>
+
+          <label class="checklist-item" onclick="toggleRecommendItem(this, 'cloudflare_tunnel')">
+            <input type="checkbox" id="chk-cloudflare" checked>
+            <div class="checklist-info">
+              <div class="checklist-title">
+                <span>Cloudflare 터널 및 원격 도메인 연동 세팅비</span>
+                <span class="price">₩300,000</span>
+              </div>
+              <div class="checklist-desc">현장 PC 서버를 외부에서 원격으로 보안 제어하기 위한 Cloudflare Zero Trust 터널 및 SSL 도메인 연동 세팅 비용</div>
+            </div>
+          </label>
+
+          <label class="checklist-item" onclick="toggleRecommendItem(this, 'annual_maintenance')">
+            <input type="checkbox" id="chk-maintenance">
+            <div class="checklist-info">
+              <div class="checklist-title">
+                <span id="maintenance-title-text">연간 원격 시스템 유지보수료 (선택)</span>
+                <span class="price" id="maintenance-price-text">₩1,200,000</span>
+              </div>
+              <div class="checklist-desc" id="maintenance-desc-text">시스템 장애 조치, 소프트웨어 보안 업데이트, 이미지 변경 등 원격 관리 지원 및 원격 하트비트 장애 상시 점검(연간)</div>
+            </div>
+            <div class="cycle-select-container" onclick="event.stopPropagation()" style="margin-left: 12px; align-self: center;">
+              <select id="sel-maintenance-cycle" onchange="changeMaintenanceCycle(this.value)" style="padding: 4px 6px; border-radius: var(--border-radius-sm); border: 1px solid var(--border-color); font-size: 0.75rem; background: white; color: var(--text-dark); cursor: pointer; font-weight: 500;">
+                <option value="annual" selected>연납</option>
+                <option value="monthly">월납</option>
+              </select>
+            </div>
+          </label>
+
+        </div>
+      </div>
+
+      <!-- 액션 영역 -->
+      <div class="action-group">
+        <button class="btn-action btn-primary" onclick="printDocument()">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 6 2 18 2 18 9"/><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><rect x="6" y="14" width="12" height="8"/></svg>
+          청구서/견적서 인쇄 및 PDF 저장
+        </button>
+        <button class="btn-action btn-secondary" onclick="exportToCSV()">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>
+          CSV 엑셀 파일 형태로 내보내기
+        </button>
+        <button class="btn-action btn-secondary" style="color: #ef4444;" onclick="resetForm()">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/><path d="M3 21v-5h5"/></svg>
+          빌더 입력값 원상태로 초기화
+        </button>
+      </div>
+
+    </div>
+
+    <!-- RIGHT: A4 문서 시뮬레이터 -->
+    <div class="preview-panel" id="print-area">
+      
+      <!-- 안내용 워터마크 안내 배너 (웹 화면에만 표시) -->
+      <div class="alert-banner">
+        <strong>📄 WYSIWYG 견적/청구서 편집기</strong>
+        아래 표 안의 글자, 단가, 수량, 계좌번호 등은 <strong>더블 클릭하여 수정</strong>하실 수 있으며 실시간으로 합계 금액에 계산됩니다. 완료되면 상단의 '인쇄 및 PDF 저장' 버튼으로 문서를 저장하세요.
+      </div>
+
+      <div class="document-header">
+        <div class="document-title" id="doc-type-title" onclick="toggleTitleType()">견 적 서</div>
+        <p style="font-size: 0.8rem; color: var(--text-muted); font-weight: 500;">
+          아래와 같이 견적/청구 내역을 제출합니다.
+        </p>
+      </div>
+
+      <!-- 공급자 / 공급받는자 정보 메타 영역 -->
+      <div class="document-meta-row">
+        <!-- 수신인 (공급받는자) -->
+        <div class="meta-client">
+          <div class="client-title-row">
+            <input type="text" class="client-input" value="아모레퍼시픽 오설록 제주점 귀하" id="doc-client">
+          </div>
+          <div class="client-label">
+            일자: <span id="doc-date" style="font-weight: 700;">2026년 06월 10일</span> (작성일)<br>
+            프로젝트명: 오설록 제주점 디지털 사이니지 원격 관리 시스템 구축
+          </div>
+        </div>
+
+        <!-- 공급자 (발행자) -->
+        <div class="meta-provider">
+          <table class="provider-table">
+            <tr>
+              <td class="provider-label" rowspan="4">공<br><br>급<br><br>자</td>
+              <td class="provider-label">등록번호</td>
+              <td colspan="3"><input type="text" class="provider-input" value="120-88-XXXXX" id="prov-regno"></td>
+            </tr>
+            <tr>
+              <td class="provider-label">상호(법인)</td>
+              <td><input type="text" class="provider-input" value="주식회사 셜록랩" id="prov-name"></td>
+              <td class="provider-label">대 표 자</td>
+              <td>
+                <input type="text" class="provider-input" value="홍 길 동" id="prov-ceo" style="width: 70px;">
+                <div class="sign-space" style="width: 25px; border-bottom: none;"><div class="sign-stamp">셜록인</div></div>
+              </td>
+            </tr>
+            <tr>
+              <td class="provider-label">주소</td>
+              <td colspan="3"><input type="text" class="provider-input" value="서울특별시 마포구 백범로 31길" id="prov-addr"></td>
+            </tr>
+            <tr>
+              <td class="provider-label">업태/종목</td>
+              <td><input type="text" class="provider-input" value="서비스 / 소프트웨어개발" id="prov-biztype"></td>
+              <td class="provider-label">전화번호</td>
+              <td><input type="text" class="provider-input" value="02-123-4567" id="prov-phone"></td>
+            </tr>
+          </table>
+        </div>
+      </div>
+
+      <!-- 합계액 요약 바 -->
+      <div class="summary-bar">
+        <span class="summary-label" id="summary-text-label">합계금액 (공급가액 + 부가세)</span>
+        <div>
+          <div class="summary-value" id="summary-total-val">₩ 0</div>
+          <div class="summary-korean" id="summary-total-kor">금 원정 (부가세 포함)</div>
+        </div>
+      </div>
+
+      <!-- 상세 품목 그리드 테이블 -->
+      <table class="details-table" id="items-table">
+        <thead>
+          <tr>
+            <th class="col-no">No</th>
+            <th class="col-category">구분</th>
+            <th class="col-item">품목명</th>
+            <th class="col-spec">규격/옵션</th>
+            <th class="col-price">단가(원)</th>
+            <th class="col-qty">수량</th>
+            <th class="col-total">금액(원)</th>
+            <th class="col-action">서비스</th>
+            <th class="col-delete"></th>
+          </tr>
+        </thead>
+        <tbody id="items-tbody">
+          <!-- JS로 동적 렌더링 -->
+        </tbody>
+      </table>
+
+      <!-- 품목 추가 버튼 -->
+      <div class="add-row-container">
+        <button class="btn-add-row" onclick="addNewItemRow()">+ 품목 행 추가</button>
+      </div>
+
+      <!-- 서버 구축 방식 비교 안내 -->
+      <div class="server-comparison-box">
+        <div class="server-comparison-title">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>
+          서버 구축 방식 비교 (현장 PC 서버 vs 클라우드 가상 서버)
+        </div>
+        <div class="server-comparison-grid">
+          <div class="comparison-col" id="compare-col-local">
+            <strong id="compare-title-local">🖥️ 현장 물리 PC 서버 방식</strong>
+            • <strong>비용:</strong> 초기 H/W 구매비 발생(140만 원), 월 임대료 없음<br>
+            • <strong>속도:</strong> 매장 로컬 망을 사용하므로 4K 초고화질 미디어 전송 속도가 매우 빠름<br>
+            • <strong>안정성:</strong> 인터넷 장애 시에도 로컬 네트워크 연결로 사이니지 스케줄 상시 정상 동작<br>
+            • <strong>관리:</strong> 기기 노후화 및 H/W 장애 발생 시 현장 담당자의 유지보수/관리 필요
+          </div>
+          <div class="comparison-col" id="compare-col-cloud">
+            <strong id="compare-title-cloud">☁️ 클라우드 가상 서버 방식 (추천)</strong>
+            • <strong>비용:</strong> 초기 H/W 구매 비용 0원. 가상 서버 및 트래픽 요금은 유지보수 비용에 통합되어 사업자 부담 없음<br>
+            • <strong>속도:</strong> 백그라운드 선제 다운로드 기법으로 4K 전송 시 속도 제약 우려 최소화<br>
+            • <strong>안정성:</strong> 클라우드 IDC 기반으로 24시간 안정 구동. 인터넷 장애 시에도 로컬 제어망을 통해 현장 기기 제어 및 원격 관리가 가능합니다.
+          </div>
+        </div>
+      </div>
+
+      <!-- 세무 서머리 및 서명 영역 -->
+      <div class="doc-footer-container">
+        <!-- 비고/참고사항 영역 -->
+        <div class="notes-box">
+          <div class="notes-title">비고 및 특이사항</div>
+          <textarea class="notes-textarea" placeholder="• 견적 유효기간: 제출일로부터 30일&#10;• 납품 기한: 계약 후 2주일 이내&#10;• 결제 조건: 계약금 50%, 잔금 50% (설치 완료 후)&#10;• 입금 계좌: 신한은행 110-123-456789 (주식회사 셜록랩)"></textarea>
+        </div>
+        
+        <!-- 공급가액 및 세액 요약표 -->
+        <div class="tax-summary-box">
+          <table class="tax-table">
+            <tr>
+              <td class="tax-label">공급가액</td>
+              <td class="tax-value" id="tax-subtotal">₩ 0</td>
+            </tr>
+            <tr>
+              <td class="tax-label" id="tax-vat-label">부가가치세</td>
+              <td class="tax-value" id="tax-vat">₩ 0</td>
+            </tr>
+            <tr>
+              <td class="tax-label" style="background-color: var(--accent-light); color: var(--primary-color);">합계금액</td>
+              <td class="tax-value" style="font-size: 1rem; color: var(--primary-color);" id="tax-grandtotal">₩ 0</td>
+            </tr>
+          </table>
+        </div>
+      </div>
+
+      <!-- 최종 서명 날인 영역 -->
+      <div class="sign-row">
+        2026 년 &nbsp; 06 월 &nbsp; 10 일 &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
+        공급자 : 주식회사 셜록랩 &nbsp;&nbsp;&nbsp;&nbsp; 대 표 &nbsp;&nbsp;&nbsp;&nbsp; 홍 길 동 &nbsp; (인)
+      </div>
+
+    </div>
+
+  </div>
+
+
+
+  <script>
+    // 엑셀에서 가져온 기본 품목 데이터 원본 리스트 정의
+    const originalExcelItems = [
+      { category: "셋톱박스", item: "크라이저 U4X CM V2/업그레이드 된 안드로이드 광고용 플레이어", spec: "FHD(1920x1080) [선택1]", price: 268000, qty: 5 },
+      { category: "셋톱박스", item: "크라이저 RT4X PRO 2 / 안드로이드 산업용 셋톱박스", spec: "4K(3840x2160) [선택2]", price: 276000, qty: 5 },
+      { category: "서버용 데스크탑", item: "서버용 일반 데스크탑", spec: "현장운영 조립PC [선택3]", price: 1400000, qty: 1 },
+      { category: "서버용 데스크탑", item: "서버용 일반 데스크탑", spec: "원격운영비 [선택4]", price: 300000, qty: 1, isService: true },
+      { category: "서버 구축", item: "서버 구축", spec: "백엔드 구축 비용 (품)", price: 1500000, qty: 1, isService: true },
+      { category: "대시보드 구축", item: "대시보드 구축", spec: "프론트엔드 구축 비용 (품)", price: 2500000, qty: 1, isService: true },
+      { category: "기타 비용", item: "기타 비용", spec: "-", price: 0, qty: 0 }
+    ];
+
+    // 빌더에서 사용할 현재 품목 배열
+    let currentItems = [];
+
+    // 설정값 기본 구조
+    let config = {
+      settop: '4k_quber',    // '4k_quber' | '4k_krizer' | 'fhd_krizer'
+      server: 'cloud',      // 'cloud' | 'local'
+      vat: 'separate',      // 'separate' | 'included'
+      maintenanceCycle: 'annual', // 'annual' | 'monthly'
+      recommendations: {
+        dev_server_fee: true,
+        dev_dashboard_fee: true,
+        install_labor: true,
+        jeju_travel: true,
+        hdmi_consumables: true,
+        cloudflare_tunnel: false,
+        annual_maintenance: true
+      }
+    };
+
+    // 오늘 날짜 포맷팅하여 문서에 적용
+    window.addEventListener('DOMContentLoaded', () => {
+      const today = new Date();
+      const year = today.getFullYear();
+      const month = String(today.getMonth() + 1).padStart(2, '0');
+      const date = String(today.getDate()).padStart(2, '0');
+      
+      document.getElementById('doc-date').innerText = `${year}년 ${month}월 ${date}일`;
+      
+      // 로컬 스토리지에 저장된 값이 있으면 로드, 없으면 오설록 4K 프리셋 기본 적용
+      const savedConfig = localStorage.getItem('signagepro_billing_config');
+      const savedItems = localStorage.getItem('signagepro_billing_items');
+      
+      if (savedConfig && savedItems) {
+        config = JSON.parse(savedConfig);
+        currentItems = JSON.parse(savedItems);
+        // WeCast -> Quber 자동 전환 마이그레이션
+        let migrated = false;
+        if (config.settop === '4k_giada' || config.settop === '4K' || config.settop === '4k_wecast') {
+          config.settop = '4k_quber';
+          migrated = true;
+        }
+        const settopIndex = currentItems.findIndex(i => i.category === '셋톱박스' && (i.item.includes("지아다") || i.item.includes("위캐스트") || i.item.includes("WeCast")));
+        if (settopIndex !== -1) {
+          currentItems[settopIndex].item = "큐버 QR5G-M110S 4K 미디어 플레이어";
+          currentItems[settopIndex].spec = "4K(3840x2160) B2B 산업용";
+          currentItems[settopIndex].price = 320000;
+          migrated = true;
+        }
+        if (migrated) saveToLocalStorage();
+        applyConfigToUI();
+        renderTable();
+      } else {
+        loadPreset('osulloc_4k');
+      }
+    });
+
+    // 프리셋 로드 함수
+    function loadPreset(presetName) {
+      if (presetName === 'osulloc_4k') {
+        config.settop = '4k_quber';
+        config.server = 'cloud';
+        config.vat = 'separate';
+        config.maintenanceCycle = 'annual';
+        config.recommendations = {
+          dev_server_fee: true,
+          dev_dashboard_fee: true,
+          install_labor: true,
+          jeju_travel: true,
+          hdmi_consumables: true,
+          cloudflare_tunnel: false,
+          annual_maintenance: true
+        };
+
+        // 오설록 4K용 최종 품목 정돈 구성 (큐버 QR5G-M110S 제품으로 교체)
+        currentItems = [
+          { category: "셋톱박스", item: "큐버 QR5G-M110S 4K 미디어 플레이어", spec: "4K(3840x2160) B2B 산업용", price: 320000, qty: 5 },
+          { category: "서버 구축", item: "서버 구축 및 백엔드 개발 기술료", spec: "Prisma DB & TCP 10080 연동", price: 1500000, qty: 1 },
+          { category: "대시보드 구축", item: "관리자 UI 대시보드 구축 기술료", spec: "React & 스케줄 Swimlane UI", price: 2500000, qty: 1 },
+          { category: "설치 인건비", item: "디바이스 현장 연동 및 설치 기술 공임", spec: "5개 보드 하트비트 세팅", price: 500000, qty: 1 },
+          { category: "출장 경비", item: "제주 현장 출장 경비 (항공/숙박/식비)", spec: "엔지니어 2인 2일 기준", price: 600000, qty: 1 },
+          { category: "소모품 자재", item: "HDMI 2.0 케이블 (4K 지원) 및 브라켓", spec: "5개 디바이스 장착용 자재", price: 150000, qty: 1 },
+          { category: "유지보수", item: "연간 원격 시스템 유지보수료", spec: "장애 조치, 소프트웨어 패치, 이미지 변경 등 원격 관리(연간)", price: 1200000, qty: 1 }
+        ];
+      } 
+      else if (presetName === 'osulloc_local') {
+        config.settop = 'FHD';
+        config.server = 'local';
+        config.vat = 'separate';
+        config.recommendations = {
+          dev_server_fee: true,
+          dev_dashboard_fee: true,
+          install_labor: true,
+          jeju_travel: false,
+          hdmi_consumables: true,
+          cloudflare_tunnel: true,
+          annual_maintenance: false
+        };
+
+        // 오설록 로컬용 최종 품목 구성
+        currentItems = [
+          { category: "셋톱박스", item: "크라이저 U4X CM V2 광고용 플레이어", spec: "FHD(1920x1080) 일반화질", price: 268000, qty: 5 },
+          { category: "서버용 하드웨어", item: "서버용 일반 데스크탑 조립 PC", spec: "현장 로컬 운영용 하드웨어 본체", price: 1400000, qty: 1 },
+          { category: "서버 구축", item: "서버 구축 및 백엔드 개발 기술료", spec: "Prisma DB & TCP 10080 연동", price: 1500000, qty: 1 },
+          { category: "대시보드 구축", item: "관리자 UI 대시보드 구축 기술료", spec: "React & 스케줄 Swimlane UI", price: 2500000, qty: 1 },
+          { category: "네트워크 세팅", item: "Cloudflare 터널 및 원격 도메인 연동", spec: "SSL 보안 연결 및 Zero Trust 터널링", price: 300000, qty: 1 },
+          { category: "설치 인건비", item: "디바이스 현장 연동 및 설치 기술 공임", spec: "5개 보드 하트비트 세팅", price: 500000, qty: 1 },
+          { category: "소모품 자재", item: "HDMI 케이블 및 브라켓", spec: "5개 디바이스 장착용 자재", price: 150000, qty: 1 }
+        ];
+      } 
+      else if (presetName === 'excel_raw') {
+        config.settop = 'FHD'; // FHD 셋탑박스가 1번 행에 위치
+        config.server = 'local'; // 데스크탑 PC 140만원이 현장용으로 등록
+        config.vat = 'separate';
+        config.maintenanceCycle = 'annual';
+        config.recommendations = {
+          dev_server_fee: false,
+          dev_dashboard_fee: false,
+          install_labor: false,
+          jeju_travel: false,
+          hdmi_consumables: false,
+          cloudflare_tunnel: false,
+          annual_maintenance: false
+        };
+
+        // 엑셀 시트 행 그대로 로드
+        currentItems = JSON.parse(JSON.stringify(originalExcelItems));
+      }
+
+      // 렌더링 동기화
+      applyConfigToUI();
+      renderTable();
+      saveToLocalStorage();
+
+      // 프리셋 액티브 스타일 조정
+      const buttons = document.querySelectorAll('.btn-preset');
+      buttons.forEach(btn => btn.classList.remove('active'));
+      
+      const idx = presetName === 'osulloc_4k' ? 0 : presetName === 'osulloc_local' ? 1 : 2;
+      buttons[idx].classList.add('active');
+    }
+
+    // 설정값을 왼쪽 제어 UI 패널에 반영
+    function applyConfigToUI() {
+      // 1. 셋톱박스 모델 토글 UI
+      const settopOpts = ['opt-box-fhd', 'opt-box-4k', 'opt-box-quber'];
+      settopOpts.forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.classList.remove('selected');
+      });
+
+      if (config.settop === '4k_quber') {
+        const el = document.getElementById('opt-box-quber');
+        if (el) el.classList.add('selected');
+        document.querySelectorAll('input[name="settop"]')[0].checked = true;
+      } else if (config.settop === '4k_krizer') {
+        const el = document.getElementById('opt-box-4k');
+        if (el) el.classList.add('selected');
+        document.querySelectorAll('input[name="settop"]')[1].checked = true;
+      } else {
+        const el = document.getElementById('opt-box-fhd');
+        if (el) el.classList.add('selected');
+        document.querySelectorAll('input[name="settop"]')[2].checked = true;
+      }
+
+      // 2. 서버 아키텍처 토글 UI
+      if (config.server === 'cloud') {
+        document.getElementById('opt-server-cloud').classList.add('selected');
+        document.getElementById('opt-server-local').classList.remove('selected');
+        document.querySelectorAll('input[name="server"]')[0].checked = true;
+      } else {
+        document.getElementById('opt-server-local').classList.add('selected');
+        document.getElementById('opt-server-cloud').classList.remove('selected');
+        document.querySelectorAll('input[name="server"]')[1].checked = true;
+      }
+
+      // 3. 부가세 계산 방식 UI
+      if (config.vat === 'separate') {
+        document.getElementById('opt-vat-separate').classList.add('selected');
+        document.getElementById('opt-vat-included').classList.remove('selected');
+        document.querySelectorAll('input[name="vat"]')[0].checked = true;
+        document.getElementById('summary-text-label').innerText = "합계금액 (공급가액)";
+      } else {
+        document.getElementById('opt-vat-included').classList.add('selected');
+        document.getElementById('opt-vat-separate').classList.remove('selected');
+        document.querySelectorAll('input[name="vat"]')[1].checked = true;
+        document.getElementById('summary-text-label').innerText = "합계금액 (공급가액 + 부가세)";
+      }
+
+      // 4. 추천 보완 항목 체크박스 UI 상태 동기화
+      document.getElementById('chk-dev-server').checked = config.recommendations.dev_server_fee;
+      updateChecklistItemStyle(document.getElementById('chk-dev-server'));
+      
+      document.getElementById('chk-dev-dashboard').checked = config.recommendations.dev_dashboard_fee;
+      updateChecklistItemStyle(document.getElementById('chk-dev-dashboard'));
+
+      document.getElementById('chk-install').checked = config.recommendations.install_labor;
+      updateChecklistItemStyle(document.getElementById('chk-install'));
+
+      document.getElementById('chk-travel').checked = config.recommendations.jeju_travel;
+      updateChecklistItemStyle(document.getElementById('chk-travel'));
+
+      document.getElementById('chk-consumables').checked = config.recommendations.hdmi_consumables;
+      updateChecklistItemStyle(document.getElementById('chk-consumables'));
+
+      document.getElementById('chk-cloudflare').checked = config.recommendations.cloudflare_tunnel;
+      updateChecklistItemStyle(document.getElementById('chk-cloudflare'));
+
+      document.getElementById('chk-maintenance').checked = config.recommendations.annual_maintenance;
+      updateChecklistItemStyle(document.getElementById('chk-maintenance'));
+
+      // 5. 유지보수 납부 주기 UI 동기화
+      const cycle = config.maintenanceCycle || 'annual';
+      const selCycle = document.getElementById('sel-maintenance-cycle');
+      if (selCycle) {
+        selCycle.value = cycle;
+      }
+      
+      const isMonthly = cycle === 'monthly';
+      document.getElementById('maintenance-title-text').innerText = isMonthly 
+        ? "월간 원격 시스템 유지보수료 (선택)" 
+        : "연간 원격 시스템 유지보수료 (선택)";
+      document.getElementById('maintenance-price-text').innerText = isMonthly 
+        ? "₩100,000" 
+        : "₩1,200,000";
+      document.getElementById('maintenance-desc-text').innerText = isMonthly
+        ? "시스템 장애 조치, 소프트웨어 보안 업데이트, 이미지 변경 등 원격 관리 지원 및 원격 하트비트 장애 상시 점검(월간)"
+        : "시스템 장애 조치, 소프트웨어 보안 업데이트, 이미지 변경 등 원격 관리 지원 및 원격 하트비트 장애 상시 점검(연간)";
+
+      // 서버 비교 컬럼 하이라이트 동기화
+      const localCol = document.getElementById('compare-col-local');
+      const cloudCol = document.getElementById('compare-col-cloud');
+      const localTitle = document.getElementById('compare-title-local');
+      const cloudTitle = document.getElementById('compare-title-cloud');
+      
+      // 기존 뱃지 제거
+      const existingBadges = document.querySelectorAll('.badge-select');
+      existingBadges.forEach(b => b.remove());
+      
+      if (config.server === 'local') {
+        localCol.classList.add('active');
+        cloudCol.classList.remove('active');
+        localTitle.innerHTML += '<span class="badge-select">선택됨</span>';
+      } else {
+        cloudCol.classList.add('active');
+        localCol.classList.remove('active');
+        cloudTitle.innerHTML += '<span class="badge-select">선택됨</span>';
+      }
+    }
+
+    function updateChecklistItemStyle(checkboxEl) {
+      const itemContainer = checkboxEl.closest('.checklist-item');
+      if (checkboxEl.checked) {
+        itemContainer.style.borderColor = 'var(--primary-color)';
+        itemContainer.style.backgroundColor = 'var(--accent-light)';
+      } else {
+        itemContainer.style.borderColor = 'transparent';
+        itemContainer.style.backgroundColor = 'var(--primary-light)';
+      }
+    }
+
+    // 셋톱박스 설정 변경 토글 핸들러
+    function toggleSetTop(modelType) {
+      config.settop = modelType;
+      
+      const settopIndex = currentItems.findIndex(i => i.category === '셋톱박스');
+      
+      let itemObj = { category: "셋톱박스", item: "", spec: "", price: 0, qty: 5 };
+      if (modelType === '4k_quber') {
+        itemObj.item = "큐버 QR5G-M110S 4K 미디어 플레이어";
+        itemObj.spec = "4K(3840x2160) B2B 산업용";
+        itemObj.price = 320000;
+      } else if (modelType === '4k_krizer') {
+        itemObj.item = "크라이저 RT4X PRO 2 / 안드로이드 산업용 셋톱박스";
+        itemObj.spec = "4K(3840x2160) 고화질";
+        itemObj.price = 276000;
+      } else {
+        itemObj.item = "크라이저 U4X CM V2 광고용 플레이어";
+        itemObj.spec = "FHD(1920x1080) 일반화질";
+        itemObj.price = 268000;
+      }
+
+      if (settopIndex !== -1) {
+        currentItems[settopIndex].item = itemObj.item;
+        currentItems[settopIndex].spec = itemObj.spec;
+        currentItems[settopIndex].price = itemObj.price;
+      } else {
+        currentItems.unshift(itemObj);
+      }
+
+      applyConfigToUI();
+      renderTable();
+      saveToLocalStorage();
+    }
+
+    // 서버 유형 설정 변경 토글 핸들러
+    function toggleServer(serverType) {
+      config.server = serverType;
+
+      const pcIndex = currentItems.findIndex(i => i.category === '서버용 하드웨어' || i.category === '서버용 데스크탑');
+      
+      if (serverType === 'local') {
+        // 현장 서버 선택 시: 물리 하드웨어 PC 단가 1,400,000원 품목을 활성화/추가
+        if (pcIndex !== -1) {
+          currentItems[pcIndex].category = "서버용 하드웨어";
+          currentItems[pcIndex].item = "서버용 일반 데스크탑 조립 PC";
+          currentItems[pcIndex].spec = "현장 로컬 운영용 하드웨어 본체";
+          currentItems[pcIndex].price = 1400000;
+          currentItems[pcIndex].qty = 1;
+        } else {
+          // 리스트의 적절한 위치(보통 셋톱박스 바로 뒤)에 삽입
+          currentItems.splice(1, 0, { category: "서버용 하드웨어", item: "서버용 일반 데스크탑 조립 PC", spec: "현장 로컬 운영용 하드웨어 본체", price: 1400000, qty: 1 });
+        }
+      } else {
+        // 클라우드 서버 선택 시: 물리 하드웨어 구매 라인은 제거 (대신 서버 구축 기술료가 세팅비를 메꿈)
+        if (pcIndex !== -1) {
+          currentItems.splice(pcIndex, 1);
+        }
+      }
+
+      applyConfigToUI();
+      renderTable();
+      saveToLocalStorage();
+    }
+
+    // 부가세 설정 변경 토글 핸들러
+    function toggleVat(vatType) {
+      config.vat = vatType;
+      applyConfigToUI();
+      calculateTotals();
+      saveToLocalStorage();
+    }
+
+    // 유지보수 주기 변경 토글 핸들러
+    function changeMaintenanceCycle(value) {
+      config.maintenanceCycle = value;
+      
+      const matchIndex = currentItems.findIndex(i => i.category === "유지보수" || i.item.includes("유지보수"));
+      if (matchIndex !== -1) {
+        if (value === 'monthly') {
+          currentItems[matchIndex].item = "월간 원격 시스템 유지보수료";
+          currentItems[matchIndex].spec = "장애 조치, 소프트웨어 패치, 이미지 변경 등 원격 관리(월간)";
+          currentItems[matchIndex].price = 100000;
+          currentItems[matchIndex].qty = 12;
+        } else {
+          currentItems[matchIndex].item = "연간 원격 시스템 유지보수료";
+          currentItems[matchIndex].spec = "장애 조치, 소프트웨어 패치, 이미지 변경 등 원격 관리(연간)";
+          currentItems[matchIndex].price = 1200000;
+          currentItems[matchIndex].qty = 1;
+        }
+      }
+      
+      applyConfigToUI();
+      renderTable();
+      saveToLocalStorage();
+    }
+
+    // 추천 항목 클릭 시 추가/삭제 동작 핸들러
+    function toggleRecommendItem(labelEl, key) {
+      // 이벤트 순서로 인해 체크박스 상태가 변경된 후에 함수가 동작함
+      const checkbox = labelEl.querySelector('input[type="checkbox"]');
+      config.recommendations[key] = checkbox.checked;
+      
+      updateChecklistItemStyle(checkbox);
+
+      const isMonthly = config.maintenanceCycle === 'monthly';
+
+      // 맵핑 정보 정의
+      const itemMap = {
+        dev_server_fee: { category: "서버 구축", item: "서버 구축 및 백엔드 개발 기술료", spec: "Prisma DB & TCP 10080 연동", price: 1500000, qty: 1 },
+        dev_dashboard_fee: { category: "대시보드 구축", item: "관리자 UI 대시보드 구축 기술료", spec: "React & 스케줄 Swimlane UI", price: 2500000, qty: 1 },
+        install_labor: { category: "설치 인건비", item: "디바이스 현장 연동 및 설치 기술 공임", spec: "5개 보드 하트비트 세팅", price: 500000, qty: 1 },
+        jeju_travel: { category: "출장 경비", item: "제주 현장 출장 경비 (항공/숙박/식비)", spec: "엔지니어 2인 2일 기준", price: 600000, qty: 1 },
+        hdmi_consumables: { category: "소모품 자재", item: "HDMI 2.0 케이블 (4K 지원) 및 브라켓", spec: "5개 디바이스 장착용 자재", price: 150000, qty: 1 },
+        cloudflare_tunnel: { category: "네트워크 세팅", item: "Cloudflare 터널 및 원격 도메인 연동", spec: "SSL 보안 연결 및 Zero Trust 터널링", price: 300000, qty: 1 },
+        annual_maintenance: isMonthly
+          ? { category: "유지보수", item: "월간 원격 시스템 유지보수료", spec: "장애 조치, 소프트웨어 패치, 이미지 변경 등 원격 관리(월간)", price: 100000, qty: 12 }
+          : { category: "유지보수", item: "연간 원격 시스템 유지보수료", spec: "장애 조치, 소프트웨어 패치, 이미지 변경 등 원격 관리(연간)", price: 1200000, qty: 1 }
+      };
+
+      const targetPreset = itemMap[key];
+      const matchIndex = currentItems.findIndex(i => i.category === targetPreset.category);
+
+      if (checkbox.checked) {
+        if (matchIndex === -1) {
+          currentItems.push(targetPreset);
+        }
+      } else {
+        if (matchIndex !== -1) {
+          currentItems.splice(matchIndex, 1);
+        }
+      }
+
+      renderTable();
+      saveToLocalStorage();
+    }
+
+    // 테이블 렌더링 함수
+    function renderTable() {
+      const tbody = document.getElementById('items-tbody');
+      tbody.innerHTML = '';
+
+      currentItems.forEach((item, index) => {
+        const row = document.createElement('tr');
+        if (item.isService) {
+          row.classList.add('tr-service');
+        }
+        
+        const subtotal = item.isService ? 0 : (item.price * item.qty);
+        
+        const totalDisplay = item.isService 
+          ? `<span class="badge-service">서비스 (무료)</span>` 
+          : `₩ ${formatNumber(subtotal)}`;
+
+        row.innerHTML = `
+          <td class="col-no">${index + 1}</td>
+          <td class="col-category">
+            <input type="text" class="tbl-input" value="${escapeHtml(item.category)}" onchange="updateItemData(${index}, 'category', this.value)">
+          </td>
+          <td class="col-item">
+            <input type="text" class="tbl-input" value="${escapeHtml(item.item)}" onchange="updateItemData(${index}, 'item', this.value)">
+          </td>
+          <td class="col-spec">
+            <input type="text" class="tbl-input" value="${escapeHtml(item.spec)}" onchange="updateItemData(${index}, 'spec', this.value)">
+          </td>
+          <td class="col-price">
+            <input type="text" class="tbl-input text-right" value="${formatNumStr(item.price)}" onchange="updateItemData(${index}, 'price', parseNum(this.value)); this.value=formatNumStr(parseNum(this.value))">
+            <div id="price-subtext-${index}" class="price-subtext" style="${item.category === '유지보수' || item.item.includes('유지보수') ? 'font-size: 0.75rem; color: var(--text-muted); text-align: right; margin-top: 2px; font-weight: 500;' : 'display: none;'}">
+              ${item.category === '유지보수' || item.item.includes('유지보수') ? (item.item.includes('월간') || item.spec.includes('월간') ? `(연간 ${formatNumber(item.price * 12)}원 환산)` : `(월 ${formatNumber(Math.round(item.price / 12))}원)`) : ''}
+            </div>
+          </td>
+          <td class="col-qty">
+            <input type="number" class="tbl-input text-center" value="${item.qty}" min="0" onchange="updateItemData(${index}, 'qty', parseInt(this.value) || 0)">
+          </td>
+          <td class="col-total" id="row-total-${index}">
+            ${totalDisplay}
+          </td>
+          <td class="col-action">
+            <input type="checkbox" ${item.isService ? 'checked' : ''} onchange="toggleItemService(${index}, this.checked)">
+          </td>
+          <td class="col-delete">
+            <button class="btn-row-del" onclick="deleteItemRow(${index})">×</button>
+          </td>
+        `;
+        tbody.appendChild(row);
+      });
+
+      calculateTotals();
+    }
+
+    function toggleItemService(index, isChecked) {
+      currentItems[index].isService = isChecked;
+      renderTable();
+      saveToLocalStorage();
+    }
+
+    // 개별 품목 셀 입력 필드 수정 처리 함수
+    function updateItemData(index, field, value) {
+      currentItems[index][field] = value;
+      
+      // 해당 행의 합계 실시간 반영
+      const item = currentItems[index];
+      const rowTotalEl = document.getElementById(`row-total-${index}`);
+      if (rowTotalEl) {
+        const subtotal = item.isService ? 0 : (item.price * item.qty);
+        rowTotalEl.innerHTML = item.isService 
+          ? `<span class="badge-service">서비스 (무료)</span>` 
+          : `₩ ${formatNumber(subtotal)}`;
+      }
+
+      // 유지보수 품목의 월 환산 단가 표시 실시간 반영
+      if (field === 'price' || field === 'category' || field === 'item') {
+        const subtextEl = document.getElementById(`price-subtext-${index}`);
+        if (subtextEl) {
+          if (item.category === '유지보수' || item.item.includes('유지보수')) {
+            const isMonthlyItem = item.item.includes('월간') || item.spec.includes('월간');
+            subtextEl.innerHTML = isMonthlyItem ? `(연간 ${formatNumber(item.price * 12)}원 환산)` : `(월 ${formatNumber(Math.round(item.price / 12))}원)`;
+            subtextEl.style.display = 'block';
+            subtextEl.style.fontSize = '0.75rem';
+            subtextEl.style.color = 'var(--text-muted)';
+            subtextEl.style.textAlign = 'right';
+            subtextEl.style.marginTop = '2px';
+            subtextEl.style.fontWeight = '500';
+          } else {
+            subtextEl.innerHTML = '';
+            subtextEl.style.display = 'none';
+          }
+        }
+      }
+      
+      calculateTotals();
+      saveToLocalStorage();
+    }
+
+    // 품목 행 삭제 함수
+    function deleteItemRow(index) {
+      const deletedCategory = currentItems[index].category;
+      currentItems.splice(index, 1);
+      
+      // 추천 항목에 연결된 품목인 경우 체크박스 해제 처리
+      const categoryToKeyMap = {
+        "서버 구축": "dev_server_fee",
+        "대시보드 구축": "dev_dashboard_fee",
+        "설치 인건비": "install_labor",
+        "출장 경비": "jeju_travel",
+        "소모품 자재": "hdmi_consumables",
+        "네트워크 세팅": "cloudflare_tunnel",
+        "유지보수": "annual_maintenance"
+      };
+
+      const configKey = categoryToKeyMap[deletedCategory];
+      if (configKey) {
+        config.recommendations[configKey] = false;
+        applyConfigToUI();
+      }
+
+      renderTable();
+      saveToLocalStorage();
+    }
+
+    // 새로운 빈 품목 행 추가 함수
+    function addNewItemRow() {
+      currentItems.push({
+        category: "기타",
+        item: "새 품목명",
+        spec: "-",
+        price: 0,
+        qty: 1
+      });
+      renderTable();
+      saveToLocalStorage();
+    }
+
+    // 최종 공급가액, 부가세, 합계액 합산 및 한글 변환 표기 연동 함수
+    function calculateTotals() {
+      let supplyTotal = 0;
+      
+      currentItems.forEach(item => {
+        supplyTotal += item.isService ? 0 : (item.price * item.qty);
+      });
+
+      let vat = 0;
+      let grandTotal = 0;
+
+      if (config.vat === 'separate') {
+        // 부가세 별도일 시 10% 가산하지 않고 0원 처리
+        vat = 0;
+        grandTotal = supplyTotal;
+      } else if (config.vat === 'included') {
+        // 부가세 포함 (공급가액 합계의 10%를 가산)
+        vat = Math.floor(supplyTotal * 0.1);
+        grandTotal = supplyTotal + vat;
+      } else {
+        // 면세
+        vat = 0;
+        grandTotal = supplyTotal;
+      }
+
+      // 화면 출력 갱신
+      document.getElementById('tax-subtotal').innerText = `₩ ${formatNumber(supplyTotal)}`;
+      document.getElementById('tax-vat-label').innerText = config.vat === 'separate' ? '부가가치세' : '부가가치세 (10%)';
+      document.getElementById('tax-vat').innerText = `₩ ${formatNumber(vat)}`;
+      document.getElementById('tax-grandtotal').innerText = `₩ ${formatNumber(grandTotal)}`;
+      
+      // 부가세 별도일 때는 상단 요약 바에 공급가액만 표시
+      const summaryValue = config.vat === 'separate' ? supplyTotal : grandTotal;
+      document.getElementById('summary-total-val').innerText = `₩ ${formatNumber(summaryValue)}`;
+      
+      // 한글 텍스트 금액 표기 연동
+      const korText = getKoreanNumberWord(summaryValue);
+      const vatSuffix = config.vat === 'separate' ? '부가세 별도' : config.vat === 'included' ? '부가세 포함' : '면세';
+      document.getElementById('summary-total-kor').innerText = `금 ${korText}원정 (${vatSuffix})`;
+    }
+
+    // 인쇄 실행 함수 (브라우저 출력화면 연동)
+    function printDocument() {
+      window.print();
+    }
+
+    // 폼 데이터 초기화 함수
+    function resetForm() {
+      if (confirm('입력하신 모든 내역을 초기화하고 오설록 4K 기본 권장안으로 되돌리시겠습니까?')) {
+        localStorage.removeItem('signagepro_billing_config');
+        localStorage.removeItem('signagepro_billing_items');
+        loadPreset('osulloc_4k');
+      }
+    }
+
+    // 로컬 스토리지 데이터 영속 보관 처리
+    function saveToLocalStorage() {
+      localStorage.setItem('signagepro_billing_config', JSON.stringify(config));
+      localStorage.setItem('signagepro_billing_items', JSON.stringify(currentItems));
+    }
+
+    // CSV 파일 다운로드 기능 구현
+    function exportToCSV() {
+      let csvContent = "\uFEFF"; // UTF-8 BOM 헤더 추가하여 한글 깨짐 방지
+      
+      // 타이틀 및 기본 정보
+      const docType = document.getElementById('doc-type-title').innerText;
+      const client = document.getElementById('doc-client').value;
+      const date = document.getElementById('doc-date').innerText;
+      
+      csvContent += `${docType} 제출,,,,,,\n`;
+      csvContent += `수신자: ${client},,,일자: ${date},,,\n\n`;
+      
+      // 테이블 헤더
+      csvContent += "번호,구분,품목명,규격 및 옵션,단가(원),수량,금액(원)\n";
+      
+      // 품목 루프
+      currentItems.forEach((item, index) => {
+        const subtotal = item.isService ? 0 : (item.price * item.qty);
+        const totalText = item.isService ? "서비스(무료)" : subtotal;
+        csvContent += `"${index+1}","${cleanCSVField(item.category)}","${cleanCSVField(item.item)}","${cleanCSVField(item.spec)}",${item.price},${item.qty},${totalText}\n`;
+      });
+      
+      // 세무 정보 요약
+      let subTotal = 0;
+      currentItems.forEach(i => subTotal += (i.isService ? 0 : (i.price * i.qty)));
+      
+      let vat = 0;
+      let grandTotal = 0;
+      if (config.vat === 'separate') {
+        vat = 0;
+        grandTotal = subTotal;
+      } else if (config.vat === 'included') {
+        vat = Math.floor(subTotal * 0.1);
+        grandTotal = subTotal + vat;
+      } else {
+        grandTotal = subTotal;
+      }
+      
+      csvContent += `\n`;
+      csvContent += `,,,,,공급가액 합계,${subTotal}\n`;
+      const vatLabel = config.vat === 'separate' ? "부가가치세" : "부가가치세 (10%)";
+      csvContent += `,,,,,${vatLabel},${vat}\n`;
+      csvContent += `,,,,,최종 총 합계금액,${grandTotal}\n`;
+      
+      // 파일 다운로드 생성
+      const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+      const link = document.createElement("a");
+      const url = URL.createObjectURL(blob);
+      link.setAttribute("href", url);
+      link.setAttribute("download", `디지털사이니지_DID_비용청구서_${date.replace(/\s+/g, '')}.csv`);
+      link.style.visibility = 'hidden';
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+    }
+
+    function cleanCSVField(str) {
+      if (!str) return '';
+      return str.replace(/"/g, '""');
+    }
+
+    // 타이틀 클릭 시 견적서 <-> 청구서로 교체
+    function toggleTitleType() {
+      const titleEl = document.getElementById('doc-type-title');
+      if (titleEl.innerText === "견 적 서") {
+        titleEl.innerText = "청 구 서";
+      } else {
+        titleEl.innerText = "견 적 서";
+      }
+    }
+
+    // 포맷팅 헬퍼 유틸리티 함수군
+    function formatNumber(num) {
+      return num.toString().replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+    }
+
+    function formatNumStr(num) {
+      return num.toString().replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+    }
+
+    function parseNum(str) {
+      return parseInt(str.replace(/[^0-9]/g, '')) || 0;
+    }
+
+    function escapeHtml(string) {
+      return String(string).replace(/[&<>"']/g, function (s) {
+        return {
+          "&": "&amp;",
+          "<": "&lt;",
+          ">": "&gt;",
+          '"': '&quot;',
+          "'": '&#39;'
+        }[s];
+      });
+    }
+
+    // 숫자를 한글 금액 한글 맞춤법으로 국문 기재 변환기
+    function getKoreanNumberWord(num) {
+      if (num === 0) return '영';
+      const units = ['', '십', '백', '천'];
+      const largeUnits = ['', '만', '억', '조'];
+      const digits = ['', '일', '이', '삼', '사', '오', '육', '칠', '팔', '구'];
+      
+      let numStr = Math.floor(num).toString();
+      let result = '';
+      
+      for (let i = 0; i < numStr.length; i++) {
+        let digit = parseInt(numStr[i]);
+        let pos = numStr.length - 1 - i;
+        let unitIdx = pos % 4;
+        let largeIdx = Math.floor(pos / 4);
+        
+        if (digit !== 0) {
+          let digitWord = digits[digit];
+          if (digit === 1 && unitIdx > 0) {
+            digitWord = '';
+          }
+          result += digitWord + units[unitIdx];
+        }
+        
+        if (unitIdx === 0 && largeIdx > 0) {
+          let start = Math.max(0, i - 3);
+          let chunk = numStr.substring(start, i + 1);
+          if (parseInt(chunk) > 0) {
+            result += largeUnits[largeIdx];
+          }
+        }
+      }
+      
+      if (result.startsWith('십') || result.startsWith('백') || result.startsWith('천') || result.startsWith('만')) {
+        result = '일' + result;
+      }
+      
+      return result;
+    }
+  </script>
+</body>
+</html>
