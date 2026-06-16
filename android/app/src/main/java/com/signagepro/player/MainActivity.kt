@@ -5,6 +5,7 @@ import android.app.admin.DevicePolicyManager
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
@@ -312,11 +313,31 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    /** Device Owner면 Tailscale를 always-on VPN으로 강제 → 재부팅 후 자동 기동(상시연결). */
+    private fun enforceTailscaleAlwaysOn() {
+        if (Build.VERSION.SDK_INT < 24) return
+        val dpm = getSystemService(Context.DEVICE_POLICY_SERVICE) as DevicePolicyManager
+        if (!dpm.isDeviceOwnerApp(packageName)) return
+        val adminComponent = ComponentName(this, SignageDeviceAdmin::class.java)
+        val tsPkg = "com.tailscale.ipn"
+        try {
+            packageManager.getPackageInfo(tsPkg, 0)  // 설치돼 있을 때만
+            // lockdown=false: Tailscale 미기동 시에도 일반 네트워크(LAN) 폴백 유지
+            dpm.setAlwaysOnVpnPackage(adminComponent, tsPkg, false)
+            android.util.Log.i("MainActivity", "Tailscale always-on VPN 설정 완료")
+        } catch (e: PackageManager.NameNotFoundException) {
+            android.util.Log.i("MainActivity", "Tailscale 미설치 — always-on 스킵")
+        } catch (e: Exception) {
+            android.util.Log.w("MainActivity", "always-on VPN 설정 실패: ${e.message}")
+        }
+    }
+
     private fun startKiosk() {
         binding.setupContainer.visibility = View.GONE
         binding.kioskContainer.visibility = View.VISIBLE
         applyImmersiveMode()
         requestDeviceAdminIfNeeded()
+        enforceTailscaleAlwaysOn()
 
         val renderer = MediaRenderer(this, binding.layerA, binding.layerB)
         coordinator = PlayerCoordinator(

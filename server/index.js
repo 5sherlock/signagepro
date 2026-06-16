@@ -314,7 +314,7 @@ io.on('connection', (socket) => {
         if (device) {
           const raw = device.appVersion || '';
           const currentVer = raw.includes(' (') ? raw.slice(0, raw.indexOf(' (')) : raw;
-          if (currentVer !== targetVersion) {
+          if (needsOtaUpdate(currentVer, targetVersion)) {
             console.log(`[OTA-Reconnect] ${deviceId}: 구버전 감지 (${currentVer || 'unknown'} → v${targetVersion}) — update_apk 자동 발송`);
             socket.emit('update_apk', { url: '/update/apk', deviceId });
           } else {
@@ -1065,6 +1065,24 @@ function saveDeployMeta(data) {
   } catch (e) { console.warn('[OTA] deploy-meta.json 저장 실패:', e.message); }
 }
 
+// 버전 dot 비교: a<b → 음수, a==b → 0, a>b → 양수. (예: "0.4.9" < "0.4.27")
+function cmpVersion(a, b) {
+  const pa = String(a || '').split('.').map(n => parseInt(n, 10) || 0);
+  const pb = String(b || '').split('.').map(n => parseInt(n, 10) || 0);
+  const len = Math.max(pa.length, pb.length);
+  for (let i = 0; i < len; i++) {
+    const d = (pa[i] || 0) - (pb[i] || 0);
+    if (d !== 0) return d < 0 ? -1 : 1;
+  }
+  return 0;
+}
+// OTA 재푸시는 "기기가 목표보다 구버전일 때만" — 같거나(최신) 더 새 버전이면 푸시 금지(루프 방지).
+// 단, 기기 버전 미상('')이면 업데이트 대상으로 본다.
+function needsOtaUpdate(currentVer, targetVersion) {
+  if (!currentVer) return true;
+  return cmpVersion(currentVer, targetVersion) < 0;
+}
+
 // APK 파일 서빙 (server/update/app.apk 를 이 경로에 놓으면 됨)
 app.get('/update/apk', (req, res) => {
   const apkPath = path.join(updateDir, 'app.apk');
@@ -1222,7 +1240,7 @@ app.post('/api/update/push', (req, res) => {
         const parenIdx = currentVerStr.indexOf(' (');
         const currentVer = parenIdx >= 0 ? currentVerStr.slice(0, parenIdx) : currentVerStr;
 
-        if (currentVer !== targetVersion) {
+        if (needsOtaUpdate(currentVer, targetVersion)) {
           console.log(`[Self-Healing] 기기 ${dev.id}가 여전히 구버전(${currentVer || 'unknown'}) 상태. update_apk 재발송 + restart_app 폴백 예약`);
           const room = `device:${dev.id}`;
           // 1순위: update_apk 재발송 — 신버전 앱은 이것으로 OTA 재시도
