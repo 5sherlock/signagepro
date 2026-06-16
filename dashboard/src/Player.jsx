@@ -4,6 +4,8 @@ import { SOCKET_URL } from './config';
 
 export default function Player() {
   const [machineId, setMachineId] = useState('');
+  const [secret, setSecret] = useState(() => (typeof window !== 'undefined' ? localStorage.getItem('WEB_PLAYER_SECRET') || '' : ''));
+  const [secretInput, setSecretInput] = useState('');
   const [statusText, setStatusText] = useState('초기화 중...');
   const [playlist, setPlaylist] = useState([]);
   const [currentIndex, setCurrentIndex] = useState(0);
@@ -22,9 +24,10 @@ export default function Player() {
 
   // 2. 서버 연결 및 동기화
   useEffect(() => {
-    if (!machineId) return;
+    if (!machineId || !secret) return;
 
-    const socket = io(SOCKET_URL);
+    // 핸드셰이크 인증 — 서버 io.use()가 WEB_PLAYER_SECRET 검증 (무인증 연결 거부)
+    const socket = io(SOCKET_URL, { auth: { deviceId: machineId, secret } });
     
     socket.on('connect', () => {
       setStatusText('서버 연결 성공! 대시보드 설정을 기다리는 중...');
@@ -59,14 +62,15 @@ export default function Player() {
     });
 
     return () => socket.disconnect();
-  }, [machineId, groupId]);
+  }, [machineId, groupId, secret]);
 
   const fetchDeviceConfig = async () => {
     try {
-      const res = await fetch(`${SOCKET_URL}/api/devices`);
-      const devices = await res.json();
-      const myDevice = devices.find(d => d.id === machineId);
-      
+      // 기기-공개 엔드포인트(GET /api/devices/:id) — 자신의 groupId 조회 (인증 불필요)
+      const res = await fetch(`${SOCKET_URL}/api/devices/${machineId}`);
+      if (!res.ok) throw new Error('device fetch ' + res.status);
+      const myDevice = await res.json();
+
       if (myDevice && myDevice.groupId) {
         setGroupId(myDevice.groupId);
         fetchPlaylist(myDevice.groupId);
@@ -115,6 +119,27 @@ export default function Player() {
 
     return () => clearTimeout(timer);
   }, [currentIndex, playlist.length]);
+
+  if (!secret) {
+    return (
+      <div style={{ width: '100vw', height: '100vh', background: '#000', color: '#fff', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', fontFamily: 'sans-serif' }}>
+        <h2 style={{ marginBottom: '10px' }}>Signage Web Player</h2>
+        <p style={{ color: '#aaa', marginBottom: '20px' }}>플레이어 시크릿을 입력하세요 (최초 1회)</p>
+        <input
+          type="password"
+          value={secretInput}
+          onChange={e => setSecretInput(e.target.value)}
+          onKeyDown={e => { if (e.key === 'Enter') { const v = secretInput.trim(); if (v) { localStorage.setItem('WEB_PLAYER_SECRET', v); setSecret(v); } } }}
+          placeholder="WEB_PLAYER_SECRET"
+          style={{ padding: '10px 14px', fontSize: '1rem', borderRadius: '8px', border: '1px solid #444', background: '#111', color: '#fff', width: '280px', textAlign: 'center' }}
+        />
+        <button
+          onClick={() => { const v = secretInput.trim(); if (v) { localStorage.setItem('WEB_PLAYER_SECRET', v); setSecret(v); } }}
+          style={{ marginTop: '14px', padding: '10px 24px', fontSize: '1rem', borderRadius: '8px', border: 'none', background: '#3b82f6', color: '#fff', cursor: 'pointer' }}
+        >저장</button>
+      </div>
+    );
+  }
 
   if (playlist.length === 0) {
     return (

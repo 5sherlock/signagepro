@@ -21,8 +21,8 @@
 | # | 항목 | 심각도 | 상태 |
 |---|------|--------|------|
 | 1 | `trust proxy` 미설정 → Rate Limit 무력화 + 전역 잠금 DoS | Critical | ✅ 패치됨(dev) · main/운영 미반영 |
-| 2 | dev-mode 토큰 백도어 | Critical | 미패치 |
-| 3 | Socket.io 채널 완전 무인증 (기기 위장·DB 위조) | Critical | 미패치 |
+| 2 | dev-mode 토큰 백도어 | Critical | ✅ 패치됨(dev, 2026-06-16) · main/운영 미반영 |
+| 3 | Socket.io 채널 완전 무인증 (기기 위장·DB 위조) | Critical | ✅ 패치됨(dev, 2026-06-16) · main/운영 미반영 |
 | 4 | 환경 간 비밀값 공유 (dev=staging=운영 동일 secret/비번) | Critical | 미패치 |
 | 5 | adminPassword 약함 / 미설정 시 인증 전면 비활성 | High | 부분 |
 
@@ -73,17 +73,25 @@ dev · staging · 운영이 **동일한 비밀값**을 쓰고 있어, 환경을 
 - ⚠️ **dev에만 적용됨** — main(v0.4.27)·운영엔 미반영, 승격 필요.
 - 전제: origin 포트는 터널 경유로만 외부 노출돼야 함(직접 노출 시 `CF-Connecting-IP` 위조 가능).
 
-#### 🔴 3.2 dev-mode 토큰 백도어
-- 위치: [index.js:186](server/index.js#L186) — `if (token === 'dev-mode') return next();`
+#### ✅ 3.2 dev-mode 토큰 백도어 — 패치됨 (dev, 2026-06-16)
+- 위치(과거): [index.js:186](server/index.js#L186) — `if (token === 'dev-mode') return next();`
 - `Authorization: Bearer dev-mode` 한 줄로 전 API 우회. 또한 `adminPassword` 미설정 시 로그인이 `dev-mode` 토큰을 발급([index.js:141](server/index.js#L141)).
-- 조치: 해당 라인 삭제. dev 편의는 환경변수 분기로 대체(운영 빌드엔 미포함).
+- 조치(완료): 186줄 삭제(백도어 제거) + 141줄 dev-mode 발급 제거 + requireAuth를 **fail-closed**로 변경(adminPassword 미설정 시 503). dev 편의 우회는 두지 않음 — 모든 환경이 adminPassword 필수.
+- 연계 수정: `build_apk.ps1`이 dev-mode로 업로드하던 것을 **정상 로그인(토큰 발급)** 으로 전환. 비밀번호는 `$env:SIGNAGE_ADMIN_PW` 또는 `server/.env`에서 읽음(하드코딩 금지).
+- 검증: dev(3001)에서 `Bearer dev-mode` → 401, 올바른 비번 로그인 → HMAC 토큰 → 보호 API 200 확인.
+- ⚠️ **dev 브랜치만 반영.** staging→main 승격 + 운영(NAS) 배포 전까지 운영은 취약. 공용 포트(`121.189.102.108:3300`) 열려 있는 동안 특히 시급.
 
-#### 🔴 3.3 Socket.io 채널 완전 무인증  *(신규)*
-- 위치: [index.js:251-262](server/index.js#L251-L262) — `io.use()` 인증 미들웨어 없음, CORS `*`.
-- 누구나 접속해서:
-  - `register_device`([263](server/index.js#L263))에 임의 deviceId 등록 → 그 기기 룸 가입 → 서버가 보내는 `run_cmd`/`update_apk` **수신(기기 위장)**.
-  - `run_cmd_result`([319](server/index.js#L319))로 임의 명령 결과 **위조 주입**.
-  - `web_player_heartbeat`([294](server/index.js#L294)) → `prisma.device.upsert`로 **임의 기기 DB 생성/온라인 위장/임의 IP 기록**.
+#### ✅ 3.3 Socket.io 채널 완전 무인증 — 패치됨 (dev, 2026-06-16)
+- 위치(과거): `io.use()` 인증 미들웨어 없음, CORS `*`.
+- 누구나 접속해서: `register_device`로 기기 위장(룸 가입→`run_cmd`/`update_apk` 수신), `run_cmd_result` 위조 주입, `web_player_heartbeat`로 임의 기기 DB 생성/온라인 위장/IP 위조가 가능했음.
+- 조치(완료): **`io.use()` 인증 미들웨어 추가 — 무자격 연결 즉시 거부(즉시 강제)**. 핸드셰이크 `auth`로 인증:
+  - STB = `DEVICE_SECRET` (role `device`) · 웹 플레이어 = **신규 `WEB_PLAYER_SECRET`** (role `webplayer`) · 대시보드 = 관리자 HMAC 토큰 (role `admin`).
+  - 이벤트별 역할 차단: `register_device`/`run_cmd_result`는 `device`만, `web_player_heartbeat`는 `webplayer`만. `deviceId`가 인증된 값과 다르면 차단(타기기 위장 방지).
+  - CORS `*` → `SOCKET_CORS_ORIGINS`(env) 화이트리스트(미설정 시 Origin 반영) — §3.6 일부 해소.
+- 클라이언트 연계: ControlChannel.kt(`auth` 추가), Player.jsx(WEB_PLAYER_SECRET 입력 UI + 기기-공개 엔드포인트 조회), App.jsx·DevicePreview.jsx(토큰 전달). APK versionCode 27→28.
+- 검증: dev에서 무자격/가짜시크릿/가짜토큰 거부, STB·웹플레이어·관리자 연결 6/6 통과.
+- ⚠️ **즉시 강제이므로 운영 롤아웃 시 순서 필수**: 새 APK(v0.4.28)를 전 STB에 선설치 + 웹플레이어 시크릿 설정 → 그다음 서버 배포. **순서 어기면 구APK STB 일괄 단절(OTA 자가복구도 막힘 → ADB 수동).**
+- 기기 Android 혼재: 201~203(구버전 동일)·204(Android 11), 향후 신규 루팅기기 전부 Android 11.0 — 구버전 기기일수록 선설치 검증 중요.
 - TCP 채널은 `DEVICE_SECRET`로 인증하는데([1586](server/index.js#L1586)) Socket.io만 무방비 — 일관성 구멍.
 - 조치: `io.use()` 핸드셰이크에서 토큰/기기 secret 검증, CORS 도메인 제한.
 
@@ -136,9 +144,9 @@ dev · staging · 운영이 **동일한 비밀값**을 쓰고 있어, 환경을 
 | 순위 | 항목 | 위치 | 난이도 |
 |------|------|------|--------|
 | <span style="color:red;text-decoration:line-through">1</span> | ✅ <span style="color:red;text-decoration:line-through">trust proxy + CF-Connecting-IP</span> **dev 완료(2026-06-13)** — 승격 필요 | §3.1 | — |
-| 2 | dev-mode 토큰 삭제 | §3.2 | 1줄 |
+| <span style="color:red;text-decoration:line-through">2</span> | ✅ <span style="color:red;text-decoration:line-through">dev-mode 토큰 삭제</span> **dev 완료(2026-06-16)** — 승격 필요 | §3.2 | — |
 | 3 | 환경별 secret/비밀번호 분리 (dev≠staging≠운영) | §1 | 30분 |
-| 4 | Socket.io `io.use()` 인증 | §3.3 | 1시간 |
+| <span style="color:red;text-decoration:line-through">4</span> | ✅ <span style="color:red;text-decoration:line-through">Socket.io `io.use()` 인증</span> **dev 완료(2026-06-16)** — 승격 필요 | §3.3 | — |
 | 5 | CORS 도메인 제한 (HTTP+Socket.io) | §3.6 | 10분 |
 | 6 | DEVICE_SECRET 로그 제거 | §3.10 | 1줄 |
 | 7 | 업로드 파일명 sanitize | §3.9 | 10분 |

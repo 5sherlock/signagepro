@@ -191,7 +191,7 @@ class PlayerCoordinator(
 
         initVisualizer()
         startHeartbeat(serverUrl, deviceId, secret)
-        startControlChannel(serverUrl, deviceId)
+        startControlChannel(serverUrl, deviceId, secret)
         scheduleManager.start(scope)
         if (DEBUG_OVERLAY) startDebugLoop(deviceId)
     }
@@ -631,11 +631,12 @@ class PlayerCoordinator(
         ).also { it.start() }
     }
 
-    private fun startControlChannel(serverUrl: String, deviceId: String) {
+    private fun startControlChannel(serverUrl: String, deviceId: String, secret: String) {
         control?.stop()
         control = ControlChannel(
             serverUrl = serverUrl,
             selfDeviceId = deviceId,
+            deviceSecret = secret,
             onPlaylistUpdated = { refreshPlaylist() },
             onAssignmentChanged = { refreshPlaylist() },
             onUpdateApk = { apkUrl -> downloadAndInstallApk(apkUrl) },

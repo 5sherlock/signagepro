@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { io } from 'socket.io-client';
-import { SOCKET_URL } from '../config';
+import { SOCKET_URL, getToken } from '../config';
 
 /**
  * PlaylistEngine(Android)과 동일 알고리즘. ms 단위 정밀도.
@@ -85,7 +85,7 @@ export default function DevicePreview({ groupId, deviceId, onUpdate, pcAudio = f
     // 10초마다 NTP 재동기 — 기기 heartbeat 주기(10초)와 동일 → 타임라인 항상 최신
     const resyncTimer = setInterval(load, 10_000);
 
-    const socket = io(SOCKET_URL);
+    const socket = io(SOCKET_URL, { auth: { token: getToken() } });
     socket.on('playlist_updated', ({ groupId: gid }) => {
       if (gid === groupId) load();
     });

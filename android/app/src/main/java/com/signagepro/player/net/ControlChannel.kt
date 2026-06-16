@@ -18,6 +18,7 @@ import org.json.JSONObject
 class ControlChannel(
     private val serverUrl: String,
     private val selfDeviceId: String,
+    private val deviceSecret: String,
     private val onPlaylistUpdated: (groupId: String) -> Unit,
     private val onAssignmentChanged: () -> Unit,
     private val onUpdateApk: (apkUrl: String) -> Unit = {},
@@ -46,6 +47,8 @@ class ControlChannel(
             reconnectionDelay = 1_000
             reconnectionDelayMax = 30_000
             timeout = 10_000
+            // 핸드셰이크 인증 — 서버 io.use()가 DEVICE_SECRET 검증 (무인증 연결 거부)
+            auth = mapOf("deviceId" to selfDeviceId, "secret" to deviceSecret)
             // transports = arrayOf("websocket") // polling 건너뛰고 WebSocket 직접 사용
         }
         socket = IO.socket(serverUrl, opts).apply {

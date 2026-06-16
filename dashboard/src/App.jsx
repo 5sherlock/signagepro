@@ -487,7 +487,7 @@ function SettingsTab({ onUnauth, deviceOrder = {} }) {
     const t = setInterval(refreshDevices, 10000);
 
     // 공유 소켓 재사용 — cleanup에서 disconnect 대신 off()만 호출해야 메인 소켓이 끊기지 않음
-    const socket = io(SOCKET_URL);
+    const socket = io(SOCKET_URL, { auth: { token: getToken() } });
 
     // OTA: 기기가 서버에서 APK 다운로드하는 진행률
     socket.on('device_status_update', (update) => {
@@ -1425,7 +1425,7 @@ function App() {
     fetchSchedules();
 
     console.log('[socket] connecting to', SOCKET_URL);
-    const socket = io(SOCKET_URL);
+    const socket = io(SOCKET_URL, { auth: { token: getToken() } });
     socket.on('connect_error', (err) => console.error('[socket] connect_error', err.message, err));
 
     socket.on('connect', () => {

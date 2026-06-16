@@ -81,6 +81,11 @@ const HEARTBEAT_TIMEOUT_MS = 35000; // 하트비트 10초 간격 × 3 + 여유
 if (DEVICE_SECRET === 'changeme') {
   console.warn('[WARN] DEVICE_SECRET이 기본값입니다. .env에서 변경하세요.');
 }
+// 웹 플레이어(브라우저 송출 화면) 전용 시크릿 — STB의 DEVICE_SECRET과 분리(브라우저 노출 격리)
+const WEB_PLAYER_SECRET = process.env.WEB_PLAYER_SECRET || '';
+if (!WEB_PLAYER_SECRET) {
+  console.warn('[WARN] WEB_PLAYER_SECRET 미설정 — 웹 플레이어 Socket.io 연결이 거부됩니다. .env에서 설정하세요.');
+}
 
 let adminPassword = process.env.adminPassword || '';
 if (!adminPassword) {
@@ -138,7 +143,7 @@ const MAX_ATTEMPTS  = 5;
 const LOCKOUT_MS    = 15 * 60 * 1000; // 15분
 
 app.post('/api/auth/login', (req, res) => {
-  if (!adminPassword) return res.json({ token: 'dev-mode' });
+  if (!adminPassword) return res.status(503).json({ error: 'adminPassword가 설정되지 않았습니다. server/.env에 adminPassword를 설정한 뒤 서버를 재시작하세요.' });
 
   const ip  = getClientIp(req);
   const now = Date.now();
@@ -181,9 +186,8 @@ app.post('/api/auth/logout', (req, res) => {
 });
 
 const requireAuth = (req, res, next) => {
-  if (!adminPassword) return next();
+  if (!adminPassword) return res.status(503).json({ error: '서버 인증이 구성되지 않았습니다(adminPassword 미설정).' });
   const token = req.headers.authorization?.slice(7);
-  if (token === 'dev-mode') return next();
   if (token && verifySignedToken(token)) return next();
   return res.status(401).json({ error: '인증이 필요합니다.' });
 };
@@ -248,9 +252,36 @@ const uploadApk = multer({
 });
 
 const httpServer = http.createServer(app);
+// CORS: 운영은 SOCKET_CORS_ORIGINS(쉼표구분)로 화이트리스트 권장. 미설정 시 요청 Origin 반영.
+const SOCKET_CORS = process.env.SOCKET_CORS_ORIGINS
+  ? process.env.SOCKET_CORS_ORIGINS.split(',').map(s => s.trim()).filter(Boolean)
+  : true;
 const io = new Server(httpServer, {
-  cors: { origin: '*' },
+  cors: { origin: SOCKET_CORS, credentials: true },
   allowEIO3: true
+});
+
+// --- Socket.io 인증 미들웨어 (무인증 연결 즉시 거부) ───────────────────────────
+// 기기(STB)=DEVICE_SECRET · 웹 플레이어=WEB_PLAYER_SECRET · 대시보드=관리자 HMAC 토큰
+// 자격증명은 핸드셰이크 auth 로 전달: io(url, { auth: { deviceId, secret } | { token } })
+io.use((socket, next) => {
+  const a = socket.handshake.auth || {};
+  if (a.secret && a.secret === DEVICE_SECRET) {
+    socket.role = 'device';
+    socket.authDeviceId = a.deviceId ? String(a.deviceId) : null;
+    return next();
+  }
+  if (a.secret && WEB_PLAYER_SECRET && a.secret === WEB_PLAYER_SECRET) {
+    socket.role = 'webplayer';
+    socket.authDeviceId = a.deviceId ? String(a.deviceId) : null;
+    return next();
+  }
+  if (a.token && verifySignedToken(a.token)) {
+    socket.role = 'admin';
+    return next();
+  }
+  console.warn(`[Socket.io] 인증 거부 id=${socket.id} origin=${socket.handshake.headers.origin}`);
+  return next(new Error('unauthorized'));
 });
 
 // --- Socket.io 웹 플레이어 연결 처리 ---
@@ -261,8 +292,13 @@ io.on('connection', (socket) => {
   });
   // Android ControlChannel이 연결 직후 자신의 deviceId를 등록
   socket.on('register_device', async (data) => {
+    if (socket.role !== 'device') return; // STB만 기기 룸 등록 가능
     const deviceId = typeof data === 'object' ? data?.deviceId : String(data);
     if (!deviceId) return;
+    if (socket.authDeviceId && deviceId !== socket.authDeviceId) {
+      console.warn(`[Socket.io] register_device 불일치 차단: auth=${socket.authDeviceId} req=${deviceId}`);
+      return;
+    }
     socket.deviceId = deviceId;
     socket.join(`device:${deviceId}`);
     console.log(`[Socket.io] 기기 등록: ${deviceId}`);
@@ -292,9 +328,11 @@ io.on('connection', (socket) => {
   });
 
   socket.on('web_player_heartbeat', async (data) => {
+    if (socket.role !== 'webplayer') return; // 웹 플레이어만 허용
     const deviceId = typeof data === 'string' ? data : (data?.deviceId || '');
     const name = typeof data === 'object' ? data?.name : null;
     if (!deviceId) return;
+    if (socket.authDeviceId && deviceId !== socket.authDeviceId) return; // 자기 자신만
     socket.deviceId = deviceId;
     
     // 웹 플레이어 실시간 상태 캐시 갱신
@@ -317,6 +355,7 @@ io.on('connection', (socket) => {
   });
 
   socket.on('run_cmd_result', (data) => {
+    if (socket.role !== 'device') return; // 기기만 명령 결과 전송 가능
     if (data && data.deviceId && data.cmd) {
       const key = `${data.deviceId}:${data.cmd}`;
       const cb = pendingCmdCallbacks.get(key);
