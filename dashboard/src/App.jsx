@@ -6,6 +6,7 @@ import GroupManager from './components/GroupManager';
 import { SOCKET_URL, apiFetch, getToken } from './config';
 import MediaManager from './components/MediaManager';
 import DevicePreview from './components/DevicePreview';
+import { tickerLocalX } from './lib/tickerLayout';
 import LoginScreen from './components/LoginScreen';
 
 // ─────────────────────────────────────────────
@@ -1219,6 +1220,8 @@ function App() {
   const [selectedDiagDevice, setSelectedDiagDevice] = useState(null);
   const [activeTab, setActiveTab] = useState('dashboard');
   const [tickerNow, setTickerNow] = useState(Date.now);
+  // 서버 시각 − 브라우저 시각 오프셋(ms). 자막 preview를 기기(NTP=서버시각) 기준에 정렬.
+  const serverClockOffsetRef = useRef(0);
   const [currentDateTime, setCurrentDateTime] = useState(new Date());
 
   useEffect(() => {
@@ -1367,11 +1370,21 @@ function App() {
   }, [onUnauth]);
 
   useEffect(() => {
-    const checkServer = () =>
-      fetch(`${SOCKET_URL}/api/time`, { cache: 'no-store' })
+    const checkServer = () => {
+      const t0 = Date.now();
+      return fetch(`${SOCKET_URL}/api/time`, { cache: 'no-store' })
         .then(r => r.ok ? r.json() : Promise.reject())
-        .then(() => setServerOnline(true))
+        .then(d => {
+          // 서버 epoch(at t1) ≈ epochMs + RTT/2 → 브라우저 대비 시계 오프셋 저장.
+          // 자막 preview가 기기(NTP=서버시각)와 같은 타임라인을 쓰게 함.
+          const t1 = Date.now();
+          if (d && typeof d.epochMs === 'number') {
+            serverClockOffsetRef.current = (d.epochMs + (t1 - t0) / 2) - t1;
+          }
+          setServerOnline(true);
+        })
         .catch(() => setServerOnline(false));
+    };
 
     const checkApk = () =>
       apiFetch(`${SOCKET_URL}/api/update/status`)
@@ -1744,24 +1757,20 @@ function App() {
                         const barHPx = fontSize * 2;                   // 실제 화면 px
                         const barHPct = barHPx / SCREEN_H * 100;      // % of SCREEN_H
 
-                        // 위치 계산: Android가 cycleMs를 heartbeat로 보냈으면 그걸 그대로 사용
-                        // (폰트 측정값이 정확하므로 canvas 추정보다 훨씬 정밀)
-                        let posInCycleFull;
-                        if (device.tickerSync?.cycleMs > 0) {
-                          // Android NTP 기준 시각 + 서버수신 이후 경과시간으로 현재 위치 계산
-                          const { cycleMs: syncCycleMs, ntpMs, receivedAt } = device.tickerSync;
-                          const elapsed = tickerNow - receivedAt;
-                          const effectiveMs = ntpMs + elapsed;
-                          posInCycleFull = (effectiveMs % syncCycleMs) / 1000 * speed;
-                        } else {
-                          // fallback: canvas 측정 기반 추정
-                          const textWidthFull = measureTickerText(tc.text || '', fontSize, tc.fontBold || false);
-                          const cyclePxFull = N * SCREEN_W + textWidthFull;
-                          const cycleMs = (cyclePxFull / Math.max(1, speed)) * 1000;
-                          posInCycleFull = ((tickerNow % cycleMs) / 1000) * speed;
-                        }
-                        const virtualX = (N * SCREEN_W - posInCycleFull) * scale;
-                        const localX = virtualX - idx * THUMB_W;
+                        // 위치 계산: 기기(TickerView)와 동일 공식 + 서버정렬 시각 + 그룹 공통 cycleMs.
+                        // 같은 그룹의 온라인 기기가 보고한 cycleMs를 전 타일에 공통 적용 → 한 타임라인 공유
+                        // (이음새 연속성 보장). 보고값 없으면 textW로 추정. 시각=서버시각(기기 NTP와 동일 기준).
+                        const reportedCycleMs = (devices.find(x => x.groupId === device.groupId && x.tickerSync?.cycleMs > 0)?.tickerSync.cycleMs) || 0;
+                        const textWidthFull = measureTickerText(tc.text || '', fontSize, tc.fontBold || false);
+                        const localX = tickerLocalX({
+                          nowMs: tickerNow + serverClockOffsetRef.current,
+                          cycleMs: reportedCycleMs,
+                          speed,
+                          totalDevices: N,
+                          deviceIndex: idx,
+                          direction: tc.direction || 'rtl',
+                          textW: textWidthFull,
+                        }) * scale;
 
                         const r = parseInt((tc.bgColor||'#000').slice(1,3),16)||0;
                         const g = parseInt((tc.bgColor||'#000').slice(3,5),16)||0;

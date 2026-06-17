@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import { DndContext, closestCenter, PointerSensor, useSensor, useSensors } from '@dnd-kit/core';
 import { SortableContext, horizontalListSortingStrategy, arrayMove, useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
+import TickerWallPreview from './TickerWallPreview';
 
 const API = '';
 
@@ -487,6 +488,19 @@ export default function TickerManager({ token, selectedStoreId: propStoreId, sto
                 }
               `}</style>
             </div>
+
+            {/* 그룹 월 미리보기 — N개 화면 이음새 연속 동기 (비디오월 검증, 물리 모니터 없이) */}
+            {orderedDevices.length >= 1 && (
+              <div className="glass-card" style={{ padding: '20px', display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                <div style={{ fontSize: '0.78rem', fontWeight: 700, color: '#38bdf8', textTransform: 'uppercase', letterSpacing: '0.06em' }}>
+                  그룹 월 미리보기 <span style={{ fontWeight: 400, color: '#475569', textTransform: 'none', letterSpacing: 0 }}>({orderedDevices.length}화면 연속 동기 · 왼쪽=index 0)</span>
+                </div>
+                <TickerWallPreview
+                  ticker={ticker}
+                  deviceLabels={orderedDevices.map(d => d.name || d.id)}
+                />
+              </div>
+            )}
 
           </></div>
 
