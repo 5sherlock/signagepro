@@ -18,6 +18,9 @@ export default defineConfig({
   server: {
     host: true,
     port: 3000,
+    // dev 서버를 Tailscale 머신명(dev-home 등)·LAN IP로 접속 허용.
+    // dev 전용(운영은 node가 dist 서빙)이고 tailnet/LAN 내부라 호스트 체크 완화.
+    allowedHosts: ['dev-home', 'dev-office', 'localhost', '.ts.net'],
     proxy: {
       '/api': { target: 'http://localhost:3001', changeOrigin: true },
       '/socket.io': { target: 'http://localhost:3001', changeOrigin: true, ws: true },
