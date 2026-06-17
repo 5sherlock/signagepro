@@ -1743,11 +1743,9 @@ function App() {
                         const tc = device.tickerConfig;
                         const SCREEN_W = 1920;
                         const SCREEN_H = 1080;
-                        // 실제 썸네일 크기: CSS로 지정된 width 기준, 16:9
-                        const THUMB_W = 280;
-                        const THUMB_H = THUMB_W * SCREEN_H / SCREEN_W; // 157.5px
-                        const scale = THUMB_W / SCREEN_W;
-
+                        // 썸네일 폭이 그리드(자동조절)에 따라 가변 → px 하드코딩 금지.
+                        // 위치는 화면폭(1920) 대비 %, 폰트는 cqw(컨테이너 폭 1%)로 잡아
+                        // 어떤 썸네일 폭에서도 기기당 정확히 "한 화면"씩 이동(겹침 방지).
                         const fontSize = tc.fontSize || 48;
                         const speed = tc.speed || 50;
                         const N = tc.mode === 'group' ? (tc.totalDevices || 1) : 1;
@@ -1762,7 +1760,7 @@ function App() {
                         // (이음새 연속성 보장). 보고값 없으면 textW로 추정. 시각=서버시각(기기 NTP와 동일 기준).
                         const reportedCycleMs = (devices.find(x => x.groupId === device.groupId && x.tickerSync?.cycleMs > 0)?.tickerSync.cycleMs) || 0;
                         const textWidthFull = measureTickerText(tc.text || '', fontSize, tc.fontBold || false);
-                        const localX = tickerLocalX({
+                        const localXFull = tickerLocalX({
                           nowMs: tickerNow + serverClockOffsetRef.current,
                           cycleMs: reportedCycleMs,
                           speed,
@@ -1770,7 +1768,8 @@ function App() {
                           deviceIndex: idx,
                           direction: tc.direction || 'rtl',
                           textW: textWidthFull,
-                        }) * scale;
+                        });
+                        const leftPct = (localXFull / SCREEN_W) * 100;   // 화면폭 대비 %
 
                         const r = parseInt((tc.bgColor||'#000').slice(1,3),16)||0;
                         const g = parseInt((tc.bgColor||'#000').slice(3,5),16)||0;
@@ -1782,12 +1781,12 @@ function App() {
                         const topVal = tc.position==='top' ? 0 : tc.position==='center' ? `${centerTop.toFixed(2)}%` : 'auto';
                         const botVal = tc.position==='bottom' ? 0 : 'auto';
 
-                        // 썸네일 내 font-size: 실제 fontSize를 썸네일 비율로 스케일
-                        const thumbFontPx = (fontSize * scale).toFixed(2);
+                        // 폰트: 화면폭(1920) 대비 비율을 cqw(컨테이너 폭 1%)로 → 썸네일 폭 무관 정확
+                        const fontCqw = (fontSize / SCREEN_W) * 100;
 
                         return (
-                          <div style={{ position:'absolute', left:0, right:0, top:topVal, bottom:botVal, height:`${barHPct.toFixed(2)}%`, background:bg, overflow:'hidden', zIndex:4, display:'flex', alignItems:'center' }}>
-                            <span style={{ position:'absolute', whiteSpace:'nowrap', color:tc.textColor||'#fff', fontSize:`${thumbFontPx}px`, fontWeight: tc.fontBold ? 700 : 400, transform:`translateX(${localX}px)`, left:0, top:'50%', marginTop:'-0.5em' }}>
+                          <div style={{ position:'absolute', left:0, right:0, top:topVal, bottom:botVal, height:`${barHPct.toFixed(2)}%`, background:bg, overflow:'hidden', zIndex:4, containerType:'inline-size' }}>
+                            <span style={{ position:'absolute', whiteSpace:'nowrap', color:tc.textColor||'#fff', fontSize:`${fontCqw.toFixed(3)}cqw`, fontWeight: tc.fontBold ? 700 : 400, left:`${leftPct.toFixed(3)}%`, top:'50%', transform:'translateY(-50%)' }}>
                               {tc.text}
                             </span>
                           </div>
