@@ -701,7 +701,6 @@ const DeviceRowV4 = ({ device, items, isDirty, onDrop, onRemoveItem, onChangeIte
                     e.stopPropagation();
                     if (reorderDragIdx !== idx) {
                       setReorderOverIdx(idx);
-                      setDragOver(false);
                     }
                   }
                   // 라이브러리 드래그: stopPropagation 안 함 → 부모 device-timeline-v4가 dragOver 상태 표시
