@@ -35,12 +35,18 @@ export function tickerLocalX({
   const N = Math.max(1, totalDevices || 1);
   const idx = Math.max(0, deviceIndex || 0);
   const totalW = SCREEN_W * N;
-  const strip = totalW + (textW || 0);
   const effMs = tickerCycleMs({ cycleMs, speed, totalDevices: N, textW });
+  // strip(px) = 한 사이클에 텍스트가 이동하는 전체 거리(= N화면 + 텍스트폭).
+  // 기기 보고 cycleMs+speed가 있으면 기기 실제 cyclePx(= cycleMs×speed/1000)를 그대로
+  // 사용한다. cycleMs는 기기에서 cyclePx/speed로 산출되므로 ×speed로 cyclePx가 정확히
+  // 복원됨(speed 값은 약분). 기기 화면이 1920이면 위치·속도가 기기와 완전 일치하고
+  // 브라우저/기기 폰트 측정차도 사라진다. 미보고 시에만 textW로 추정.
+  const strip = (cycleMs > 0 && speed > 0) ? (cycleMs * speed / 1000) : (totalW + (textW || 0));
+  const textWeff = Math.max(0, strip - totalW); // 파생 텍스트폭(ltr용)
   // 음수 modulo 방어(((a % m) + m) % m)
   const f = (((nowMs % effMs) + effMs) % effMs) / effMs;
   const posInCycle = f * strip;
-  const virtualX = direction === 'ltr' ? (-(textW || 0) + posInCycle) : (totalW - posInCycle);
+  const virtualX = direction === 'ltr' ? (-textWeff + posInCycle) : (totalW - posInCycle);
   return virtualX - idx * SCREEN_W;
 }
 
