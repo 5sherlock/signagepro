@@ -22,6 +22,12 @@ export function tickerCycleMs({ cycleMs, speed, totalDevices, textW = 0 }) {
 }
 
 // 특정 기기(deviceIndex)의 full-scale localX(px) 계산.
+//
+// 비율(fraction) 기반: 사이클 진행도 f=(now%cycleMs)/cycleMs ∈ [0,1)를 자체 strip
+// 길이(N×SCREEN_W + textW)에 매핑한다. 기기가 보고한 cycleMs를 그대로 쓰므로
+// preview의 한 바퀴 시간 = 기기의 한 바퀴 시간 → "기기 실제 해상도가 1920이 아니어도"
+// 시각 속도가 일치한다. (기기 TickerView도 posInCycle = f × cyclePx 로 동작.)
+// speed는 cycleMs 미보고 시 fallback 추정에만 쓰인다.
 export function tickerLocalX({
   nowMs, cycleMs, speed, totalDevices, deviceIndex,
   direction = 'rtl', textW = 0,
@@ -29,9 +35,11 @@ export function tickerLocalX({
   const N = Math.max(1, totalDevices || 1);
   const idx = Math.max(0, deviceIndex || 0);
   const totalW = SCREEN_W * N;
+  const strip = totalW + (textW || 0);
   const effMs = tickerCycleMs({ cycleMs, speed, totalDevices: N, textW });
   // 음수 modulo 방어(((a % m) + m) % m)
-  const posInCycle = ((((nowMs % effMs) + effMs) % effMs) / 1000) * (speed || 0);
+  const f = (((nowMs % effMs) + effMs) % effMs) / effMs;
+  const posInCycle = f * strip;
   const virtualX = direction === 'ltr' ? (-(textW || 0) + posInCycle) : (totalW - posInCycle);
   return virtualX - idx * SCREEN_W;
 }
