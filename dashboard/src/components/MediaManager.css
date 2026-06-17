@@ -1088,6 +1088,57 @@
   transition: transform 0.15s ease, box-shadow 0.15s ease;
 }
 
+/* 라이브러리 → 타임라인 드롭: 교체 대상(가운데 드롭) — 초록 */
+.reorder-item-wrapper.lib-replace-target .media-card-v4 {
+  outline: 2px solid #10b981;
+  outline-offset: 3px;
+  box-shadow: 0 0 12px rgba(16, 185, 129, 0.45);
+  transform: scale(1.03);
+  transition: transform 0.12s ease, box-shadow 0.12s ease;
+}
+.reorder-item-wrapper.lib-replace-target::after {
+  content: '교체';
+  position: absolute;
+  top: 4px;
+  left: 4px;
+  background: #10b981;
+  color: #06231a;
+  font-size: 10px;
+  font-weight: 700;
+  padding: 1px 6px;
+  border-radius: 4px;
+  z-index: 6;
+  pointer-events: none;
+}
+/* 라이브러리 → 타임라인 드롭: 삽입 위치선(가장자리/사이 드롭) — 파랑 */
+.mm-insert-line {
+  position: relative;
+  align-self: stretch;
+  width: 3px;
+  min-height: 60px;
+  margin: 0 2px;
+  background: #3b82f6;
+  border-radius: 2px;
+  box-shadow: 0 0 8px rgba(59, 130, 246, 0.8);
+  flex: 0 0 auto;
+}
+.mm-insert-line::after {
+  content: '삽입';
+  position: absolute;
+  top: -2px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: #3b82f6;
+  color: #fff;
+  font-size: 10px;
+  font-weight: 700;
+  padding: 1px 5px;
+  border-radius: 4px;
+  white-space: nowrap;
+  z-index: 6;
+  pointer-events: none;
+}
+
 /* 그립 핸들 */
 .media-card-grip {
   display: flex;

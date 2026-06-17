@@ -612,7 +612,7 @@ const TransitionBridgeV4 = ({ item, isLoop, onChange, onPreview }) => {
 };
 
 // ── [V4] 기기 고정형 행 (dnd-kit sortable) ───────────────────
-const DeviceRowV4 = ({ device, items, isDirty, onDrop, onRemoveItem, onChangeItem, onDeleteDevice, onPreview, onTransitionPreview, onReorder, libDragOver = false }) => {
+const DeviceRowV4 = ({ device, items, isDirty, onDrop, onRemoveItem, onChangeItem, onDeleteDevice, onPreview, onTransitionPreview, onReorder, libDragOver = false, dropTarget = null }) => {
   const [reorderDragIdx, setReorderDragIdx] = useState(null);
   const [reorderOverIdx, setReorderOverIdx] = useState(null);
   const timelineRef = useRef(null);
@@ -690,8 +690,9 @@ const DeviceRowV4 = ({ device, items, isDirty, onDrop, onRemoveItem, onChangeIte
 
           return (
             <React.Fragment key={item._key || idx}>
+              {dropTarget && dropTarget.mode === 'insert' && dropTarget.index === idx && <span className="mm-insert-line" />}
               <div
-                className={`reorder-item-wrapper${isDragging ? ' reorder-dragging' : ''}${isDraggedOver ? ' reorder-over' : ''}`}
+                className={`reorder-item-wrapper${isDragging ? ' reorder-dragging' : ''}${isDraggedOver ? ' reorder-over' : ''}${dropTarget && dropTarget.mode === 'replace' && dropTarget.index === idx ? ' lib-replace-target' : ''}`}
                 onDragOver={e => {
                   if (e.dataTransfer.types.includes('device-row-id')) return;
                   e.preventDefault();
@@ -754,6 +755,7 @@ const DeviceRowV4 = ({ device, items, isDirty, onDrop, onRemoveItem, onChangeIte
             </React.Fragment>
           );
         })}
+        {dropTarget && dropTarget.mode === 'insert' && dropTarget.index === items.length && <span className="mm-insert-line" />}
       </div>
     </div>
   );
@@ -789,6 +791,7 @@ const MediaManager = ({ stores = [], groups = [], devices = [], selectedStoreId,
   const handleDropRef = useRef(null);     // handleDrop 최신 참조
   const [libDragPos, setLibDragPos] = useState(null);   // { x, y } 드래그 중 좌표
   const [libDragOverId, setLibDragOverId] = useState(null); // 현재 hover 중인 deviceId
+  const [libDropTarget, setLibDropTarget] = useState(null); // { deviceId, mode:'replace'|'insert', index } — 드롭 인디케이터
 
   const storeGroups = groups.filter(g => g.storeId === selectedStoreId);
   const rawGroupDevices = devices.filter(d => d.groupId === selectedGroupId);
@@ -885,15 +888,22 @@ const MediaManager = ({ stores = [], groups = [], devices = [], selectedStoreId,
     return () => clearTimeout(t);
   }, [deployPanel]);
 
-  const handleDrop = (deviceId, media, insertIdx = null) => {
-    const newItem = { mediaId: media.id, media, duration: 10, transition: 'dissolve', transitionTime: 2000, slideDirection: 'right', _key: `${media.id}-${Date.now()}` };
+  const handleDrop = (deviceId, media, target = null) => {
     setLanes(prev => {
       const updated = { ...prev };
       const current = [...(updated[deviceId] || [])];
-      if (insertIdx !== null && insertIdx >= 0 && insertIdx <= current.length) {
-        current.splice(insertIdx, 0, newItem);
+      if (target && target.mode === 'replace' && target.index >= 0 && target.index < current.length) {
+        // 제자리 교체 — 그 칸의 표시시간/전환효과는 유지, 이미지만 교체
+        const old = current[target.index];
+        current[target.index] = { ...old, mediaId: media.id, media, _key: `${media.id}-${Date.now()}` };
       } else {
-        current.push(newItem);
+        const newItem = { mediaId: media.id, media, duration: 10, transition: 'dissolve', transitionTime: 2000, slideDirection: 'right', _key: `${media.id}-${Date.now()}` };
+        const insertIdx = target && target.mode === 'insert' ? target.index : null;
+        if (insertIdx !== null && insertIdx >= 0 && insertIdx <= current.length) {
+          current.splice(insertIdx, 0, newItem);
+        } else {
+          current.push(newItem);
+        }
       }
       updated[deviceId] = current;
       return updated;
@@ -902,35 +912,51 @@ const MediaManager = ({ stores = [], groups = [], devices = [], selectedStoreId,
   // 항상 최신 handleDrop 참조 유지
   handleDropRef.current = handleDrop;
 
+  // 드롭 존 계산 (기하 기반 — 카드 사이 간격에서도 정확) :
+  //  카드 세로범위 안 + 가로 25~75% = 교체 / 그 외 = 커서 X 기준 가장 가까운 경계에 삽입
+  const computeDropTarget = (els, clientX, clientY) => {
+    const tl = els.find(el => el.dataset?.deviceId);
+    if (!tl) return null;
+    const deviceId = tl.dataset.deviceId;
+    const wrappers = Array.from(tl.querySelectorAll('.reorder-item-wrapper'));
+    if (wrappers.length === 0) return { deviceId, mode: 'insert', index: 0 };
+    // 1) 어떤 카드의 가운데(세로범위 내 + 가로 25~75%)에 있으면 교체
+    for (let i = 0; i < wrappers.length; i++) {
+      const r = wrappers[i].getBoundingClientRect();
+      if (clientY >= r.top && clientY <= r.bottom) {
+        const frac = (clientX - r.left) / r.width;
+        if (frac >= 0.25 && frac <= 0.75) return { deviceId, mode: 'replace', index: i };
+      }
+    }
+    // 2) 그 외(가장자리/카드 사이/빈 영역) → 커서 X가 어느 카드 중심보다 앞인지로 삽입 위치 결정
+    let index = wrappers.length;
+    for (let i = 0; i < wrappers.length; i++) {
+      const r = wrappers[i].getBoundingClientRect();
+      if (clientX < r.left + r.width / 2) { index = i; break; }
+    }
+    return { deviceId, mode: 'insert', index };
+  };
+
   // 포인터 이벤트 기반 라이브러리 드래그 (HTML5 draggable 대체 — crxMouse 충돌 방지)
   useEffect(() => {
     if (!libDragPos) return;
     const handleMove = (e) => {
       setLibDragPos({ x: e.clientX, y: e.clientY });
       const els = document.elementsFromPoint(e.clientX, e.clientY);
-      const tl = els.find(el => el.dataset?.deviceId);
-      setLibDragOverId(tl ? tl.dataset.deviceId : null);
+      const target = computeDropTarget(els, e.clientX, e.clientY);
+      setLibDragOverId(target ? target.deviceId : null);
+      setLibDropTarget(target);
     };
     const handleUp = (e) => {
       const els = document.elementsFromPoint(e.clientX, e.clientY);
-      const tl = els.find(el => el.dataset?.deviceId);
-      if (tl?.dataset.deviceId && libDragMediaRef.current) {
-        // 드롭 위치에 있는 카드 기준으로 삽입 인덱스 계산
-        const hoverWrapper = els.find(el => el.classList?.contains('reorder-item-wrapper'));
-        let insertIdx = null;
-        if (hoverWrapper) {
-          const wrappers = Array.from(tl.querySelectorAll('.reorder-item-wrapper'));
-          const hoverIdx = wrappers.indexOf(hoverWrapper);
-          if (hoverIdx >= 0) {
-            const rect = hoverWrapper.getBoundingClientRect();
-            insertIdx = e.clientX < rect.left + rect.width / 2 ? hoverIdx : hoverIdx + 1;
-          }
-        }
-        handleDropRef.current(tl.dataset.deviceId, libDragMediaRef.current, insertIdx);
+      const target = computeDropTarget(els, e.clientX, e.clientY);
+      if (target && libDragMediaRef.current) {
+        handleDropRef.current(target.deviceId, libDragMediaRef.current, target);
       }
       libDragMediaRef.current = null;
       setLibDragPos(null);
       setLibDragOverId(null);
+      setLibDropTarget(null);
     };
     window.addEventListener('pointermove', handleMove);
     window.addEventListener('pointerup', handleUp);
@@ -1434,6 +1460,7 @@ const MediaManager = ({ stores = [], groups = [], devices = [], selectedStoreId,
                       itemIdx: idx
                     })}
                     libDragOver={libDragOverId === device.id}
+                    dropTarget={libDropTarget && libDropTarget.deviceId === device.id ? libDropTarget : null}
                   />
                 ))}
               </div>
