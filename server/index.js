@@ -1077,9 +1077,12 @@ function cmpVersion(a, b) {
   return 0;
 }
 // OTA 재푸시는 "기기가 목표보다 구버전일 때만" — 같거나(최신) 더 새 버전이면 푸시 금지(루프 방지).
-// 단, 기기 버전 미상('')이면 업데이트 대상으로 본다.
+// 기기 버전 미상('')이면 푸시하지 않는다(false): 재접속 직후 하트비트가 버전을 보고하기 전
+// window에서 미상=업데이트로 보면, 목표가 낡았을 때(staging 0.4.20 vs 기기 0.4.29) 블라인드
+// 다운그레이드를 쏴 앱이 죽는다(2026-06-17 dev-204 사고). 버전이 보고된 뒤(다음 재접속/5분
+// Watchdog) 진짜 구버전이면 그때 푸시되므로 정상 업데이트는 지연만 될 뿐 누락되지 않는다.
 function needsOtaUpdate(currentVer, targetVersion) {
-  if (!currentVer) return true;
+  if (!currentVer) return false;
   return cmpVersion(currentVer, targetVersion) < 0;
 }
 
