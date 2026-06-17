@@ -1,0 +1,253 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1320" height="2070" viewBox="0 0 1320 2070" font-family="'Segoe UI','Malgun Gothic',sans-serif">
+  <defs>
+    <marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L8,3 L0,6 Z" fill="#475569"/>
+    </marker>
+    <marker id="arrowG" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L8,3 L0,6 Z" fill="#16a34a"/>
+    </marker>
+    <marker id="arrowP" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L8,3 L0,6 Z" fill="#7c3aed"/>
+    </marker>
+    <style>
+      .title{font-size:26px;font-weight:700;fill:#0f172a}
+      .sub{font-size:13px;fill:#64748b}
+      .sec{font-size:18px;font-weight:700;fill:#1e293b}
+      .box-t{font-size:15px;font-weight:700}
+      .box-s{font-size:12px}
+      .lbl{font-size:11px;fill:#475569}
+      .lblb{font-size:11px;font-weight:700;fill:#334155}
+      .port{font-size:11px;font-weight:700;fill:#b45309}
+      .net{font-size:13px;font-weight:700;fill:#0e7490}
+    </style>
+  </defs>
+
+  <rect width="1320" height="1560" fill="#f8fafc"/>
+  <text x="40" y="48" class="title">SignagePro — 시스템 토폴로지 (Tailscale 단일망 · 현장 NAS)</text>
+  <text x="40" y="70" class="sub">정본: DEPLOYMENT/SECURITY/BACKUP_PLAN.md · 인프라 결정 2026-06-14 — Cloudflare·R2 폐기, Tailscale 단일화, 현장 NAS = 서버+저장, 3-2-1 백업</text>
+
+  <!-- ============ SECTION 1: Tailscale 단일망 런타임 ============ -->
+  <rect x="30" y="92" width="1260" height="470" rx="12" fill="#ffffff" stroke="#cbd5e1" stroke-width="1.5"/>
+  <text x="52" y="122" class="sec">① 런타임 — Tailscale 단일 가상망 (외부 공개 없음, 클라우드 의존 제거)</text>
+
+  <!-- tailnet boundary -->
+  <rect x="55" y="140" width="1210" height="290" rx="14" fill="#ecfeff" stroke="#06b6d4" stroke-width="2" stroke-dasharray="7 5"/>
+  <text x="75" y="166" class="net">🔒 Tailscale tailnet (MagicDNS) — 모든 노드가 하나의 사설망</text>
+
+  <!-- 현장 STB players -->
+  <rect x="80" y="190" width="250" height="210" rx="10" fill="#eff6ff" stroke="#3b82f6" stroke-width="1.5"/>
+  <text x="205" y="218" class="box-t" fill="#1e3a8a" text-anchor="middle">현장 STB 플레이어</text>
+  <text x="205" y="238" class="box-s" fill="#475569" text-anchor="middle">com.signagepro.player</text>
+  <rect x="100" y="252" width="210" height="40" rx="6" fill="#dbeafe"/>
+  <text x="205" y="277" class="box-s" fill="#1e3a8a" text-anchor="middle">매장A / 매장B / 매장C …</text>
+  <text x="205" y="316" class="lbl" text-anchor="middle">· 콘텐츠 재생 / OTA 수신</text>
+  <text x="205" y="334" class="lbl" text-anchor="middle">· HTTP + Socket.io + TCP HB</text>
+  <text x="205" y="360" class="lbl" fill="#b91c1c" text-anchor="middle">⚠ 현재 Android 5.1.1 → ZeroTier</text>
+  <text x="205" y="378" class="lbl" fill="#b91c1c" text-anchor="middle">과도기. 4K STB(큐버) 전환 후 Tailscale</text>
+
+  <!-- 현장 NAS = 운영 서버 + 저장 -->
+  <rect x="535" y="180" width="300" height="230" rx="10" fill="#ecfdf5" stroke="#10b981" stroke-width="2"/>
+  <text x="685" y="208" class="box-t" fill="#065f46" text-anchor="middle">현장 NAS (jeju-osulloc)</text>
+  <text x="685" y="228" class="box-s" fill="#475569" text-anchor="middle">Synology DS225+ · 운영 서버 + 저장</text>
+  <rect x="555" y="242" width="260" height="50" rx="6" fill="#d1fae5"/>
+  <text x="685" y="263" class="box-s" fill="#065f46" text-anchor="middle" font-weight="700">Node 서버 (Docker) · API 3300</text>
+  <text x="685" y="281" class="lbl" text-anchor="middle">Express + Socket.io · dashboard/dist 서빙</text>
+  <rect x="555" y="300" width="125" height="48" rx="6" fill="#d1fae5"/>
+  <text x="617" y="320" class="box-s" fill="#065f46" text-anchor="middle" font-weight="700">미디어</text>
+  <text x="617" y="338" class="lbl" text-anchor="middle">uploads (로컬)</text>
+  <rect x="690" y="300" width="125" height="48" rx="6" fill="#d1fae5"/>
+  <text x="752" y="320" class="box-s" fill="#065f46" text-anchor="middle" font-weight="700">DB</text>
+  <text x="752" y="338" class="lbl" text-anchor="middle">SQLite (Prisma)</text>
+  <text x="685" y="372" class="lbl" text-anchor="middle">OTA: server/update/app.apk · TCP 하트비트</text>
+  <text x="685" y="392" class="lbl" fill="#16a34a" text-anchor="middle">✅ 클라우드(R2) 미사용 — 미디어/DB 전부 NAS 로컬</text>
+
+  <!-- 관리자/개발자 PC -->
+  <rect x="1010" y="200" width="230" height="100" rx="10" fill="#f1f5f9" stroke="#64748b" stroke-width="1.5"/>
+  <text x="1125" y="230" class="box-t" fill="#334155" text-anchor="middle">관리자 / 개발자 PC</text>
+  <text x="1125" y="252" class="box-s" fill="#475569" text-anchor="middle">대시보드 웹 UI (브라우저)</text>
+  <text x="1125" y="274" class="lbl" text-anchor="middle">http://jeju-osulloc:3300</text>
+  <text x="1125" y="292" class="lbl" text-anchor="middle">Tailscale 로그인 (동일 계정)</text>
+
+  <!-- ADB remote -->
+  <rect x="1010" y="318" width="230" height="84" rx="10" fill="#fef9c3" stroke="#ca8a04" stroke-width="1.2"/>
+  <text x="1125" y="346" class="box-t" fill="#854d0e" text-anchor="middle">원격 유지보수</text>
+  <text x="1125" y="368" class="box-s" fill="#475569" text-anchor="middle">tailnet 통해 ADB / 원격접속</text>
+  <text x="1125" y="388" class="lbl" text-anchor="middle">현장 방문 없이 기기 관리</text>
+
+  <!-- connections -->
+  <line x1="330" y1="280" x2="533" y2="280" stroke="#475569" stroke-width="2.5" marker-end="url(#arrow)"/>
+  <text x="430" y="270" class="port" text-anchor="middle">API / Socket.io / HB (tailnet)</text>
+  <line x1="1008" y1="270" x2="837" y2="270" stroke="#475569" stroke-width="2.5" marker-end="url(#arrow)"/>
+  <text x="922" y="258" class="lbl" text-anchor="middle">대시보드 접속</text>
+  <line x1="1080" y1="318" x2="900" y2="350" stroke="#ca8a04" stroke-width="1.5" stroke-dasharray="4 3" marker-end="url(#arrow)"/>
+
+  <text x="60" y="460" class="lblb">변경 핵심: ❌ Cloudflare 터널/공개도메인 제거 · ❌ R2 제거 → ✅ Tailscale 사설망 안에서만 접속, 서버·미디어·DB 모두 현장 NAS에 자가호스팅.</text>
+  <text x="60" y="484" class="lbl">⚠ 종속 리스크(인수인계): 소스코드·Tailscale 계정이 개인 소유 → 회사 이전 필요. 도메인 signage-pro.com 은 Cloudflare 정리 후 처리.</text>
+
+  <!-- ============ SECTION 2: 3-2-1 백업 체계 ============ -->
+  <rect x="30" y="585" width="1260" height="460" rx="12" fill="#ffffff" stroke="#cbd5e1" stroke-width="1.5"/>
+  <text x="52" y="615" class="sec">② 백업 체계 — 3-2-1 (데이터 3벌 · 매체 2종 · 오프사이트 1벌)</text>
+  <text x="52" y="638" class="sub">백업 대상(git에 없음, 필수): DB(dev.db) · .env(시크릿) · keystore(대체불가) · uploads(미디어)</text>
+
+  <!-- primary NAS -->
+  <rect x="80" y="668" width="260" height="150" rx="10" fill="#ecfdf5" stroke="#10b981" stroke-width="2"/>
+  <text x="210" y="698" class="box-t" fill="#065f46" text-anchor="middle">① 원본 — 현장 NAS</text>
+  <text x="210" y="722" class="box-s" fill="#475569" text-anchor="middle">운영 데이터 (살아있는 원본)</text>
+  <text x="210" y="748" class="lbl" text-anchor="middle">DB · .env · keystore · uploads</text>
+  <text x="210" y="772" class="lbl" text-anchor="middle">SQLite는 .backup / WAL 체크포인트</text>
+  <text x="210" y="796" class="lbl" text-anchor="middle">(라이브 파일 단순복사 금지)</text>
+
+  <!-- 현장 PC local backup -->
+  <rect x="430" y="668" width="240" height="150" rx="10" fill="#eff6ff" stroke="#2563eb" stroke-width="1.5"/>
+  <text x="550" y="698" class="box-t" fill="#1e40af" text-anchor="middle">② 현장 PC (로컬)</text>
+  <text x="550" y="722" class="box-s" fill="#475569" text-anchor="middle">Layer 1 · 매체 2종</text>
+  <text x="550" y="748" class="lbl" text-anchor="middle">매일 자동 (Task Scheduler)</text>
+  <text x="550" y="770" class="lbl" text-anchor="middle">robocopy /MIR · 14일 회전</text>
+  <text x="550" y="792" class="lbl" text-anchor="middle">단일 드라이브 고장 방어</text>
+
+  <!-- dev PC offsite -->
+  <rect x="760" y="668" width="240" height="150" rx="10" fill="#f5f3ff" stroke="#7c3aed" stroke-width="1.5"/>
+  <text x="880" y="698" class="box-t" fill="#5b21b6" text-anchor="middle">③ 개발자 PC (오프사이트)</text>
+  <text x="880" y="722" class="box-s" fill="#475569" text-anchor="middle">Layer 2 · 가장 중요 ★</text>
+  <text x="880" y="748" class="lbl" text-anchor="middle">tailnet 통해 미러</text>
+  <text x="880" y="770" class="lbl" text-anchor="middle">DB/.env/keystore 매일, uploads 주간</text>
+  <text x="880" y="792" class="lbl" text-anchor="middle">화재·도난·랜섬웨어 대비</text>
+
+  <!-- USB -->
+  <rect x="1090" y="668" width="150" height="150" rx="10" fill="#fff7ed" stroke="#f97316" stroke-width="1.5"/>
+  <text x="1165" y="698" class="box-t" fill="#9a3412" text-anchor="middle">④ USB</text>
+  <text x="1165" y="722" class="box-s" fill="#475569" text-anchor="middle">콜드 백업</text>
+  <text x="1165" y="750" class="lbl" text-anchor="middle">keystore</text>
+  <text x="1165" y="770" class="lbl" text-anchor="middle">(대체불가 →</text>
+  <text x="1165" y="788" class="lbl" text-anchor="middle">다중 보관)</text>
+
+  <!-- backup arrows -->
+  <line x1="340" y1="743" x2="428" y2="743" stroke="#16a34a" stroke-width="2.5" marker-end="url(#arrowG)"/>
+  <text x="384" y="734" class="lbl" text-anchor="middle">일일</text>
+  <line x1="670" y1="743" x2="758" y2="743" stroke="#7c3aed" stroke-width="2.5" marker-end="url(#arrowP)"/>
+  <text x="714" y="734" class="lbl" text-anchor="middle">오프사이트</text>
+  <line x1="1000" y1="743" x2="1088" y2="743" stroke="#f97316" stroke-width="2.5" marker-end="url(#arrow)"/>
+
+  <!-- backup rules -->
+  <rect x="80" y="845" width="1160" height="175" rx="10" fill="#fffbeb" stroke="#d97706" stroke-width="1.2"/>
+  <text x="100" y="875" class="box-t" fill="#92400e">백업 원칙 / 주의</text>
+  <text x="100" y="903" class="box-s" fill="#7c2d12">• 같은 드라이브에만 백업 금지 — C: 데이터 + C: 백업은 무의미. 반드시 별도 매체 + 오프사이트.</text>
+  <text x="100" y="929" class="box-s" fill="#7c2d12">• 시크릿(.env)·keystore 외부 보관 시 평문 금지 → restic/Duplicati 등 암호화. keystore는 다중·오프사이트·암호화.</text>
+  <text x="100" y="955" class="box-s" fill="#7c2d12">• SQLite는 .backup 또는 WAL 체크포인트로 — 라이브 파일 단순 복사는 손상 위험.</text>
+  <text x="100" y="981" class="box-s" fill="#7c2d12">• 복구 테스트 분기 1회 — 복원 안 해본 백업은 백업이 아님.</text>
+  <text x="100" y="1007" class="box-s" fill="#7c2d12">• 보존: 일일 14벌 + 주간 8벌 회전 · 코드는 git(GitHub)에 있어 백업 제외.</text>
+
+  <!-- ============ SECTION 3: 배포 파이프라인 ============ -->
+  <rect x="30" y="1068" width="1260" height="460" rx="12" fill="#ffffff" stroke="#cbd5e1" stroke-width="1.5"/>
+  <text x="52" y="1098" class="sec">③ 배포 파이프라인 — dev → staging → main → 현장 NAS (브랜치 머지 승격)</text>
+
+  <rect x="70" y="1130" width="215" height="115" rx="10" fill="#eff6ff" stroke="#2563eb" stroke-width="1.5"/>
+  <text x="177" y="1160" class="box-t" fill="#1e40af" text-anchor="middle">① 개발/코딩</text>
+  <text x="177" y="1184" class="box-s" fill="#475569" text-anchor="middle">D:\WorkSpace\signagepro</text>
+  <text x="177" y="1204" class="lbl" text-anchor="middle">dev 브랜치 · API 3001 · HB 10081</text>
+  <text x="177" y="1224" class="lbl" text-anchor="middle">commit/push → origin/dev</text>
+
+  <rect x="335" y="1130" width="215" height="115" rx="10" fill="#fffbeb" stroke="#d97706" stroke-width="1.5"/>
+  <text x="442" y="1160" class="box-t" fill="#92400e" text-anchor="middle">② 스테이징 테스트</text>
+  <text x="442" y="1184" class="box-s" fill="#475569" text-anchor="middle">D:\signagepro</text>
+  <text x="442" y="1204" class="lbl" text-anchor="middle">staging 브랜치 · API 3300 · HB 10082</text>
+  <text x="442" y="1224" class="lbl" text-anchor="middle">pull → 빌드 → 실기기 (운영 리허설)</text>
+
+  <rect x="600" y="1130" width="215" height="115" rx="10" fill="#f5f3ff" stroke="#7c3aed" stroke-width="1.5"/>
+  <text x="707" y="1160" class="box-t" fill="#5b21b6" text-anchor="middle">③ main 승격</text>
+  <text x="707" y="1184" class="box-s" fill="#475569" text-anchor="middle">merge staging → main</text>
+  <text x="707" y="1204" class="lbl" text-anchor="middle">push origin/main</text>
+  <text x="707" y="1224" class="lbl" text-anchor="middle">안정 버전 보존</text>
+
+  <rect x="865" y="1130" width="215" height="115" rx="10" fill="#ecfdf5" stroke="#10b981" stroke-width="1.5"/>
+  <text x="972" y="1160" class="box-t" fill="#065f46" text-anchor="middle">④ 현장 NAS 배포</text>
+  <text x="972" y="1184" class="box-s" fill="#475569" text-anchor="middle">Tailscale 원격 · 수동</text>
+  <text x="972" y="1204" class="lbl" text-anchor="middle">pull main → Docker 빌드/재시작</text>
+  <text x="972" y="1224" class="lbl" text-anchor="middle">tailnet 내부 공개 (외부 X)</text>
+
+  <line x1="285" y1="1187" x2="333" y2="1187" stroke="#16a34a" stroke-width="2.5" marker-end="url(#arrowG)"/>
+  <text x="309" y="1178" class="lbl" text-anchor="middle">merge</text>
+  <line x1="550" y1="1187" x2="598" y2="1187" stroke="#16a34a" stroke-width="2.5" marker-end="url(#arrowG)"/>
+  <text x="574" y="1178" class="lbl" text-anchor="middle">merge</text>
+  <line x1="815" y1="1187" x2="863" y2="1187" stroke="#16a34a" stroke-width="2.5" marker-end="url(#arrowG)"/>
+  <text x="839" y="1178" class="lbl" text-anchor="middle">pull</text>
+
+  <rect x="70" y="1275" width="1010" height="175" rx="10" fill="#fef2f2" stroke="#ef4444" stroke-width="1.2"/>
+  <text x="90" y="1305" class="box-t" fill="#991b1b">핵심 원칙 / 주의</text>
+  <text x="90" y="1333" class="box-s" fill="#7f1d1d">• 운영(현장 NAS)은 절대 자동 배포 금지 — 사람이 Tailscale로 접속해 직접 pull·빌드·재시작</text>
+  <text x="90" y="1359" class="box-s" fill="#7f1d1d">• 원격 운영은 항상 main 을 pull (staging 아님) · 승격은 브랜치 머지로</text>
+  <text x="90" y="1385" class="box-s" fill="#7f1d1d">• dev/staging은 폴더 분리 필수 (한 워킹트리는 한 브랜치만 → 동시 구동 불가)</text>
+  <text x="90" y="1411" class="box-s" fill="#7f1d1d">• APK versionCode/versionName 은 +1 증가 · 기기 자율 배포 금지(사용자 수동)</text>
+  <text x="90" y="1437" class="box-s" fill="#7f1d1d">• 멀티사이트 확장 시 현장별 최소형 NAS(로컬 캐시) 배치</text>
+
+  <text x="70" y="1490" class="sub">포트 요약: 3000 대시보드Vite(dev) · 3001 dev API · 3300 staging/NAS운영 API · 5174 모바일Vite · 10081 dev HB · 10082 staging HB</text>
+  <text x="70" y="1512" class="sub">상태: Tailscale 단일망은 목표(target). 현재 현장 STB(Android 5.1.1)는 ZeroTier 과도기 — 4K STB(큐버) 전환 후 Tailscale 일원화.</text>
+
+  <!-- ============ SECTION 4: 담당자 퇴사/교체 인수인계 절차 ============ -->
+  <rect x="30" y="1550" width="1260" height="490" rx="12" fill="#ffffff" stroke="#cbd5e1" stroke-width="1.5"/>
+  <text x="52" y="1580" class="sec">④ 담당자 퇴사/교체 시 인수인계 절차 — 개인 종속 해소 + 후임 단독 운영 검증</text>
+  <text x="52" y="1603" class="sub">최대 리스크: 소스코드·서명키·Tailscale·도메인이 담당자 개인 자산에 종속. 상세 인벤토리는 인수인계.md.</text>
+
+  <!-- flow row 1 -->
+  <rect x="60" y="1625" width="280" height="78" rx="10" fill="#f1f5f9" stroke="#64748b" stroke-width="1.5"/>
+  <text x="200" y="1652" class="box-t" fill="#334155" text-anchor="middle">① 현황 동결 &amp; 실측</text>
+  <text x="200" y="1674" class="lbl" text-anchor="middle">배포 동결 · 인벤토리 빈칸 실측 기입</text>
+  <text x="200" y="1692" class="lbl" text-anchor="middle">노드/포트/브랜치 스냅샷</text>
+
+  <rect x="375" y="1625" width="280" height="78" rx="10" fill="#fef2f2" stroke="#ef4444" stroke-width="2"/>
+  <text x="515" y="1652" class="box-t" fill="#991b1b" text-anchor="middle">② 회사 자산화 ★최중요</text>
+  <text x="515" y="1674" class="lbl" text-anchor="middle">GitHub org·Tailscale 소유권 이전</text>
+  <text x="515" y="1692" class="lbl" text-anchor="middle">keystore·도메인 회사 보관/이전</text>
+
+  <rect x="690" y="1625" width="280" height="78" rx="10" fill="#fffbeb" stroke="#d97706" stroke-width="1.5"/>
+  <text x="830" y="1652" class="box-t" fill="#92400e" text-anchor="middle">③ 비밀값 안전 전달</text>
+  <text x="830" y="1674" class="lbl" text-anchor="middle">비번관리자/봉인 (평문 금지)</text>
+  <text x="830" y="1692" class="lbl" text-anchor="middle">약한 시크릿 강한 값 교체</text>
+
+  <rect x="1005" y="1625" width="235" height="78" rx="10" fill="#eff6ff" stroke="#2563eb" stroke-width="1.5"/>
+  <text x="1122" y="1652" class="box-t" fill="#1e40af" text-anchor="middle">④ 접근권 인계</text>
+  <text x="1122" y="1674" class="lbl" text-anchor="middle">AnyDesk·Tailscale·NAS</text>
+  <text x="1122" y="1692" class="lbl" text-anchor="middle">대시보드·STB ADB</text>
+
+  <line x1="340" y1="1664" x2="373" y2="1664" stroke="#475569" stroke-width="2.5" marker-end="url(#arrow)"/>
+  <line x1="655" y1="1664" x2="688" y2="1664" stroke="#475569" stroke-width="2.5" marker-end="url(#arrow)"/>
+  <line x1="970" y1="1664" x2="1003" y2="1664" stroke="#475569" stroke-width="2.5" marker-end="url(#arrow)"/>
+
+  <!-- down connector -->
+  <line x1="1122" y1="1703" x2="1122" y2="1735" stroke="#475569" stroke-width="2.5"/>
+  <line x1="200" y1="1735" x2="1122" y2="1735" stroke="#475569" stroke-width="2.5"/>
+  <line x1="200" y1="1735" x2="200" y2="1763" stroke="#475569" stroke-width="2.5" marker-end="url(#arrow)"/>
+
+  <!-- flow row 2 (reverse) -->
+  <rect x="60" y="1768" width="280" height="78" rx="10" fill="#e0e7ff" stroke="#4f46e5" stroke-width="1.5"/>
+  <text x="200" y="1795" class="box-t" fill="#3730a3" text-anchor="middle">⑤ 빌드환경 재현</text>
+  <text x="200" y="1817" class="lbl" text-anchor="middle">클론 + SDK/Gradle + keystore</text>
+  <text x="200" y="1835" class="lbl" text-anchor="middle">테스트 APK 1회 빌드</text>
+
+  <rect x="375" y="1768" width="280" height="78" rx="10" fill="#ecfdf5" stroke="#10b981" stroke-width="2"/>
+  <text x="515" y="1792" class="box-t" fill="#065f46" text-anchor="middle">⑥ 인수 검증 (후임 단독)</text>
+  <text x="515" y="1812" class="lbl" text-anchor="middle">배포 1회(dev→staging→main→NAS)</text>
+  <text x="515" y="1830" class="lbl" text-anchor="middle">+ OTA 1회 + 백업 복구 1회</text>
+
+  <rect x="690" y="1768" width="280" height="78" rx="10" fill="#fef2f2" stroke="#ef4444" stroke-width="1.5"/>
+  <text x="830" y="1795" class="box-t" fill="#991b1b" text-anchor="middle">⑦ 퇴사자 권한 회수</text>
+  <text x="830" y="1817" class="lbl" text-anchor="middle">계정/노드/토큰 제거</text>
+  <text x="830" y="1835" class="lbl" text-anchor="middle">공유한 비밀값 재교체</text>
+
+  <rect x="1005" y="1768" width="235" height="78" rx="10" fill="#f1f5f9" stroke="#64748b" stroke-width="1.5"/>
+  <text x="1122" y="1795" class="box-t" fill="#334155" text-anchor="middle">⑧ 문서 최종화</text>
+  <text x="1122" y="1817" class="lbl" text-anchor="middle">인벤토리·연락처·TODO</text>
+  <text x="1122" y="1835" class="lbl" text-anchor="middle">체크박스 결과 기록</text>
+
+  <line x1="373" y1="1807" x2="342" y2="1807" stroke="#16a34a" stroke-width="2.5" marker-end="url(#arrowG)"/>
+  <line x1="688" y1="1807" x2="657" y2="1807" stroke="#16a34a" stroke-width="2.5" marker-end="url(#arrowG)"/>
+  <line x1="1003" y1="1807" x2="972" y2="1807" stroke="#16a34a" stroke-width="2.5" marker-end="url(#arrowG)"/>
+
+  <!-- handover notes -->
+  <rect x="60" y="1870" width="1180" height="145" rx="10" fill="#fef2f2" stroke="#ef4444" stroke-width="1.2"/>
+  <text x="80" y="1900" class="box-t" fill="#991b1b">인계 핵심 원칙</text>
+  <text x="80" y="1928" class="box-s" fill="#7f1d1d">• ②가 본질 — 소스코드(개인 GitHub)·Tailscale·keystore·도메인을 회사 자산으로 이전해야 진짜 인계. 안 하면 퇴사 시 접속·업데이트 마비.</text>
+  <text x="80" y="1954" class="box-s" fill="#7f1d1d">• 🔴 keystore 분실 = 기존 앱 OTA 업데이트 영구 불가 → 다중·오프사이트·USB·암호화 보관.</text>
+  <text x="80" y="1980" class="box-s" fill="#7f1d1d">• ⑥ 후임이 혼자 배포·OTA·복구를 각 1회 성공해야 인계 완료(형식적 인계 방지) · ⑦ 비밀값 재교체로 전 담당자 접근 무효화.</text>
+  <text x="80" y="2004" class="box-s" fill="#7f1d1d">• 비밀값은 그림/문서에 평문 금지 — 비밀번호 관리자(1Password/Bitwarden) 또는 봉인 문서로 전달.</text>
+</svg>
