@@ -75,3 +75,6 @@ server/update/deploy-meta.json
 # Agentic / IDE state
 .claude/
 cloudflareTokenKey.md
+
+# 하드웨어 참고자료 (제품 소스 아님)
+rk3566.txt
