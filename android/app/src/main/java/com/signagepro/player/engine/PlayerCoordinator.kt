@@ -685,6 +685,13 @@ class PlayerCoordinator(
                 Log.i(TAG, "원격 앱 재시작 소켓 수신 ➔ 자가 재시작 실행")
                 performSelfRestart()
             },
+            onSetServerUrl = { url ->
+                // 앱이 자기 SharedPreferences에 직접 write → 소유자·SELinux 컨텍스트 정상 유지
+                // (root sed 편집의 권한 손상 문제를 원천 차단). 이후 자가 재시작으로 새 서버에 재접속.
+                Log.i(TAG, "server_url 원격 변경: ${config.serverUrl} → $url (prefs 기록 후 자가 재시작)")
+                config.serverUrl = url
+                performSelfRestart()
+            },
             onRebootDevice = {
                 Log.i(TAG, "물리 기기 재부팅 수행")
                 

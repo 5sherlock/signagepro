@@ -36,7 +36,9 @@ class ControlChannel(
     /** 앱 자체 재시작 명령 */
     private val onRestartApp: () -> Unit = {},
     /** 물리 기기 자체 재부팅 명령 */
-    private val onRebootDevice: () -> Unit = {}
+    private val onRebootDevice: () -> Unit = {},
+    /** server_url 원격 변경 명령 — 앱이 자기 prefs에 직접 write 후 자가 재시작 */
+    private val onSetServerUrl: (url: String) -> Unit = {}
 ) {
     private var socket: Socket? = null
     @Volatile private var wasConnected = false
@@ -153,6 +155,17 @@ class ControlChannel(
                 if (target.isNullOrBlank() || target == selfDeviceId) {
                     Log.i(TAG, "원격 물리 기기 재부팅 명령 수신")
                     onRebootDevice()
+                }
+            }
+            on("set_server_url") { args ->
+                val data = args.firstOrNull() as? JSONObject ?: return@on
+                val target = data.optString("deviceId", "")
+                if (target.isBlank() || target == selfDeviceId) {
+                    val url = data.optString("url", "").trim()
+                    if (url.isNotBlank()) {
+                        Log.i(TAG, "server_url 변경 명령 수신: $url")
+                        onSetServerUrl(url)
+                    }
                 }
             }
             on("run_cmd") { args ->
