@@ -40,6 +40,12 @@ class NtpClient(
 
     enum class Source { NONE, NTP, SERVER, RESTORED }
 
+    // Tailscale 등 지터 큰 경로 대비 — 하트비트 ACK 오프셋을 슬라이딩 윈도로 모아
+    // "최소 RTT 근방 샘플들의 중앙값"으로 커밋한다. 한 번 튄 RTT가 시계를 흔들지 않도록.
+    // offset = epoch - elapsedRealtime (실시간이 양쪽 동일 속도라 ~일정한 값).
+    private data class AckSample(val offset: Long, val rtt: Long)
+    private val ackSamples = ArrayDeque<AckSample>()
+
     init {
         // 재부팅 후에도 마지막 동기값을 복원해 RTC 어긋남 구간을 최소화.
         // elapsedRealtime이 리셋되므로 저장 당시 wallClock과의 delta로 보정.
@@ -102,12 +108,29 @@ class NtpClient(
     }
 
     /**
-     * 하트비트 ACK에서 받은 서버 epoch으로 직접 동기화.
-     * RTT/2 보정: heartbeat 전송 시각과 ACK 수신 시각의 중간값을 사용.
+     * 하트비트 ACK에서 받은 서버 epoch으로 동기화.
+     * RTT/2 편도 보정 후, 최근 샘플들 중 "최소 RTT 근방"만 추려 중앙값을 커밋한다.
+     * → Tailscale/WiFi 지터로 한 번 RTT가 튀어도 시계가 흔들리지 않음(NTP best-sample + median).
      */
     fun syncFromHeartbeatAck(serverEpochMs: Long, sentAtElapsed: Long) {
-        val rttHalf = (SystemClock.elapsedRealtime() - sentAtElapsed) / 2
-        commit(serverEpochMs + rttHalf, Source.SERVER)
+        val recvElapsed = SystemClock.elapsedRealtime()
+        val rtt = recvElapsed - sentAtElapsed
+        if (rtt < 0 || rtt > MAX_PLAUSIBLE_RTT_MS) return   // 비정상/지연 샘플 폐기
+        // offset = epoch - elapsed. RTT/2로 편도 보정한 현재 epoch에서 elapsed를 뺌.
+        val offset = serverEpochMs + rtt / 2 - recvElapsed
+
+        val filtered: Long
+        synchronized(ackSamples) {
+            ackSamples.addLast(AckSample(offset, rtt))
+            while (ackSamples.size > ACK_WINDOW) ackSamples.removeFirst()
+            // 지연 적은(=가장 정확한) 샘플들만 추려 중앙값 → 지터 억제 + 안정화
+            val minRtt = ackSamples.minOf { it.rtt }
+            val good = ackSamples.filter { it.rtt <= minRtt + RTT_TOLERANCE_MS }
+                .map { it.offset }.sorted()
+            filtered = good[good.size / 2]
+        }
+        // now() == filtered + elapsedRealtime() 이 되도록 anchor 커밋.
+        commit(filtered + SystemClock.elapsedRealtime(), Source.SERVER)
     }
 
     /**
@@ -162,5 +185,9 @@ class NtpClient(
         private const val NTP_EPOCH_OFFSET_SECONDS = 2208988800L
         private const val KEY_EPOCH = "last_epoch_ms"
         private const val KEY_WALL  = "last_wall_ms"
+        // 하트비트 ACK 오프셋 필터(약 8개 × 10초 = 최근 ~80초 윈도)
+        private const val ACK_WINDOW = 8
+        private const val RTT_TOLERANCE_MS = 40L    // 최소 RTT + 이만큼 이내 샘플만 채택
+        private const val MAX_PLAUSIBLE_RTT_MS = 5000L  // 이보다 큰 RTT는 폐기
     }
 }
