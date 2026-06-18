@@ -1286,6 +1286,7 @@ function App() {
   const [pcAudioSet, setPcAudioSet] = useState(new Set());
   const [selectedStoreId, setSelectedStoreId] = useState('');
   const [gridLayout, setGridLayout] = useState('auto');
+  const [wallView, setWallView] = useState(false); // 월 미리보기 바 토글
   const [deviceMeta, setDeviceMeta] = useState({});
   // 음소거 전 볼륨 기억 — 음소거 해제 시 원래 볼륨으로 복원
   const preMuteVol = useRef({});
@@ -1528,6 +1529,20 @@ function App() {
     ];
   })();
 
+  // 월 미리보기: 그룹 자막(mode==='group')이 켜진 그룹을 deviceIndex 순서로 N개 슬롯에 배치.
+  // 오프라인/누락 슬롯도 자리를 유지해야 자막이 전체 폭을 끊김 없이 흐른다.
+  const wallGroups = (() => {
+    const byGroup = {};
+    filteredDevices.forEach(d => {
+      const tc = d.tickerConfig;
+      if (!tc?.enabled || tc.mode !== 'group') return;
+      const gid = d.groupId;
+      if (!byGroup[gid]) byGroup[gid] = { gid, groupName: d.groupName, N: Math.max(1, tc.totalDevices || 1), tc, slots: [] };
+      byGroup[gid].slots[tc.deviceIndex || 0] = d;
+    });
+    return Object.values(byGroup);
+  })();
+
   if (!authed) return <LoginScreen onLogin={() => setAuthed(true)} />;
 
   return (
@@ -1640,6 +1655,16 @@ function App() {
                   <option value="5x1">5 x 1</option>
                   <option value="custom">직접 입력</option>
                 </select>
+                {wallGroups.length > 0 && (
+                  <button
+                    onClick={() => setWallView(v => !v)}
+                    className="glass-select"
+                    title="비디오월 그룹 기기를 경계 없이 맞붙여 자막 이음새 검증"
+                    style={{ cursor: 'pointer', marginLeft: '12px', display: 'inline-flex', alignItems: 'center', gap: 6, fontWeight: 700, color: wallView ? '#60a5fa' : 'var(--text-secondary)', background: wallView ? 'rgba(59,130,246,0.16)' : undefined, borderColor: wallView ? '#3b82f6' : undefined }}
+                  >
+                    <Monitor size={14} /> 월 미리보기{wallView ? ' ✓' : ''}
+                  </button>
+                )}
                 {gridLayout === 'custom' && (
                   <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginLeft: '12px', background: 'rgba(255,255,255,0.05)', padding: '4px 12px', borderRadius: '8px', border: '1px solid rgba(255,255,255,0.1)' }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
@@ -1671,6 +1696,64 @@ function App() {
             </header>
 
             <div className="content-area">
+              {/* 월 미리보기 바 — 그룹 기기 프리뷰를 deviceOrder 순서로 경계 없이 맞붙여 자막 이음새 검증 (토글은 상단 그리드 컨트롤) */}
+              {wallView && wallGroups.length > 0 && (
+                <div style={{ marginBottom: 14 }}>
+                  {wallGroups.map(group => {
+                    const { gid, groupName, N, tc } = group;
+                    const SCREEN_W = 1920, SCREEN_H = 1080;
+                    const reportedCycleMs = devices.find(x => x.groupId === gid && x.tickerSync?.cycleMs > 0)?.tickerSync.cycleMs || 0;
+                    const fontSize = tc.fontSize || 48;
+                    const textWidthFull = measureTickerText(tc.text || '', fontSize, tc.fontBold || false);
+                    const barHPct = (fontSize * 2) / SCREEN_H * 100;
+                    const centerTop = (SCREEN_H - fontSize * 2) / 2 / SCREEN_H * 100;
+                    const topVal = tc.position === 'top' ? 0 : tc.position === 'center' ? `${centerTop.toFixed(2)}%` : 'auto';
+                    const botVal = tc.position === 'bottom' ? 0 : 'auto';
+                    const fontCqw = (fontSize / SCREEN_W) * 100;
+                    const r = parseInt((tc.bgColor || '#000').slice(1, 3), 16) || 0;
+                    const g = parseInt((tc.bgColor || '#000').slice(3, 5), 16) || 0;
+                    const b = parseInt((tc.bgColor || '#000').slice(5, 7), 16) || 0;
+                    const bg = `rgba(${r},${g},${b},${(tc.bgOpacity ?? 65) / 100})`;
+                    return (
+                      <div key={gid} style={{ marginTop: 10 }}>
+                        <div style={{ fontSize: '0.78rem', color: 'var(--text-secondary)', marginBottom: 5 }}>
+                          {groupName} · 비디오월 {N}분할 (이음새 연속성 검증)
+                        </div>
+                        <div style={{ display: 'flex', width: '100%', background: '#000', overflow: 'hidden', border: '1px solid #334155' }}>
+                          {Array.from({ length: N }).map((_, idx) => {
+                            const dev = group.slots[idx];
+                            const localXFull = tickerLocalX({
+                              nowMs: tickerNow + serverClockOffsetRef.current,
+                              cycleMs: reportedCycleMs, speed: tc.speed || 50,
+                              totalDevices: N, deviceIndex: idx, direction: tc.direction || 'rtl', textW: textWidthFull,
+                            });
+                            const leftPct = (localXFull / SCREEN_W) * 100;
+                            return (
+                              <div key={idx} style={{ position: 'relative', width: `${100 / N}%`, aspectRatio: '16 / 9', overflow: 'hidden' }}>
+                                {dev && dev.status === 'online' ? (
+                                  <DevicePreview groupId={dev.groupId} deviceId={dev.id} devVol={dev.vol ?? 8} liveSlide={dev.slide ?? null} />
+                                ) : (
+                                  <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#555', background: '#111', fontSize: '0.7rem' }}>
+                                    {dev ? '신호 없음' : '기기 없음'}
+                                  </div>
+                                )}
+                                <div style={{ position: 'absolute', top: 2, left: 4, zIndex: 7, color: '#60a5fa', fontSize: 10, fontWeight: 700, textShadow: '0 0 3px #000', pointerEvents: 'none' }}>
+                                  {dev ? dev.name : `idx${idx}`}
+                                </div>
+                                <div style={{ position: 'absolute', left: 0, right: 0, top: topVal, bottom: botVal, height: `${barHPct.toFixed(2)}%`, background: bg, overflow: 'hidden', zIndex: 4, containerType: 'inline-size' }}>
+                                  <span style={{ position: 'absolute', whiteSpace: 'nowrap', color: tc.textColor || '#fff', fontFamily: '"Noto Sans KR", sans-serif', fontSize: `${fontCqw.toFixed(3)}cqw`, fontWeight: tc.fontBold ? 700 : 400, left: `${leftPct.toFixed(3)}%`, top: '50%', transform: 'translateY(-50%)' }}>
+                                    {tc.text}
+                                  </span>
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
               <div
                 className={`dashboard-grid ${gridLayout !== 'custom' ? (gridLayout === 'auto' ? `count-${filteredDevices.length > 0 && filteredDevices.length <= 6 ? filteredDevices.length : filteredDevices.length > 6 ? 'many' : '1'}` : `layout-${gridLayout}`) : ''}`}
                 style={gridLayout === 'custom' ? {
@@ -1786,7 +1869,7 @@ function App() {
 
                         return (
                           <div style={{ position:'absolute', left:0, right:0, top:topVal, bottom:botVal, height:`${barHPct.toFixed(2)}%`, background:bg, overflow:'hidden', zIndex:4, containerType:'inline-size' }}>
-                            <span style={{ position:'absolute', whiteSpace:'nowrap', color:tc.textColor||'#fff', fontSize:`${fontCqw.toFixed(3)}cqw`, fontWeight: tc.fontBold ? 700 : 400, left:`${leftPct.toFixed(3)}%`, top:'50%', transform:'translateY(-50%)' }}>
+                            <span style={{ position:'absolute', whiteSpace:'nowrap', color:tc.textColor||'#fff', fontFamily:'"Noto Sans KR", sans-serif', fontSize:`${fontCqw.toFixed(3)}cqw`, fontWeight: tc.fontBold ? 700 : 400, left:`${leftPct.toFixed(3)}%`, top:'50%', transform:'translateY(-50%)' }}>
                               {tc.text}
                             </span>
                           </div>
