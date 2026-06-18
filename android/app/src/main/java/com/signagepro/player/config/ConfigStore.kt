@@ -18,7 +18,9 @@ class ConfigStore(context: Context) {
 
     var serverUrl: String?
         get() = prefs.getString(KEY_SERVER_URL, null)
-        set(value) = prefs.edit().putString(KEY_SERVER_URL, value).apply()
+        // 원격 server_url 변경 직후 자가 재시작(killProcess)이 따라오므로 apply(비동기)는
+        // 디스크 반영 전에 프로세스가 죽어 유실될 수 있다 → commit(동기)으로 저장 보장.
+        set(value) { prefs.edit().putString(KEY_SERVER_URL, value).commit() }
 
     var deviceSecret: String?
         get() = prefs.getString(KEY_DEVICE_SECRET, null)
