@@ -1528,6 +1528,31 @@ app.post('/api/devices/:id/restart-app', async (req, res) => {
   }
 });
 
+// 기기 server_url 원격 변경 — 앱이 자기 SharedPreferences에 직접 write 후 자가 재시작.
+// (root로 prefs를 sed 편집하면 소유자·SELinux 컨텍스트가 깨져 앱이 못 읽으므로 이 경로를 쓴다.)
+// 소켓(ControlChannel) 전용 — ADB 폴백 없음(폴백이 root 편집이라 의미 없음).
+app.post('/api/devices/:id/server-url', async (req, res) => {
+  try {
+    const url = (req.body?.url || '').trim();
+    if (!/^https?:\/\/[^\s]+$/i.test(url)) {
+      return res.status(400).json({ error: 'url은 http(s)://로 시작하는 유효한 주소여야 합니다.' });
+    }
+    const device = await prisma.device.findUnique({ where: { id: req.params.id } });
+    if (!device) return res.status(404).json({ error: '기기를 찾을 수 없습니다.' });
+
+    const room = `device:${device.id}`;
+    const socketsInRoom = await io.in(room).allSockets();
+    if (socketsInRoom.size === 0) {
+      return res.status(400).json({ error: '기기 ControlChannel(소켓) 미연결 — server_url 변경 명령을 보낼 수 없습니다.' });
+    }
+    io.to(room).emit('set_server_url', { deviceId: device.id, url });
+    console.log(`[ServerUrl] set_server_url 전송: ${device.id} → ${url} (소켓 ${socketsInRoom.size}개)`);
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // 디버그용 쉘 명령어 실행
 app.post('/api/debug/run-cmd', async (req, res) => {
   try {
@@ -1681,6 +1706,11 @@ async function handleTcpMessage(socket, msg) {
       return;
     }
 
+    // 시각 동기 ACK용 수신 시각 — 반드시 느린 DB upsert "이전"에 캡처해야 한다.
+    // (DB write 후 Date.now()를 쓰면 그 소요시간 proc만큼 serverEpochMs가 부풀려져
+    //  기기가 NtpClient RTT/2 보정에서 ~proc/2 앞선 시계를 커밋 → 프리뷰가 모니터보다 뒤처짐)
+    const recvTime = Date.now();
+
     const parts = msg.substring(7).split('/');
     let cpu = null, mem = null, ver = null, dl = null, vol = null, deviceTime = null, slide = null, screen = null, hdmi = null;
     let cpuTemp = null, diskSpace = null, ramSpace = null, tvEdid = null, tvCec = null, stbSpec = null, tickerCycleMs = null;
@@ -1769,9 +1799,12 @@ async function handleTcpMessage(socket, msg) {
       stbSpec: stbSpec !== null ? stbSpec : (cached.stbSpec ?? null),
       // tickerCycleMs=0 → 자막 꺼짐(null로 초기화), null → 미포함(이전값 유지)
       tickerSync: tickerCycleMs === null ? (cached.tickerSync ?? null)
-                : tickerCycleMs > 0 ? { cycleMs: tickerCycleMs, ntpMs: deviceTime ?? Date.now(), receivedAt: Date.now() }
+                : tickerCycleMs > 0 ? { cycleMs: tickerCycleMs, ntpMs: deviceTime ?? recvTime, receivedAt: recvTime }
                 : null
     });
+
+    // 시각 동기 ACK를 DB upsert 전에 즉시 전송 — DB write 지연이 기기 시계에 새지 않도록.
+    socket.write(`ok:${recvTime}\n`);
 
     try {
       await prisma.device.upsert({
@@ -1782,7 +1815,7 @@ async function handleTcpMessage(socket, msg) {
       const cachedState = deviceLiveStateCache.get(deviceId) || {};
       const { screenOff = false, hdmiConnected = true, cpuTemp = null, diskSpace = null, ramSpace = null, tvEdid = null, tvCec = null, stbSpec = null } = cachedState;
       io.emit('device_status_update', { deviceId, status: 'online', cpu, mem, ip: normalizeIp(socket.remoteAddress), appVersion: ver, dl, vol, deviceTime, slide, screenOff, hdmiConnected, cpuTemp, diskSpace, ramSpace, tvEdid, tvCec, stbSpec });
-      socket.write(`ok:${Date.now()}\n`);
+      // (시각 동기 ACK는 위에서 DB upsert 전에 이미 전송함)
     } catch (err) {
       console.error('[TCP] DB 에러:', err);
     }
