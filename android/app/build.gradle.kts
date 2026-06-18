@@ -14,8 +14,8 @@ android {
         applicationId = "com.signagepro.player"
         minSdk = 22                // Android 5.1.1 (RK3229 U4X+ CM)
         targetSdk = 29             // V1-only 서명 유지: RK3229(API22) PM이 V2 블록을 못 읽음. Android 11+는 targetSdk<30이면 V2 강제 없음
-        versionCode = 29
-        versionName = "0.4.29"
+        versionCode = 30
+        versionName = "0.4.30"
 
         // 빌드 날짜를 BuildConfig에 자동 삽입 (관제 화면 버전 표시용)
         val buildDate = SimpleDateFormat("yyyy-MM-dd HH:mm").format(Date())
