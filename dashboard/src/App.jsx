@@ -1621,7 +1621,8 @@ function App() {
           // 배포 준비된 APK 버전을 기준 버전으로 삼고, 없으면 가장 많은 기기가 쓰는 버전을 기준 버전으로 삼음
           const versionCounts = {};
           devices.forEach(d => { if (d.appVersion) versionCounts[d.appVersion] = (versionCounts[d.appVersion] || 0) + 1; });
-          const standardVersion = serverApkVersion || Object.keys(versionCounts).sort((a, b) => versionCounts[b] - versionCounts[a])[0] || null;
+          // 폴백 버전은 날짜 포함 전체 문자열일 수 있으므로 verNum과 같은 bare 버전으로 정규화해 비교
+          const standardVersion = (serverApkVersion || Object.keys(versionCounts).sort((a, b) => versionCounts[b] - versionCounts[a])[0] || '').split(' (')[0] || null;
           return (
           <>
             <header className="header">
