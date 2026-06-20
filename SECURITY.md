@@ -9,7 +9,7 @@
 
 > **기준 코드: `dev` 브랜치(dea5d59).** 본 문서의 line 번호·"패치됨" 판정은 모두 dev 기준이다. 보안 작업은 dev에서 진행하고, dev→staging→main 승격 후 staging에서 재검증한다.
 >
-> ⚠️ **운영 실상태 경고 (2026-06-13):** dev→staging→main 승격이 **한 번도 수행된 적 없음.** 운영이 받는 `main`은 **v0.4.27(1e8a80e, 06-07)** 로 dev보다 뒤처져 있고, **로그인 rate-limit/잠금 기능이 아예 없다**(아래 2.1의 "패치됨"은 dev 한정). 즉 **운영의 실제 노출 수준은 본 문서보다 더 나쁠 수 있다** — 승격 전까지는 dev 패치가 운영에 반영되지 않는다. 운영 실버전은 AnyDesk로 직접 확인 필요.
+> ⚠️ **운영 실상태 경고 (2026-06-13 → 2026-06-20 갱신):** ~~dev→staging→main 승격이 한 번도 수행된 적 없음.~~ **2026-06-20 코드 대조 결과 Critical 3종(§3.1 trust proxy·§3.2 dev-mode 제거·§3.3 Socket.io io.use 인증)이 staging(D:\signagepro)에도 반영 확인됨** — 더 이상 "dev 한정" 아님. 단 운영이 받는 `main`은 여전히 **v0.4.27(1e8a80e, 06-07)** 로 뒤처져 있고 **로그인 rate-limit/잠금이 없다**(아래 2.1의 "패치됨"은 **dev+staging** 한정). 즉 **운영의 실제 노출 수준은 본 문서보다 더 나쁠 수 있다** — staging→main 승격 전까지 운영 미반영. 운영 실버전은 AnyDesk로 직접 확인 필요.
 >
 > 🔄 **인프라 변경 (2026-06-13 — Tailscale 전환):** Cloudflare 공개 터널(`signage-pro.com`) **차단 완료**(현장 서버 cloudflared 중지/비활성) → **Tailscale 사설망 전환.** 현장 서버(jeju-osulloc 100.122.76.95)·기기·관리 PC를 tailnet으로 묶고 MagicDNS(`jeju-osulloc:3300`)로 접속. **dev-204 루팅 + Tailscale 원격 ADB 작동 확인**(`adb connect 100.75.80.108:5555`). → **인터넷 직접 노출이 tailnet 내부로 축소**돼 아래 취약점들의 공개 위험이 크게 낮아짐.
 > **단, 잔존 공개 포트포워딩**(field `121.189.102.108:3300`, dev `211.184.50.200:3001`)이 아직 인터넷에 열려 있음 → 기기 Tailscale 전환 완료 후 닫을 것. 그전까지 §3.2~3.13은 그 포트로 여전히 노출.
@@ -20,11 +20,11 @@
 
 | # | 항목 | 심각도 | 상태 |
 |---|------|--------|------|
-| 1 | `trust proxy` 미설정 → Rate Limit 무력화 + 전역 잠금 DoS | Critical | ✅ 패치됨(dev) · main/운영 미반영 |
-| 2 | dev-mode 토큰 백도어 | Critical | ✅ 패치됨(dev, 2026-06-16) · main/운영 미반영 |
-| 3 | Socket.io 채널 완전 무인증 (기기 위장·DB 위조) | Critical | ✅ 패치됨(dev, 2026-06-16) · main/운영 미반영 |
-| 4 | 환경 간 비밀값 공유 (dev=staging=운영 동일 secret/비번) | Critical | 미패치 |
-| 5 | adminPassword 약함 / 미설정 시 인증 전면 비활성 | High | 부분 |
+| 1 | `trust proxy` 미설정 → Rate Limit 무력화 + 전역 잠금 DoS | Critical | ✅ 패치됨(dev+staging, 2026-06-20 확인) · 운영(main) 미반영 |
+| 2 | dev-mode 토큰 백도어 | Critical | ✅ 패치됨(dev+staging, 2026-06-20 확인) · 운영(main) 미반영 |
+| 3 | Socket.io 채널 완전 무인증 (기기 위장·DB 위조) | Critical | ✅ 패치됨(dev+staging, 2026-06-20 확인) · 운영(main) 미반영 |
+| 4 | 환경 간 비밀값 공유 (dev=staging=운영 동일 secret/비번) | Critical | ❌ 미패치 (adminPassword="amore12345" dev=staging 실측) |
+| 5 | adminPassword 미설정 시 인증 전면 비활성 | High | ✅ 해소(fail-closed 503, §3.4) — 단 비번 약함(§3.8)은 미패치 |
 
 ---
 
@@ -58,8 +58,8 @@ dev · staging · 운영이 **동일한 비밀값**을 쓰고 있어, 환경을 
 |------|------|------|
 | 다수 관리 API 무인증 | [index.js:198](server/index.js#L198) | `app.use('/api', …)` 블랭킷 `requireAuth` 적용. DEVICE_OPEN GET·`/auth`만 예외 |
 | RCE `/api/debug/run-cmd` 무인증 | [index.js:1468](server/index.js#L1468) | 위 블랭킷 미들웨어 뒤로 이동되어 인증 필요 상태 |
-| 로그인 Rate Limit 없음 | [index.js:136-159](server/index.js#L136-L159) | **dev 한정** 자체 구현(5회→15분 잠금). ⚠️ **main(v0.4.27)·운영엔 아직 없음** — 승격 필요 |
-| `trust proxy` 미설정(전역 잠금 DoS) | [index.js:70-71](server/index.js#L70-L71) | **dev 패치 완료(2026-06-13)** — `trust proxy:'loopback'` + `getClientIp()`(CF-Connecting-IP 우선). ⚠️ main/운영 미반영 |
+| 로그인 Rate Limit 없음 | [index.js:136-159](server/index.js#L136-L159) | **dev+staging** 자체 구현(5회→15분 잠금). ⚠️ **운영(main v0.4.27)엔 아직 없음** — 승격 필요 |
+| `trust proxy` 미설정(전역 잠금 DoS) | [index.js:70](server/index.js#L70) | **dev+staging 패치 완료(2026-06-20 확인)** — `trust proxy:'loopback'` + `getClientIp()`(CF-Connecting-IP 우선). ⚠️ 운영(main) 미반영 |
 | 업로드 형식 무검증 | [index.js:222](server/index.js#L222) | `ALLOWED_MIME` 화이트리스트 |
 | 토큰 서버 재시작 시 소멸 | [index.js:107](server/index.js#L107) | HMAC 서명 토큰 — **단, §3.5 키 약함** |
 
@@ -70,8 +70,8 @@ dev · staging · 운영이 **동일한 비밀값**을 쓰고 있어, 환경을 
 #### ✅ 3.1 `trust proxy` 미설정 → Rate Limit 무력화 + 전역 잠금 DoS  *(dev 패치 완료 2026-06-13)*
 - 증상(과거): `trust proxy` 미설정 → Cloudflare 터널 뒤에서 모든 `req.ip`가 loopback 하나로 고정 → 로그인 잠금이 **전역**이 되어 공격자 5회 실패 시 **정상 관리자까지 15분 잠김(DoS)**.
 - 패치: [index.js:70-71](server/index.js#L70-L71) — `app.set('trust proxy', 'loopback')` + `getClientIp()`(`CF-Connecting-IP` 우선) 도입. 요청 로거·로그인 잠금이 이 헬퍼 사용.
-- ⚠️ **dev에만 적용됨** — main(v0.4.27)·운영엔 미반영, 승격 필요.
-- 전제: origin 포트는 터널 경유로만 외부 노출돼야 함(직접 노출 시 `CF-Connecting-IP` 위조 가능).
+- ⚠️ **dev+staging 적용 확인(2026-06-20)** — 운영(main v0.4.27)엔 미반영, 승격 필요.
+- 전제: origin 포트는 터널 경유로만 외부 노출돼야 함(직접 노출 시 `CF-Connecting-IP` 위조 가능). ⚠️ dev `211.184.50.200:3001`·field `175.207.231.68:3001` 등 **직접 공개 포트가 열려 있으면 이 전제가 깨짐**(§4).
 
 #### ✅ 3.2 dev-mode 토큰 백도어 — 패치됨 (dev, 2026-06-16)
 - 위치(과거): [index.js:186](server/index.js#L186) — `if (token === 'dev-mode') return next();`
@@ -79,7 +79,7 @@ dev · staging · 운영이 **동일한 비밀값**을 쓰고 있어, 환경을 
 - 조치(완료): 186줄 삭제(백도어 제거) + 141줄 dev-mode 발급 제거 + requireAuth를 **fail-closed**로 변경(adminPassword 미설정 시 503). dev 편의 우회는 두지 않음 — 모든 환경이 adminPassword 필수.
 - 연계 수정: `build_apk.ps1`이 dev-mode로 업로드하던 것을 **정상 로그인(토큰 발급)** 으로 전환. 비밀번호는 `$env:SIGNAGE_ADMIN_PW` 또는 `server/.env`에서 읽음(하드코딩 금지).
 - 검증: dev(3001)에서 `Bearer dev-mode` → 401, 올바른 비번 로그인 → HMAC 토큰 → 보호 API 200 확인.
-- ⚠️ **dev 브랜치만 반영.** staging→main 승격 + 운영(NAS) 배포 전까지 운영은 취약. 공용 포트(`121.189.102.108:3300`) 열려 있는 동안 특히 시급.
+- ⚠️ **dev+staging 반영 확인(2026-06-20).** 운영(main, NAS) 배포 전까지 운영은 취약. 공용 포트(`121.189.102.108:3300`) 열려 있는 동안 특히 시급.
 
 #### ✅ 3.3 Socket.io 채널 완전 무인증 — 패치됨 (dev, 2026-06-16)
 - 위치(과거): `io.use()` 인증 미들웨어 없음, CORS `*`.
@@ -89,15 +89,16 @@ dev · staging · 운영이 **동일한 비밀값**을 쓰고 있어, 환경을 
   - 이벤트별 역할 차단: `register_device`/`run_cmd_result`는 `device`만, `web_player_heartbeat`는 `webplayer`만. `deviceId`가 인증된 값과 다르면 차단(타기기 위장 방지).
   - CORS `*` → `SOCKET_CORS_ORIGINS`(env) 화이트리스트(미설정 시 Origin 반영) — §3.6 일부 해소.
 - 클라이언트 연계: ControlChannel.kt(`auth` 추가), Player.jsx(WEB_PLAYER_SECRET 입력 UI + 기기-공개 엔드포인트 조회), App.jsx·DevicePreview.jsx(토큰 전달). APK versionCode 27→28.
-- 검증: dev에서 무자격/가짜시크릿/가짜토큰 거부, STB·웹플레이어·관리자 연결 6/6 통과.
+- 검증: dev에서 무자격/가짜시크릿/가짜토큰 거부, STB·웹플레이어·관리자 연결 6/6 통과. **staging에도 `io.use`+`WEB_PLAYER_SECRET` 반영 확인(2026-06-20).**
 - ⚠️ **즉시 강제이므로 운영 롤아웃 시 순서 필수**: 새 APK(v0.4.28)를 전 STB에 선설치 + 웹플레이어 시크릿 설정 → 그다음 서버 배포. **순서 어기면 구APK STB 일괄 단절(OTA 자가복구도 막힘 → ADB 수동).**
 - 기기 Android 혼재: 201~203(구버전 동일)·204(Android 11), 향후 신규 루팅기기 전부 Android 11.0 — 구버전 기기일수록 선설치 검증 중요.
 - TCP 채널은 `DEVICE_SECRET`로 인증하는데([1586](server/index.js#L1586)) Socket.io만 무방비 — 일관성 구멍.
 - 조치: `io.use()` 핸드셰이크에서 토큰/기기 secret 검증, CORS 도메인 제한.
 
-#### 🔴 3.4 adminPassword 미설정 시 인증 전면 비활성
-- 위치: [index.js:85](server/index.js#L85), [index.js:184](server/index.js#L184) — `if (!adminPassword) return next();`
-- 운영 `.env`에 반드시 강한 `adminPassword` 설정 + §1대로 환경별 분리.
+#### ✅ 3.4 adminPassword 미설정 시 인증 전면 비활성 — 해소됨 (dev+staging, §3.2 픽스에 포함, 2026-06-20 확인)
+- 위치(과거): `if (!adminPassword) return next();` — 미설정 시 전 API 통과(fail-open).
+- 조치(완료): **fail-closed로 전환** — 로그인 [index.js:146](server/index.js#L146)·requireAuth [index.js:189](server/index.js#L189) 모두 adminPassword 미설정 시 **503 반환**. 옛 우회 라인 제거됨. dev+staging 양쪽 확인.
+- ⚠️ 잔여: 비밀번호 자체가 약함(§3.8, 최소 4자)·환경 간 공유(§1)는 **여전히 미패치**. 운영 `.env`에 강한 `adminPassword` 설정 + 환경별 분리 필요.
 
 #### 🟡 3.5 HMAC 토큰 서명키 = adminPassword
 - 위치: [index.js:107-110](server/index.js#L107-L110) — HMAC 키로 사용자 비밀번호를 직접 사용.
@@ -111,15 +112,17 @@ dev · staging · 운영이 **동일한 비밀값**을 쓰고 있어, 환경을 
 #### 🟡 3.7 `/uploads` 무인증 공개
 - 위치: [index.js:208](server/index.js#L208) — `express.static`이 인증 없이 노출.
 - **(2026-06-14) 맥락 변화**: 미디어가 **공개 R2 URL(링크만 알면 누구나) → 로컬 `/uploads`** 로 이전(dev 적용·현장 예정) → **외부 공개 노출은 사라지고 tailnet/LAN 내부 무인증만 남음**(노출 범위 축소). 단 내부 무인증은 여전히 유효.
-- 조치: `requireAuth` 적용 <span style="color:red;text-decoration:line-through">또는 Cloudflare Access 규칙</span> (Cloudflare 차단됨).
+- ⚠️ **조치 정정 (2026-06-20 코드 분석):** ~~`requireAuth` 적용(10분)~~ — **단순 requireAuth 불가**. 미디어 소비자 둘 다 자격을 안 보냄: ① STB는 OkHttp `ApiClient`에 **인터셉터 없음**([MediaCacheRepo.kt:71](android/app/src/main/java/com/signagepro/player/cache/MediaCacheRepo.kt#L71)) → 어떤 요청도 인증 헤더 없음, ② 웹 플레이어는 브라우저 `<video src>/<img src>`([Player.jsx:180](dashboard/src/Player.jsx#L180)) → 태그라 Authorization 헤더 원천 불가. 게다가 playlist 엔드포인트 자체가 DEVICE_OPEN(무인증 GET)이라 STB 경로 전체가 "무자격 열린 GET" 설계. **진짜 인증하려면 STB가 DEVICE_SECRET을 보내야 함 = APK에 OkHttp 인터셉터 추가 + 재배포(자율금지) + 웹은 쿠키/서명쿼리토큰 + /uploads 미들웨어**. 단순 1줄 아님.
+- **결정(2026-06-20): 보류(C).** 인터넷 비노출(tailnet)·물리접근≈0 전제에서 노출은 "tailnet 내부자가 hash검증되는 사이니지 미디어를 읽음" 수준 → 실위험 낮음. 앱레벨 인증의 한계이득 < APK 재배포 비용. 진짜 인증이 필요해지면 **다음 APK 빌드에 (A)안(인터셉터+미들웨어)을 합쳐서** 진행.
 
 #### 🟡 3.8 비밀번호 최소 4자
 - 위치: [index.js:172](server/index.js#L172) — 변경 엔드포인트의 실제 게이트.
 - 조치: 최소 12자 + 복잡도 요구.
 
-#### 🟡 3.9 업로드 파일명 Path Traversal
-- 위치: [index.js:220](server/index.js#L220) — `Date.now() + '-' + file.originalname` (sanitize 없음).
-- 조치: `path.basename()` + `[^a-zA-Z0-9._-]` → `_` 치환.
+#### ✅ 3.9 업로드 파일명 Path Traversal — 패치됨 (dev, 2026-06-20)
+- 위치(과거): `Date.now() + '-' + file.originalname` (sanitize 없음) → originalname에 `../` 다수 넣으면 uploadDir 밖 임의경로 쓰기(MIME은 위조 가능). 단 업로드는 requireAuth 뒤라 사후-인증 방어.
+- 조치(완료): [index.js:224](server/index.js#L224) — `path.basename(file.originalname).replace(/[^a-zA-Z0-9._-]/g,'_')`로 정화 후 `${Date.now()}-${safe}` 저장. 저장 파일명은 서버가 정하고 `media.path`로 클라이언트엔 불투명 전달 → STB/웹 무영향(APK 변경 불필요).
+- 검증: `x/../../../../tmp/evil.sh` 업로드 → `/uploads/<ts>-evil.sh`로 정화·uploadDir 내부 저장, 탈출 없음 확인.
 
 #### 🟢 3.10 DEVICE_SECRET 로그 평문 노출
 - 위치: [index.js:1587](server/index.js#L1587) — 인증 실패 시 `secret`/`expected`를 평문 로깅.
@@ -133,9 +136,10 @@ dev · staging · 운영이 **동일한 비밀값**을 쓰고 있어, 환경을 
 - 위치: [index.js:364](server/index.js#L364) 외 다수 — `details: err.message` 직접 반환.
 - 조치: `NODE_ENV==='production'`에서 `details` 제거.
 
-#### 🟢 3.13 보안 헤더(helmet) 전무
-- 위치: [index.js:132](server/index.js#L132) 부근 — `helmet` 미적용 (HSTS/X-Frame-Options/CSP 없음).
-- 조치: `helmet()` 추가.
+#### ✅ 3.13 보안 헤더(helmet) — 부분 패치됨 (dev, 2026-06-20)
+- 위치(과거): `helmet` 미적용 (X-Frame-Options/nosniff/CSP 없음).
+- 조치(완료): helmet 설치(^8.2.0) + `app.use(helmet({ contentSecurityPolicy: false }))` (cors 직전). **CSP는 Vite SPA 인라인 차단으로 화면 깨짐 위험 → 비활성.** 적용 헤더: X-Frame-Options(SAMEORIGIN, 클릭재킹), X-Content-Type-Options(nosniff), Referrer-Policy, COOP/CORP, X-Powered-By 제거 등. 대시보드/STB 무영향 확인(/ 200).
+- ⚠️ **잔여**: **CSP(XSS 방어)는 미적용** — 대시보드가 사용자 입력(기기명·자막·파일명) 렌더링하므로 XSS 우려 시 CSP 튜닝 별도 작업 필요. HSTS는 평문 HTTP라 무의미(브라우저 무시). CORP=same-origin이라 향후 미디어를 교차출처로 임베드하면 주의.
 
 ---
 
@@ -143,16 +147,16 @@ dev · staging · 운영이 **동일한 비밀값**을 쓰고 있어, 환경을 
 
 | 순위 | 항목 | 위치 | 난이도 |
 |------|------|------|--------|
-| <span style="color:red;text-decoration:line-through">1</span> | ✅ <span style="color:red;text-decoration:line-through">trust proxy + CF-Connecting-IP</span> **dev 완료(2026-06-13)** — 승격 필요 | §3.1 | — |
-| <span style="color:red;text-decoration:line-through">2</span> | ✅ <span style="color:red;text-decoration:line-through">dev-mode 토큰 삭제</span> **dev 완료(2026-06-16)** — 승격 필요 | §3.2 | — |
+| <span style="color:red;text-decoration:line-through">1</span> | ✅ <span style="color:red;text-decoration:line-through">trust proxy + CF-Connecting-IP</span> **dev+staging 완료** — 운영 승격만 남음 | §3.1 | — |
+| <span style="color:red;text-decoration:line-through">2</span> | ✅ <span style="color:red;text-decoration:line-through">dev-mode 토큰 삭제</span> **dev+staging 완료** — 운영 승격만 남음 | §3.2 | — |
 | 3 | 환경별 secret/비밀번호 분리 (dev≠staging≠운영) | §1 | 30분 |
-| <span style="color:red;text-decoration:line-through">4</span> | ✅ <span style="color:red;text-decoration:line-through">Socket.io `io.use()` 인증</span> **dev 완료(2026-06-16)** — 승격 필요 | §3.3 | — |
+| <span style="color:red;text-decoration:line-through">4</span> | ✅ <span style="color:red;text-decoration:line-through">Socket.io `io.use()` 인증</span> **dev+staging 완료** — 운영 승격만 남음 | §3.3 | — |
 | 5 | CORS 도메인 제한 (HTTP+Socket.io) | §3.6 | 10분 |
 | 6 | DEVICE_SECRET 로그 제거 | §3.10 | 1줄 |
-| 7 | 업로드 파일명 sanitize | §3.9 | 10분 |
-| 8 | `/uploads` 인증 | §3.7 | 10분 |
+| <span style="color:red;text-decoration:line-through">7</span> | ✅ <span style="color:red;text-decoration:line-through">업로드 파일명 sanitize</span> **dev 완료(2026-06-20)** — 승격 필요 | §3.9 | — |
+| 8 | `/uploads` 인증 — ⚠️ **단순 1줄 아님(APK 인터셉터 필요), 2026-06-20 보류** | §3.7 | APK 빌드 동반 |
 | 9 | 토큰 서명키 분리 + 비번 최소 12자 | §3.5, §3.8 | 30분 |
-| 10 | helmet · timingSafeEqual · 에러 details 제거 | §3.13/3.11/3.12 | 30분 |
+| 10 | ✅ helmet **dev 완료(2026-06-20, CSP 제외)** · timingSafeEqual · 에러 details 제거(잔여) | §3.13/3.11/3.12 | — / 30분 |
 
 > 운영 서버 변경은 자율 배포 금지 — staging에서 검증 후 AnyDesk로 사람이 직접 적용. ([DEPLOYMENT.md](DEPLOYMENT.md))
 
@@ -190,6 +194,10 @@ dev · staging · 운영이 **동일한 비밀값**을 쓰고 있어, 환경을 
 ---
 
 ## 변경 이력
+- 2026-06-20(4): **§3.13 helmet 부분 패치(dev).** helmet ^8.2.0 설치 + `helmet({contentSecurityPolicy:false})`. 클릭재킹·nosniff·X-Powered-By 제거 등 획득, CSP는 SPA 보호 위해 비활성(XSS 방어는 잔여). 대시보드/STB 무영향(/ 200) 확인. §3.13·로드맵#10 갱신.
+- 2026-06-20(3): **§3.9 파일명 sanitize 패치(dev).** `path.basename`+위험문자 치환. `x/../../../../tmp/evil.sh` → uploadDir 내부 `<ts>-evil.sh`로 정화·탈출 없음 실측. 서버 단독(클라이언트 무영향). §3.9·로드맵#7 갱신. staging/운영 승격 대기.
+- 2026-06-20(2): **§3.7 `/uploads` 인증 조치 정정 + 보류 결정.** 코드 분석 결과 STB(OkHttp 인터셉터 없음)·웹(브라우저 태그) 모두 자격 미전송 + playlist도 device-open이라 단순 requireAuth 불가(APK 인터셉터 재배포 필요). tailnet 비노출·물리≈0 전제에서 보류(C). §3.7·로드맵#8 갱신. **또한 Socket.io `deviceId` 바인딩 결함 패치(dev): io.use에서 device/webplayer에 deviceId 필수화 + run_cmd_result 바인딩 — 공유 secret 1회 유출 시 전 기기 도청/위조(register_device 가드 우회) 차단. 실기기 4대 무회귀 검증, staging/운영 승격 대기.**
+- 2026-06-20: **dev↔staging 코드 대조 재검증.** Critical 3종(§3.1/§3.2/§3.3)이 **staging에도 반영 확인** → 상단 "승격 한 번도 안 됨" 경고·§0 표·§2.1 표·로드맵 갱신(이제 "운영 승격만 남음"). **§3.4 fail-closed 해소 반영**(🔴→✅, §3.2 픽스 포함). 미패치 잔존 확인: §1(adminPassword="amore12345" dev=staging 공유 실측)·§3.5(HMAC키=adminPassword)·§3.6(CORS `*`)·§3.7(`/uploads` 무인증)·§3.8(비번 4자)·§3.9(파일명 sanitize 없음)·§3.11(timingSafeEqual 미사용)·§3.13(helmet 미적용). 운영(main)은 원격이라 미검증. **이날 STB 4대(dev-201~204)를 staging→dev(3001)로 이전** — 201~203은 공인 IP `175.207.231.68:3001`(§3.1 전제 깨지는 직접 노출 경로, §4).
 - 2026-06-14: **R2 전 환경 미사용 확정** — 현장/운영 서버 원격·직접 검사 결과 total 22개 전부 로컬, `.env`에 R2 키 없음. dev·staging도 0개. → R2 키 폐기·버킷 삭제 가능(orphan 옛 파일만 남음). Cloudflare 탈퇴 가능(도메인 처리 후).
 - 2026-06-14: **R2 비활성화 반영** — dev `.env` R2 주석 → dev·staging 로컬 `/uploads` 통일(§1). `/uploads` 노출 맥락 변화(공개 R2→로컬 tailnet, §3.7). **미사용 R2 키 폐기 예정** 조치 추가(§1) — *현장/운영 R2 전환 완료 전 삭제 금지*. §4에 **NAS 운영서버 전환 계획 토폴로지** 추가.
 - 2026-06-13: `SECURITY.md` + `SECURITY_REPORT.md` 통합. 실제 코드/토폴로지 기준 재검증, 환경 분리 위험·trust proxy·Socket.io 무인증 신규 반영. 기존 `SECURITY_REPORT.md` 삭제.

@@ -65,7 +65,7 @@ function App() {
     if (!authed) return;
     fetchInitialData();
 
-    const socket = io(SOCKET_URL);
+    const socket = io(SOCKET_URL, { auth: { token: getToken() } });
     socket.on('connect', () => setServerOnline(true));
     socket.on('device_status_update', () => fetchInitialData());
     socket.on('screen_schedule', () => {

@@ -1,6 +1,7 @@
 require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
+const helmet = require('helmet');
 const net = require('net');
 const { PrismaClient } = require('@prisma/client');
 const http = require('http');
@@ -124,6 +125,11 @@ function verifySignedToken(token) {
   return Date.now() < parseInt(expiry, 16);
 }
 
+// 보안 헤더 — CSP는 Vite SPA(인라인 스크립트/스타일)를 깨뜨릴 수 있어 비활성.
+// 클릭재킹(X-Frame-Options)·nosniff·X-Powered-By 제거 등 부작용 없는 헤더만 적용.
+// HSTS는 평문 HTTP(tailnet/LAN)라 무의미하나 브라우저가 HTTP에선 무시하므로 무해.
+app.use(helmet({ contentSecurityPolicy: false }));
+
 app.use(cors({
   origin: '*',
   methods: ['GET', 'HEAD', 'PUT', 'PATCH', 'POST', 'DELETE', 'OPTIONS'],
@@ -221,7 +227,12 @@ if (!fs.existsSync(uploadDir)) {
 // Configure multer
 const storage = multer.diskStorage({
   destination: (req, file, cb) => cb(null, uploadDir),
-  filename: (req, file, cb) => cb(null, Date.now() + '-' + file.originalname)
+  filename: (req, file, cb) => {
+    // 파일명 sanitize — originalname의 경로 성분(../) 제거 + 위험문자 치환.
+    // 정화 안 하면 path.join에서 uploadDir 밖으로 탈출(Path Traversal) 가능.
+    const safe = path.basename(file.originalname).replace(/[^a-zA-Z0-9._-]/g, '_');
+    cb(null, `${Date.now()}-${safe}`);
+  }
 });
 const ALLOWED_MIME = [
   'video/mp4', 'video/webm', 'video/quicktime',   // mp4, webm, mov
@@ -267,13 +278,23 @@ const io = new Server(httpServer, {
 io.use((socket, next) => {
   const a = socket.handshake.auth || {};
   if (a.secret && a.secret === DEVICE_SECRET) {
+    // deviceId 필수 — 생략 시 authDeviceId=null이 되어 register_device/run_cmd_result의
+    // 기기 바인딩 가드가 무력화(임의 기기 위장)되므로 핸드셰이크에서 거부한다.
+    if (!a.deviceId) {
+      console.warn(`[Socket.io] device 인증 거부: deviceId 누락 id=${socket.id}`);
+      return next(new Error('deviceId required'));
+    }
     socket.role = 'device';
-    socket.authDeviceId = a.deviceId ? String(a.deviceId) : null;
+    socket.authDeviceId = String(a.deviceId);
     return next();
   }
   if (a.secret && WEB_PLAYER_SECRET && a.secret === WEB_PLAYER_SECRET) {
+    if (!a.deviceId) {
+      console.warn(`[Socket.io] webplayer 인증 거부: deviceId 누락 id=${socket.id}`);
+      return next(new Error('deviceId required'));
+    }
     socket.role = 'webplayer';
-    socket.authDeviceId = a.deviceId ? String(a.deviceId) : null;
+    socket.authDeviceId = String(a.deviceId);
     return next();
   }
   if (a.token && verifySignedToken(a.token)) {
@@ -357,6 +378,10 @@ io.on('connection', (socket) => {
   socket.on('run_cmd_result', (data) => {
     if (socket.role !== 'device') return; // 기기만 명령 결과 전송 가능
     if (data && data.deviceId && data.cmd) {
+      if (data.deviceId !== socket.authDeviceId) { // 인증된 자기 기기 결과만 — 타기기 결과 위조 차단
+        console.warn(`[Socket.io] run_cmd_result 불일치 차단: auth=${socket.authDeviceId} req=${data.deviceId}`);
+        return;
+      }
       const key = `${data.deviceId}:${data.cmd}`;
       const cb = pendingCmdCallbacks.get(key);
       if (cb) {

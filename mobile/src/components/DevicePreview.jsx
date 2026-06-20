@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { io } from 'socket.io-client';
-import { SOCKET_URL } from '../config';
+import { SOCKET_URL, getToken } from '../config';
 
 function computeNtpPosition(medias, epochMs) {
   const durationsMs = medias.map(m => (m.duration || 10) * 1000);
@@ -60,7 +60,7 @@ export default function DevicePreview({ groupId, deviceId, onUpdate, pcAudio = f
     };
     load();
     const resyncTimer = setInterval(load, 10_000);
-    const socket = io(SOCKET_URL);
+    const socket = io(SOCKET_URL, { auth: { token: getToken() } });
     socket.on('playlist_updated', ({ groupId: gid }) => {
       if (gid === groupId) load();
     });
