@@ -1531,16 +1531,32 @@ function App() {
 
   // 월 미리보기: 그룹 자막(mode==='group')이 켜진 그룹을 deviceIndex 순서로 N개 슬롯에 배치.
   // 오프라인/누락 슬롯도 자리를 유지해야 자막이 전체 폭을 끊김 없이 흐른다.
+  // 비디오월 그룹 = 같은 그룹에 기기 2대 이상 (자막 설정과 무관). 월 미리보기로 N분할 미디어 벽 확인.
+  // 순서: 자막 deviceOrder(드래그) → Device.order → 기기명. group모드 자막이 켜져 있으면 tc를 오버레이용으로 보관.
   const wallGroups = (() => {
     const byGroup = {};
     filteredDevices.forEach(d => {
-      const tc = d.tickerConfig;
-      if (!tc?.enabled || tc.mode !== 'group') return;
       const gid = d.groupId;
-      if (!byGroup[gid]) byGroup[gid] = { gid, groupName: d.groupName, N: Math.max(1, tc.totalDevices || 1), tc, slots: [] };
-      byGroup[gid].slots[tc.deviceIndex || 0] = d;
+      if (!gid) return;
+      if (!byGroup[gid]) byGroup[gid] = { gid, groupName: d.groupName, devices: [], tc: null };
+      byGroup[gid].devices.push(d);
+      const tc = d.tickerConfig;
+      if (tc?.enabled && tc.mode === 'group' && !byGroup[gid].tc) byGroup[gid].tc = tc;
     });
-    return Object.values(byGroup);
+    return Object.values(byGroup)
+      .filter(g => g.devices.length >= 2)
+      .map(g => {
+        let order = [];
+        try { order = g.tc?.deviceOrder ? JSON.parse(g.tc.deviceOrder) : []; } catch { order = []; }
+        let slots;
+        if (order.length) {
+          slots = order.map(id => g.devices.find(d => d.id === id)).filter(Boolean);
+          g.devices.forEach(d => { if (!slots.includes(d)) slots.push(d); });
+        } else {
+          slots = [...g.devices].sort((a, b) => (a.order ?? 0) - (b.order ?? 0) || String(a.name || a.id).localeCompare(String(b.name || b.id)));
+        }
+        return { gid: g.gid, groupName: g.groupName, N: slots.length, slots, tc: g.tc };
+      });
   })();
 
   if (!authed) return <LoginScreen onLogin={() => setAuthed(true)} />;
@@ -1701,33 +1717,34 @@ function App() {
               {wallView && wallGroups.length > 0 && (
                 <div style={{ marginBottom: 14 }}>
                   {wallGroups.map(group => {
-                    const { gid, groupName, N, tc } = group;
+                    const { gid, groupName, N, slots, tc } = group;
                     const SCREEN_W = 1920, SCREEN_H = 1080;
+                    const hasTicker = !!(tc && tc.enabled && tc.text); // 자막 오버레이는 자막이 설정됐을 때만
                     const reportedCycleMs = devices.find(x => x.groupId === gid && x.tickerSync?.cycleMs > 0)?.tickerSync.cycleMs || 0;
-                    const fontSize = tc.fontSize || 48;
-                    const textWidthFull = measureTickerText(tc.text || '', fontSize, tc.fontBold || false);
+                    const fontSize = tc?.fontSize || 48;
+                    const textWidthFull = hasTicker ? measureTickerText(tc.text || '', fontSize, tc.fontBold || false) : 0;
                     const barHPct = (fontSize * 2) / SCREEN_H * 100;
                     const centerTop = (SCREEN_H - fontSize * 2) / 2 / SCREEN_H * 100;
-                    const topVal = tc.position === 'top' ? 0 : tc.position === 'center' ? `${centerTop.toFixed(2)}%` : 'auto';
-                    const botVal = tc.position === 'bottom' ? 0 : 'auto';
+                    const topVal = tc?.position === 'top' ? 0 : tc?.position === 'center' ? `${centerTop.toFixed(2)}%` : 'auto';
+                    const botVal = (tc?.position ?? 'bottom') === 'bottom' ? 0 : 'auto';
                     const fontCqw = (fontSize / SCREEN_W) * 100;
-                    const r = parseInt((tc.bgColor || '#000').slice(1, 3), 16) || 0;
-                    const g = parseInt((tc.bgColor || '#000').slice(3, 5), 16) || 0;
-                    const b = parseInt((tc.bgColor || '#000').slice(5, 7), 16) || 0;
-                    const bg = `rgba(${r},${g},${b},${(tc.bgOpacity ?? 65) / 100})`;
+                    const r = parseInt((tc?.bgColor || '#000').slice(1, 3), 16) || 0;
+                    const g = parseInt((tc?.bgColor || '#000').slice(3, 5), 16) || 0;
+                    const b = parseInt((tc?.bgColor || '#000').slice(5, 7), 16) || 0;
+                    const bg = `rgba(${r},${g},${b},${(tc?.bgOpacity ?? 65) / 100})`;
                     return (
                       <div key={gid} style={{ marginTop: 10 }}>
                         <div style={{ fontSize: '0.78rem', color: 'var(--text-secondary)', marginBottom: 5 }}>
-                          {groupName} · 비디오월 {N}분할 (이음새 연속성 검증)
+                          {groupName} · 비디오월 {N}분할 {hasTicker ? '(이음새 연속성 검증)' : '(미디어 벽 — 자막 미설정)'}
                         </div>
                         <div style={{ display: 'flex', width: '100%', background: '#000', overflow: 'hidden', border: '1px solid #334155' }}>
                           {Array.from({ length: N }).map((_, idx) => {
-                            const dev = group.slots[idx];
-                            const localXFull = tickerLocalX({
+                            const dev = slots[idx];
+                            const localXFull = hasTicker ? tickerLocalX({
                               nowMs: tickerNow + serverClockOffsetRef.current,
                               cycleMs: reportedCycleMs, speed: tc.speed || 50,
                               totalDevices: N, deviceIndex: idx, direction: tc.direction || 'rtl', textW: textWidthFull,
-                            });
+                            }) : 0;
                             const leftPct = (localXFull / SCREEN_W) * 100;
                             return (
                               <div key={idx} style={{ position: 'relative', width: `${100 / N}%`, aspectRatio: '16 / 9', overflow: 'hidden' }}>
@@ -1741,11 +1758,13 @@ function App() {
                                 <div style={{ position: 'absolute', top: 2, left: 4, zIndex: 7, color: '#60a5fa', fontSize: 10, fontWeight: 700, textShadow: '0 0 3px #000', pointerEvents: 'none' }}>
                                   {dev ? dev.name : `idx${idx}`}
                                 </div>
-                                <div style={{ position: 'absolute', left: 0, right: 0, top: topVal, bottom: botVal, height: `${barHPct.toFixed(2)}%`, background: bg, overflow: 'hidden', zIndex: 4, containerType: 'inline-size' }}>
-                                  <span style={{ position: 'absolute', whiteSpace: 'nowrap', color: tc.textColor || '#fff', fontFamily: '"Noto Sans KR", sans-serif', fontSize: `${fontCqw.toFixed(3)}cqw`, fontWeight: tc.fontBold ? 700 : 400, left: `${leftPct.toFixed(3)}%`, top: '50%', transform: 'translateY(-50%)' }}>
-                                    {tc.text}
-                                  </span>
-                                </div>
+                                {hasTicker && (
+                                  <div style={{ position: 'absolute', left: 0, right: 0, top: topVal, bottom: botVal, height: `${barHPct.toFixed(2)}%`, background: bg, overflow: 'hidden', zIndex: 4, containerType: 'inline-size' }}>
+                                    <span style={{ position: 'absolute', whiteSpace: 'nowrap', color: tc.textColor || '#fff', fontFamily: '"Noto Sans KR", sans-serif', fontSize: `${fontCqw.toFixed(3)}cqw`, fontWeight: tc.fontBold ? 700 : 400, left: `${leftPct.toFixed(3)}%`, top: '50%', transform: 'translateY(-50%)' }}>
+                                      {tc.text}
+                                    </span>
+                                  </div>
+                                )}
                               </div>
                             );
                           })}
