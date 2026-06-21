@@ -1072,7 +1072,20 @@ const MediaManager = ({ stores = [], groups = [], devices = [], selectedStoreId,
     fetchMedia();
   };
 
+  // 현재 그룹의 전 기기 재생목록(타임라인)을 비움 — 라이브러리 미디어는 유지.
+  // 비운 뒤 '변경사항 저장 및 배포'를 눌러야 기기에 반영된다.
+  const handleClearAllLanes = () => {
+    if (totalLaneItems === 0) return;
+    if (!window.confirm(`현재 그룹의 재생목록(전 기기 ${totalLaneItems}개 항목)을 모두 비울까요?\n에셋 라이브러리는 유지됩니다. 비운 뒤 '변경사항 저장 및 배포'를 눌러야 기기에 반영됩니다.`)) return;
+    setLanes(prev => {
+      const next = {};
+      Object.keys(prev).forEach(k => { next[k] = []; });
+      return next;
+    });
+  };
+
   const isDirty = JSON.stringify(lanes) !== JSON.stringify(savedState);
+  const totalLaneItems = Object.values(lanes).reduce((n, arr) => n + (arr?.length || 0), 0);
 
   // 파일 크기 포맷
   const formatSize = (bytes) => {
@@ -1241,6 +1254,19 @@ const MediaManager = ({ stores = [], groups = [], devices = [], selectedStoreId,
               일괄 적용
             </button>
           </div>
+          <button
+            onClick={handleClearAllLanes}
+            disabled={totalLaneItems === 0}
+            title="현재 그룹 전 기기의 재생목록 비우기 (라이브러리는 유지)"
+            style={{
+              display: 'flex', alignItems: 'center', gap: 6, fontSize: '0.78rem', padding: '8px 14px',
+              borderRadius: 8, border: '1px solid rgba(239,68,68,0.5)', background: 'rgba(239,68,68,0.12)',
+              color: '#f87171', cursor: totalLaneItems === 0 ? 'not-allowed' : 'pointer',
+              opacity: totalLaneItems === 0 ? 0.5 : 1, whiteSpace: 'nowrap',
+            }}
+          >
+            <Trash2 size={15} /> 재생목록 전체 삭제
+          </button>
           <button className={`btn-deploy ${isDirty ? '' : 'inactive'}`} onClick={handleSave} disabled={saving || !isDirty}>
             <Save size={18} style={{ marginRight: 8 }} /> {saving ? '저장 중...' : '변경사항 저장 및 배포'}
           </button>
