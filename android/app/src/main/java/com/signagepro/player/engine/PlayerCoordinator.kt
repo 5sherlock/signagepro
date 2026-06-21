@@ -16,6 +16,7 @@ import com.signagepro.player.InstallReceiver
 import com.signagepro.player.SignageDeviceAdmin
 import com.signagepro.player.api.ApiClient
 import com.signagepro.player.api.PlaylistDto
+import com.signagepro.player.api.PlaylistItemDto
 import com.signagepro.player.cache.MediaCacheRepo
 import com.signagepro.player.config.ConfigStore
 import com.signagepro.player.net.ControlChannel
@@ -23,6 +24,7 @@ import com.signagepro.player.net.HeartbeatService
 import com.signagepro.player.net.TvEdidInfo
 import com.signagepro.player.render.MediaRenderer
 import com.signagepro.player.sync.NtpClient
+import com.signagepro.player.sync.VideoWallSync
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -67,6 +69,7 @@ class PlayerCoordinator(
 ) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
     private val ntp = NtpClient(context)
+    private val wallSync = VideoWallSync(ntp)
     private val cache = MediaCacheRepo(context)
     private val store = PlaylistStore(context)
     private val scheduleStore = ScheduleStore(context)
@@ -95,6 +98,7 @@ class PlayerCoordinator(
      * 형식: "<index>|<total>|<filename>" (index 1-based, '|' 구분자)
      */
     @Volatile private var currentSlideInfo: String? = null
+    @Volatile private var wallSyncDebug: String? = null   // 디버그 오버레이용 wall 동기 상태
 
     private val audioManager by lazy {
         context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
@@ -210,6 +214,7 @@ class PlayerCoordinator(
                         append("slot=${slot.index + 1}/${slot.total} rem=${slot.remainingSec}s\n")
                         append("media=${slot.item.media.filename}\n")
                         append("trans=${slot.item.transition ?: "-"}")
+                        wallSyncDebug?.let { append("\n$it") }
                     } else {
                         append("slot=none")
                     }
@@ -585,10 +590,37 @@ class PlayerCoordinator(
                 // 최소 대기 = 애니메이션 시간 + 100ms 스케줄러 지연 여유.
                 // (IO 선제 로드로 200ms 버퍼 불필요 → 100ms로 단축)
                 val waitMs = (slot.nextSlotEpochMs - ntp.now()).coerceAtLeast(animMs + 100L)
-                delay(waitMs)
+                waitWithWallSync(slot.item, waitMs)
             }
         }
     }
+
+    /**
+     * wall-동기 비디오면 대기(waitMs) 동안 WALL_SYNC_INTERVAL_MS 주기로 재생 위치를 보정,
+     * 아니면 단순 delay. 동일 NTP 시각을 보는 기기들이 now()%duration 으로 수렴 → 프레임 정렬.
+     *
+     * 스파이크 트리거: media.filename 에 "wallsync" 포함 (서버/대시보드 변경 없이 검증).
+     *   → 정식 기능에서는 PlaylistItemDto.wallSync 플래그로 승격 예정.
+     */
+    private suspend fun waitWithWallSync(item: PlaylistItemDto, waitMs: Long) {
+        if (!isWallVideo(item)) { delay(waitMs); return }
+        var remaining = waitMs
+        while (remaining > 0L) {
+            val step = remaining.coerceAtMost(WALL_SYNC_INTERVAL_MS)
+            delay(step)   // 루프 재시작/취소 시 CancellationException 으로 탈출
+            remaining -= step
+            val dur = renderer.videoDurationMs()
+            if (dur > 0L) {
+                val corr = wallSync.evaluate(dur, renderer.videoPositionMs())
+                renderer.applyWallCorrection(corr)
+                wallSyncDebug = "wall drift=${corr.driftMs}ms ${corr.action} x${corr.speed}"
+            }
+        }
+    }
+
+    private fun isWallVideo(item: PlaylistItemDto): Boolean =
+        item.media.type.equals("video", ignoreCase = true) &&
+            item.media.filename.contains("wallsync", ignoreCase = true)
 
     private fun startHeartbeat(serverUrl: String, deviceId: String, secret: String) {
         val uri = try { URI(serverUrl) } catch (e: Exception) { null }
@@ -958,5 +990,6 @@ class PlayerCoordinator(
     companion object {
         private const val TAG = "PlayerCoordinator"
         private const val DEBUG_OVERLAY = false
+        private const val WALL_SYNC_INTERVAL_MS = 500L   // wall 비디오 위치 보정 주기
     }
 }

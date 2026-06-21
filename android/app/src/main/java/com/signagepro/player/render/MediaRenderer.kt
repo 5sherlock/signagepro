@@ -7,11 +7,14 @@ import android.view.View
 import android.view.animation.DecelerateInterpolator
 import android.widget.FrameLayout
 import android.widget.ImageView
+import androidx.media3.common.C
 import androidx.media3.common.MediaItem
+import androidx.media3.common.PlaybackParameters
 import androidx.media3.common.Player
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.ui.PlayerView
 import com.signagepro.player.api.PlaylistItemDto
+import com.signagepro.player.sync.VideoWallSync
 import java.io.File
 
 /**
@@ -267,6 +270,50 @@ class MediaRenderer(
         standby.alpha = 1f
         active.alpha = 0f
         imageOf(active).setImageBitmap(null)
+    }
+
+    // ── 멀티스크린 비디오월 동기 ───────────────────────────────────────────────
+    // VideoWallSync(순수계산)가 산출한 보정을 ExoPlayer에 적용한다.
+    // 모든 호출은 Main 스레드에서 이뤄져야 한다(ExoPlayer 제약) — PlayerCoordinator 루프가 Main.
+
+    /** 현재 재생 위치(ms). 미준비/이미지 슬롯이면 0. */
+    fun videoPositionMs(): Long {
+        val p = player.currentPosition
+        return if (p < 0) 0L else p
+    }
+
+    /** 현재 비디오 길이(ms). 아직 prepare 전이라 미상이면 0(보정 보류 신호). */
+    fun videoDurationMs(): Long {
+        val d = player.duration
+        return if (d == C.TIME_UNSET || d < 0) 0L else d
+    }
+
+    /**
+     * VideoWallSync.evaluate() 결과를 적용.
+     *   HARD_SEEK  → 속도 1.0x 복귀 후 목표 위치로 즉시 seek
+     *   NUDGE_*    → 재생속도 미세조정(±3%)으로 슬그머니 수렴
+     *   NONE       → 보정 불필요. 직전 nudge가 걸려 있었다면 1.0x로 복귀
+     */
+    fun applyWallCorrection(c: VideoWallSync.Correction) {
+        when (c.action) {
+            VideoWallSync.Action.HARD_SEEK -> {
+                resetSpeed()
+                player.seekTo(c.targetPosMs)
+            }
+            VideoWallSync.Action.NUDGE_FASTER,
+            VideoWallSync.Action.NUDGE_SLOWER -> {
+                if (player.playbackParameters.speed != c.speed) {
+                    player.playbackParameters = PlaybackParameters(c.speed)
+                }
+            }
+            VideoWallSync.Action.NONE -> resetSpeed()
+        }
+    }
+
+    private fun resetSpeed() {
+        if (player.playbackParameters.speed != 1f) {
+            player.playbackParameters = PlaybackParameters(1f)
+        }
     }
 
     /** 재부팅/종료 전 호출: 두 레이어를 즉시 숨기고 검은 화면으로 전환 */
