@@ -86,12 +86,15 @@ android {
         resources.excludes += "/META-INF/{AL2.0,LGPL2.1}"
     }
 
+    // 모든 variant 산출물 파일명에 버전 포함 — OTA 업로드 시 서버가 '파일명'에서 버전을 파싱하기 때문.
+    // (기존엔 release만 적용돼 debug=app-debug.apk 는 버전이 없어 OTA pendingVersion=null → 푸시 차단되던 문제 근본 해결)
+    //   release → signagepro-0.4.31.apk,  debug → signagepro-0.4.31-debug.apk
     applicationVariants.all {
-        if (buildType.name == "release") {
-            outputs.all {
-                (this as com.android.build.gradle.internal.api.BaseVariantOutputImpl)
-                    .outputFileName = "signagepro-${versionName}.apk"
-            }
+        val variant = this
+        val suffix = if (variant.buildType.name == "release") "" else "-${variant.buildType.name}"
+        outputs.all {
+            (this as com.android.build.gradle.internal.api.BaseVariantOutputImpl)
+                .outputFileName = "signagepro-${variant.versionName}${suffix}.apk"
         }
     }
 }
