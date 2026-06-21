@@ -118,12 +118,49 @@ class NtpClient(
         if (rtt < 0 || rtt > MAX_PLAUSIBLE_RTT_MS) return   // 비정상/지연 샘플 폐기
         // offset = epoch - elapsed. RTT/2로 편도 보정한 현재 epoch에서 elapsed를 뺌.
         val offset = serverEpochMs + rtt / 2 - recvElapsed
+        addSampleAndCommit(offset, rtt)
+    }
 
+    /**
+     * /api/time 으로 빠른 왕복을 rounds회 수행해 시계 오프셋을 빠르게 '정밀 락' 한다.
+     * 하트비트는 10초당 1샘플이라 수렴이 느리고 한 번 튄 RTT가 윈도에 오래 남는다.
+     * burst는 1~2초 안에 여러 샘플을 모아 '최소 RTT 근방'(가장 대칭·정확)만 필터에 주입 →
+     * Tailscale/WAN 비대칭 경로에서도 기기 간 스큐를 빠르게 줄인다(멀티스크린 비디오월 동기 핵심).
+     *
+     * 부팅 직후와 주기적으로 호출. 개별 라운드 실패는 무시하고 한 샘플이라도 성공하면 true.
+     */
+    suspend fun burstSync(serverUrl: String, rounds: Int = BURST_ROUNDS): Boolean = withContext(Dispatchers.IO) {
+        val url = serverUrl.trimEnd('/') + "/api/time"
+        var ok = false
+        repeat(rounds) {
+            try {
+                val t0 = SystemClock.elapsedRealtime()
+                val req = Request.Builder().url(url).build()
+                val epochMs = ApiClient.http().newCall(req).execute().use { resp ->
+                    if (!resp.isSuccessful) return@repeat
+                    JSONObject(resp.body?.string() ?: return@repeat).getLong("epochMs")
+                }
+                val t1 = SystemClock.elapsedRealtime()
+                val rtt = t1 - t0
+                if (rtt in 0..MAX_PLAUSIBLE_RTT_MS) {
+                    // offset = epoch - elapsed (RTT/2 편도보정한 recv 시점 epoch 기준)
+                    addSampleAndCommit(epochMs + rtt / 2 - t1, rtt)
+                    ok = true
+                }
+            } catch (e: Exception) { /* 개별 라운드 실패 무시 */ }
+        }
+        ok
+    }
+
+    /**
+     * 오프셋 샘플을 슬라이딩 윈도에 넣고 '최소 RTT 근방' 샘플들의 중앙값으로 커밋.
+     * 하트비트 ACK와 burst가 공유 — 지연 적은(정확한) 샘플이 자연히 우세해 지터 억제.
+     */
+    private fun addSampleAndCommit(offset: Long, rtt: Long) {
         val filtered: Long
         synchronized(ackSamples) {
             ackSamples.addLast(AckSample(offset, rtt))
             while (ackSamples.size > ACK_WINDOW) ackSamples.removeFirst()
-            // 지연 적은(=가장 정확한) 샘플들만 추려 중앙값 → 지터 억제 + 안정화
             val minRtt = ackSamples.minOf { it.rtt }
             val good = ackSamples.filter { it.rtt <= minRtt + RTT_TOLERANCE_MS }
                 .map { it.offset }.sorted()
@@ -186,8 +223,9 @@ class NtpClient(
         private const val KEY_EPOCH = "last_epoch_ms"
         private const val KEY_WALL  = "last_wall_ms"
         // 하트비트 ACK 오프셋 필터(약 8개 × 10초 = 최근 ~80초 윈도)
-        private const val ACK_WINDOW = 8
+        private const val ACK_WINDOW = 12
         private const val RTT_TOLERANCE_MS = 40L    // 최소 RTT + 이만큼 이내 샘플만 채택
         private const val MAX_PLAUSIBLE_RTT_MS = 5000L  // 이보다 큰 RTT는 폐기
+        private const val BURST_ROUNDS = 12         // burstSync 1회당 빠른 왕복 횟수
     }
 }

@@ -3,6 +3,7 @@ package com.signagepro.player.render
 import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
+import android.os.SystemClock
 import android.view.View
 import android.view.animation.DecelerateInterpolator
 import android.widget.FrameLayout
@@ -43,6 +44,16 @@ class MediaRenderer(
     @Volatile private var preloadedBitmap: Bitmap? = null
     @Volatile private var preloadedItemId: String? = null
 
+    // 멈춤(스톨) 워치독 상태 — 현재 재생 중인 비디오 파일과 위치 정지 감지용
+    private var currentVideoFile: File? = null
+    private var currentVideoView: PlayerView? = null   // 검은화면 복구 시 표면 재부착 대상
+    private var lastStallPos: Long = -1L
+    private var stallTicks: Int = 0
+    // 검은-첫프레임(표면 미렌더) 감지용 — onRenderedFirstFrame 콜백으로 확정
+    @Volatile private var firstFrameRendered: Boolean = false
+    private var videoLoadElapsed: Long = 0L
+    private var blackRecoveryTried: Boolean = false
+
     /**
      * IO 스레드에서 호출: 다음 슬라이드의 이미지를 미리 디코딩해 캐시에 저장.
      * 비디오 슬롯은 no-op.
@@ -70,6 +81,11 @@ class MediaRenderer(
         imageOf(active).visibility = View.GONE
         videoOf(standby).visibility = View.GONE
         imageOf(standby).visibility = View.GONE
+
+        // 실제 첫 프레임이 표면에 그려졌는지 확정 — 검은화면(표면 미렌더) 자가 복구 판단용
+        player.addListener(object : Player.Listener {
+            override fun onRenderedFirstFrame() { firstFrameRendered = true }
+        })
     }
 
     /**
@@ -126,9 +142,30 @@ class MediaRenderer(
         // 이전 player가 다른 layer에 attach돼 있어도 setPlayer로 자동 이동
         videoOf(otherLayer(layer)).player = null
 
+        // 잔존 재생속도(이전 wall-sync nudge)를 항상 1.0x로 복구한 뒤 새 미디어 로드
+        if (player.playbackParameters.speed != 1f) {
+            player.playbackParameters = PlaybackParameters(1f)
+        }
         player.setMediaItem(MediaItem.fromUri(file.toURI().toString()))
         player.prepare()
         player.playWhenReady = true
+
+        // 스톨/검은화면 워치독 대상 갱신
+        currentVideoFile = file
+        currentVideoView = playerView
+        lastStallPos = -1L
+        stallTicks = 0
+        firstFrameRendered = false
+        blackRecoveryTried = false
+        videoLoadElapsed = SystemClock.elapsedRealtime()
+
+        // 일부 RK STB는 첫 프레임을 렌더링하지 않고 검은 화면으로 멈추는 사례가 있다.
+        // prepare 직후 짧게 지연 후 같은 위치로 seek를 한 번 줘서 디코더 표면 렌더를 강제 kick.
+        playerView.postDelayed({
+            if (player.playbackState == Player.STATE_READY) {
+                player.seekTo(player.currentPosition)
+            }
+        }, FIRST_FRAME_KICK_MS)
     }
 
     private fun loadImage(layer: FrameLayout, file: File, itemId: String) {
@@ -139,6 +176,13 @@ class MediaRenderer(
             player.stop()
             player.clearMediaItems()
         }
+        // 이미지 슬롯 — 비디오 스톨/검은화면 워치독 비활성화
+        currentVideoFile = null
+        currentVideoView = null
+        lastStallPos = -1L
+        stallTicks = 0
+        firstFrameRendered = false
+        blackRecoveryTried = false
 
         val playerView = videoOf(layer)
         val imageView = imageOf(layer)
@@ -290,30 +334,90 @@ class MediaRenderer(
 
     /**
      * VideoWallSync.evaluate() 결과를 적용.
-     *   HARD_SEEK  → 속도 1.0x 복귀 후 목표 위치로 즉시 seek
-     *   NUDGE_*    → 재생속도 미세조정(±3%)으로 슬그머니 수렴
-     *   NONE       → 보정 불필요. 직전 nudge가 걸려 있었다면 1.0x로 복귀
+     *   HARD_SEEK   → 속도 1.0 복귀 + 목표 위치로 즉시 seek
+     *   SPEED_NUDGE → 재생속도 ±NUDGE 로 부드럽게 수렴
+     *   NONE        → 속도 1.0 복귀(잔존 nudge 제거)
      */
     fun applyWallCorrection(c: VideoWallSync.Correction) {
         when (c.action) {
             VideoWallSync.Action.HARD_SEEK -> {
-                resetSpeed()
+                if (player.playbackParameters.speed != 1f) player.playbackParameters = PlaybackParameters(1f)
                 player.seekTo(c.targetPosMs)
             }
-            VideoWallSync.Action.NUDGE_FASTER,
-            VideoWallSync.Action.NUDGE_SLOWER -> {
-                if (player.playbackParameters.speed != c.speed) {
-                    player.playbackParameters = PlaybackParameters(c.speed)
-                }
+            VideoWallSync.Action.SPEED_NUDGE -> {
+                if (player.playbackParameters.speed != c.speed) player.playbackParameters = PlaybackParameters(c.speed)
             }
-            VideoWallSync.Action.NONE -> resetSpeed()
+            VideoWallSync.Action.NONE -> {
+                if (player.playbackParameters.speed != 1f) player.playbackParameters = PlaybackParameters(1f)
+            }
         }
     }
 
-    private fun resetSpeed() {
-        if (player.playbackParameters.speed != 1f) {
-            player.playbackParameters = PlaybackParameters(1f)
+    /**
+     * 비디오 멈춤(스톨) 자가 복구. PlayerCoordinator 워치독이 주기적으로 Main 스레드에서 호출.
+     * 재생해야 하는 비디오인데 재생위치가 STALL_TICKS회 연속 안 늘면 멈춤으로 판단하고
+     * 현재 파일을 재prepare(같은 위치 복귀)해 앱 재시작 없이 되살린다.
+     * 일부 RK STB에서 영상 시작/도중 검은 화면으로 굳는 현상 대응.
+     */
+    fun recoverIfStalled(hdmiConnected: Boolean) {
+        val file = currentVideoFile ?: return
+        // HDMI 미연결(헤드리스)이면 복구 무의미 + 유효 표면이 없어 재로드 churn만 발생 → 건너뜀.
+        if (!hdmiConnected) { stallTicks = 0; lastStallPos = -1L; return }
+        if (player.mediaItemCount == 0 || !player.playWhenReady) { stallTicks = 0; lastStallPos = -1L; return }
+        when (player.playbackState) {
+            Player.STATE_BUFFERING -> { /* 버퍼링 중 — 정상 대기 */ }
+            Player.STATE_READY -> {
+                val pos = player.currentPosition
+                if (pos == lastStallPos) {
+                    // (a) 재생위치 정지 = 멈춤 → 재prepare
+                    if (++stallTicks >= STALL_TICKS) reloadCurrentVideo(file, pos)
+                } else {
+                    stallTicks = 0
+                    lastStallPos = pos
+                    // (b) 위치는 흐르는데 첫 프레임이 안 떠 검은 화면(일부 RK STB 표면 미바인딩).
+                    //     1차: 표면 재부착(가벼움), 그래도 안 뜨면 2차: 전체 재로드.
+                    if (!firstFrameRendered && player.playWhenReady &&
+                        SystemClock.elapsedRealtime() - videoLoadElapsed > FIRST_FRAME_TIMEOUT_MS) {
+                        if (!blackRecoveryTried) {
+                            blackRecoveryTried = true
+                            currentVideoView?.let { it.player = null; it.player = player }  // 표면 재부착
+                            videoLoadElapsed = SystemClock.elapsedRealtime()                // 재시도 유예 리셋
+                        } else {
+                            reloadCurrentVideo(file, pos)
+                        }
+                    }
+                }
+            }
+            Player.STATE_IDLE, Player.STATE_ENDED -> {
+                // 재생해야 하는데 IDLE/ENDED로 멈춤 → 재prepare
+                if (++stallTicks >= STALL_TICKS) reloadCurrentVideo(file, player.currentPosition.coerceAtLeast(0L))
+            }
         }
+    }
+
+    /**
+     * HDMI 재연결(헤드리스→연결) 시 호출. 새 디스플레이 표면에 영상이 다시 그려지도록
+     * PlayerView 표면을 재부착하고 현재 영상을 재로드한다.
+     * (RK STB는 HDMI 핫플러그 후 기존 surface가 죽은 채 자동 재렌더되지 않는 경우가 있음)
+     */
+    fun onHdmiReconnected() {
+        val file = currentVideoFile ?: return
+        val pos = player.currentPosition.coerceAtLeast(0L)
+        currentVideoView?.let { it.player = null; it.player = player }  // 새 표면 바인딩
+        reloadCurrentVideo(file, pos)
+    }
+
+    private fun reloadCurrentVideo(file: File, resumePos: Long) {
+        if (player.playbackParameters.speed != 1f) player.playbackParameters = PlaybackParameters(1f)
+        player.setMediaItem(MediaItem.fromUri(file.toURI().toString()))
+        player.prepare()
+        if (resumePos > 0L) player.seekTo(resumePos)
+        player.playWhenReady = true
+        stallTicks = 0
+        lastStallPos = -1L
+        firstFrameRendered = false
+        blackRecoveryTried = false
+        videoLoadElapsed = SystemClock.elapsedRealtime()
     }
 
     /** 재부팅/종료 전 호출: 두 레이어를 즉시 숨기고 검은 화면으로 전환 */
@@ -344,5 +448,14 @@ class MediaRenderer(
 
     fun release() {
         player.release()
+    }
+
+    companion object {
+        // prepare 직후 첫 프레임 렌더 강제 kick 지연(ms)
+        private const val FIRST_FRAME_KICK_MS = 400L
+        // 재생위치가 이 횟수만큼 연속 정지하면 멈춤으로 판단(워치독 주기 × STALL_TICKS)
+        private const val STALL_TICKS = 2
+        // 로드 후 이 시간까지 첫 프레임이 안 뜨면 검은화면으로 판단(표면 재부착 트리거)
+        private const val FIRST_FRAME_TIMEOUT_MS = 1500L
     }
 }

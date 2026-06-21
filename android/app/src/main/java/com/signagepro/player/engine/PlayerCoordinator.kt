@@ -99,6 +99,7 @@ class PlayerCoordinator(
      */
     @Volatile private var currentSlideInfo: String? = null
     @Volatile private var wallSyncDebug: String? = null   // 디버그 오버레이용 wall 동기 상태
+    @Volatile private var lastHdmiConnected: Boolean = true  // HDMI 핫플러그 재연결 감지용
 
     private val audioManager by lazy {
         context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
@@ -197,7 +198,48 @@ class PlayerCoordinator(
         startHeartbeat(serverUrl, deviceId, secret)
         startControlChannel(serverUrl, deviceId, secret)
         scheduleManager.start(scope)
+        startTimeSyncLoop(serverUrl)
+        startStallWatchdog()
         if (DEBUG_OVERLAY) startDebugLoop(deviceId)
+    }
+
+    /**
+     * 비디오 멈춤 자가 복구 워치독. 일부 RK STB가 영상 시작/도중 검은 화면으로 굳어
+     * 앱 재시작 전까지 안 풀리던 문제 대응 — 재생위치 정지를 감지해 재prepare로 복구.
+     * Main 스레드에서 동작(ExoPlayer 제약).
+     */
+    private fun startStallWatchdog() {
+        scope.launch {   // scope = Dispatchers.Main
+            while (isActive) {
+                delay(STALL_WATCH_INTERVAL_MS)
+                try {
+                    val hdmi = isHdmiConnected()
+                    // HDMI 재연결(헤드리스→연결) 시 새 표면에 영상 재바인딩 (핫플러그 검은화면 복구)
+                    if (hdmi && !lastHdmiConnected) {
+                        Log.i(TAG, "HDMI 재연결 감지 → 영상 재렌더")
+                        renderer.onHdmiReconnected()
+                    }
+                    lastHdmiConnected = hdmi
+                    renderer.recoverIfStalled(hdmi)
+                } catch (e: Exception) { Log.w(TAG, "스톨 워치독 오류: ${e.message}") }
+            }
+        }
+    }
+
+    /**
+     * 시각 정밀 동기 루프. 즉시 1회 burst 후 주기적으로 재실행.
+     * 하트비트(10초/1샘플)만으로는 Tailscale 지터에서 기기 간 스큐가 커 멀티스크린
+     * 비디오월이 어긋난다 → burst(다왕복 min-RTT)로 오프셋을 촘촘히 재락한다.
+     * IO 디스패처에서 동작(HTTP 왕복). 재생 시작을 막지 않도록 bootstrap 끝에서 비동기 기동.
+     */
+    private fun startTimeSyncLoop(serverUrl: String) {
+        scope.launch(Dispatchers.IO) {
+            while (isActive) {
+                try { ntp.burstSync(serverUrl) }
+                catch (e: Exception) { Log.w(TAG, "burst 시각 동기 실패: ${e.message}") }
+                delay(BURST_REFRESH_MS)
+            }
+        }
     }
 
     /** 진단 오버레이 */
@@ -613,7 +655,9 @@ class PlayerCoordinator(
             if (dur > 0L) {
                 val corr = wallSync.evaluate(dur, renderer.videoPositionMs())
                 renderer.applyWallCorrection(corr)
-                wallSyncDebug = "wall drift=${corr.driftMs}ms ${corr.action} x${corr.speed}"
+                // tgt = now()%dur (절대 목표 위치). 두 화면의 tgt 차이 = 기기 간 실제 스큐(ms).
+                // (drift는 자기 시계 기준이라 항상 ~0/NONE → 기기 간 동기는 tgt로만 보인다)
+                wallSyncDebug = "wall tgt=${corr.targetPosMs} drift=${corr.driftMs}ms ${corr.action}"
             }
         }
     }
@@ -989,7 +1033,9 @@ class PlayerCoordinator(
 
     companion object {
         private const val TAG = "PlayerCoordinator"
-        private const val DEBUG_OVERLAY = false
+        private const val DEBUG_OVERLAY = true           // wall drift 진단용 — 검증 후 false로
         private const val WALL_SYNC_INTERVAL_MS = 500L   // wall 비디오 위치 보정 주기
+        private const val BURST_REFRESH_MS = 20_000L     // burst 시각 재동기 주기
+        private const val STALL_WATCH_INTERVAL_MS = 2_000L  // 멈춤 워치독 점검 주기
     }
 }
