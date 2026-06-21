@@ -100,6 +100,7 @@ class PlayerCoordinator(
     @Volatile private var currentSlideInfo: String? = null
     @Volatile private var wallSyncDebug: String? = null   // 디버그 오버레이용 wall 동기 상태
     @Volatile private var lastHdmiConnected: Boolean = true  // HDMI 핫플러그 재연결 감지용
+    @Volatile private var wallOffsetMs: Long = 0L            // 비디오월 기기별 위상 오프셋(ms)
 
     private val audioManager by lazy {
         context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
@@ -154,6 +155,8 @@ class PlayerCoordinator(
         val deviceId = config.deviceId ?: return onStatus("디바이스 ID 미설정")
         val serverUrl = config.serverUrl ?: return onStatus("서버 URL 미설정")
         val secret = config.deviceSecret ?: return onStatus("디바이스 시크릿 미설정")
+
+        wallOffsetMs = config.wallOffsetMs   // 저장된 위상 오프셋 복원
 
         onStatus("시각 동기 중…")
         ntp.sync(serverUrl)
@@ -653,11 +656,11 @@ class PlayerCoordinator(
             remaining -= step
             val dur = renderer.videoDurationMs()
             if (dur > 0L) {
-                val corr = wallSync.evaluate(dur, renderer.videoPositionMs())
+                val corr = wallSync.evaluate(dur, renderer.videoPositionMs(), wallOffsetMs)
                 renderer.applyWallCorrection(corr)
-                // tgt = now()%dur (절대 목표 위치). 두 화면의 tgt 차이 = 기기 간 실제 스큐(ms).
+                // tgt = (now()-offset)%dur (절대 목표 위치). 두 화면의 tgt 차이 = 기기 간 실제 스큐(ms).
                 // (drift는 자기 시계 기준이라 항상 ~0/NONE → 기기 간 동기는 tgt로만 보인다)
-                wallSyncDebug = "wall tgt=${corr.targetPosMs} drift=${corr.driftMs}ms ${corr.action}"
+                wallSyncDebug = "wall off=${wallOffsetMs} tgt=${corr.targetPosMs} drift=${corr.driftMs}ms ${corr.action}"
             }
         }
     }
@@ -767,6 +770,12 @@ class PlayerCoordinator(
                 Log.i(TAG, "server_url 원격 변경: ${config.serverUrl} → $url (prefs 기록 후 자가 재시작)")
                 config.serverUrl = url
                 performSelfRestart()
+            },
+            onSetWallOffset = { ms ->
+                // 비디오월 위상 오프셋 — 즉시 적용(다음 wall-sync 틱부터) + prefs 영속(재시작 후 유지)
+                Log.i(TAG, "wall 위상 오프셋 변경: ${wallOffsetMs}ms → ${ms}ms")
+                wallOffsetMs = ms
+                config.wallOffsetMs = ms
             },
             onRebootDevice = {
                 Log.i(TAG, "물리 기기 재부팅 수행")

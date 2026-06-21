@@ -30,6 +30,14 @@ class ConfigStore(context: Context) {
         get() = prefs.getString(KEY_PLAYLIST_HASH, null)
         set(value) = prefs.edit().putString(KEY_PLAYLIST_HASH, value).apply()
 
+    /**
+     * 멀티스크린 비디오월 기기별 위상 오프셋(ms). 잔여 시계 스큐를 화면별로 직접 상쇄.
+     * 양수 = 이 화면을 그만큼 '늦춤'(뒤로), 음수 = '앞당김'. wall 목표 위치 계산의 anchor로 사용.
+     */
+    var wallOffsetMs: Long
+        get() = prefs.getLong(KEY_WALL_OFFSET, 0L)
+        set(value) = prefs.edit().putLong(KEY_WALL_OFFSET, value).apply()
+
     fun isConfigured(): Boolean =
         !deviceId.isNullOrBlank() && !serverUrl.isNullOrBlank()
 
@@ -43,5 +51,6 @@ class ConfigStore(context: Context) {
         private const val KEY_SERVER_URL = "server_url"
         private const val KEY_DEVICE_SECRET = "device_secret"
         private const val KEY_PLAYLIST_HASH = "playlist_hash"
+        private const val KEY_WALL_OFFSET = "wall_offset_ms"
     }
 }

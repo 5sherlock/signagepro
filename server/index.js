@@ -552,6 +552,7 @@ app.get('/api/devices', async (req, res) => {
         ...d,
         status,
         deviceTime: status === 'online' ? (cached.deviceTime || null) : null,
+        clockSkew: status === 'online' ? (cached.clockSkew ?? null) : null,
         slide: status === 'online' ? (cached.slide || null) : null,
         dl: status === 'online' ? (cached.dl || null) : null,
         vol: cached.vol !== undefined ? cached.vol : (d.vol !== undefined ? d.vol : null),
@@ -1578,6 +1579,30 @@ app.post('/api/devices/:id/server-url', async (req, res) => {
   }
 });
 
+// 비디오월 기기별 위상 오프셋(ms) 설정 — 잔여 시계 스큐를 화면별로 직접 상쇄.
+// 양수=이 화면을 늦춤(뒤로), 음수=앞당김. 기기는 즉시 적용 + prefs에 영속 저장한다.
+app.post('/api/devices/:id/wall-offset', async (req, res) => {
+  try {
+    const offsetMs = Math.round(Number(req.body?.offsetMs));
+    if (!Number.isFinite(offsetMs) || Math.abs(offsetMs) > 600000) {
+      return res.status(400).json({ error: 'offsetMs는 ±600000 이내의 숫자여야 합니다.' });
+    }
+    const device = await prisma.device.findUnique({ where: { id: req.params.id } });
+    if (!device) return res.status(404).json({ error: '기기를 찾을 수 없습니다.' });
+
+    const room = `device:${device.id}`;
+    const socketsInRoom = await io.in(room).allSockets();
+    if (socketsInRoom.size === 0) {
+      return res.status(400).json({ error: '기기 ControlChannel(소켓) 미연결 — 오프셋 명령을 보낼 수 없습니다.' });
+    }
+    io.to(room).emit('set_wall_offset', { deviceId: device.id, offsetMs });
+    console.log(`[WallOffset] set_wall_offset 전송: ${device.id} → ${offsetMs}ms (소켓 ${socketsInRoom.size}개)`);
+    res.json({ ok: true, offsetMs });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // 디버그용 쉘 명령어 실행
 app.post('/api/debug/run-cmd', async (req, res) => {
   try {
@@ -1806,6 +1831,8 @@ async function handleTcpMessage(socket, msg) {
     deviceLiveStateCache.set(deviceId, {
       ...cached,
       deviceTime: deviceTime ?? cached.deviceTime,
+      // 기기 시계 스큐(ms) = 기기 now() - 서버 수신시각. 비디오월 위상 보정용(기기 간 차이가 핵심).
+      clockSkew: (deviceTime != null) ? (deviceTime - recvTime) : (cached.clockSkew ?? null),
       slide: slide !== null ? slide : cached.slide,
       dl: dl,
       vol: vol !== null ? vol : cached.vol,

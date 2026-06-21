@@ -7,6 +7,11 @@ const API = SOCKET_URL;
 const VIDEO_RE = /\.(mp4|webm|mov|mkv|avi)$/i;
 const fmtSize = (b) => (!b ? '' : b < 1048576 ? `${(b / 1024).toFixed(0)}KB` : `${(b / 1048576).toFixed(1)}MB`);
 
+const stepBtn = {
+  minWidth: 30, padding: '3px 6px', background: 'rgba(255,255,255,0.06)', color: '#cbd5e1',
+  border: '1px solid rgba(255,255,255,0.12)', borderRadius: 5, cursor: 'pointer', fontSize: '0.72rem', fontWeight: 600,
+};
+
 /**
  * 동영상 메뉴 — 멀티스크린 비디오월용 동영상(슬라이스) 업로드/관리.
  * 업로드는 기존 미디어와 동일한 POST /api/media (multipart) 를 쓰되, 동영상만 노출.
@@ -16,6 +21,58 @@ const VideoWallManager = ({ stores = [], selectedStoreId, setSelectedStoreId }) 
   const [videos, setVideos] = useState([]);
   const [uploadProgress, setUploadProgress] = useState(null); // null | { name, pct }
   const fileRef = useRef();
+
+  // 기기별 위상 오프셋(ms) — 잔여 시계 스큐를 화면별로 직접 상쇄. 세션 동안 설정값 추적.
+  const [devices, setDevices] = useState([]);
+  const [offsets, setOffsets] = useState({});
+
+  const fetchDevices = useCallback(async () => {
+    try {
+      const res = await apiFetch(`${API}/api/devices`);
+      const list = await res.json();
+      const online = (Array.isArray(list) ? list : []).filter((d) => d.status === 'online');
+      setDevices(online);
+      setOffsets((prev) => {
+        const next = { ...prev };
+        online.forEach((d) => { if (next[d.id] === undefined) next[d.id] = 0; });
+        return next;
+      });
+    } catch (e) { console.error(e); }
+  }, []);
+
+  useEffect(() => {
+    fetchDevices();
+    const t = setInterval(fetchDevices, 5000);
+    return () => clearInterval(t);
+  }, [fetchDevices]);
+
+  const applyOffset = async (deviceId, nextMs) => {
+    const clamped = Math.max(-600000, Math.min(600000, Math.round(nextMs)));
+    try {
+      const res = await apiFetch(`${API}/api/devices/${deviceId}/wall-offset`, {
+        method: 'POST',
+        body: JSON.stringify({ offsetMs: clamped }),
+      });
+      if (!res.ok) {
+        const e = await res.json().catch(() => ({}));
+        alert(e.error || '오프셋 전송 실패');
+        return;
+      }
+      setOffsets((p) => ({ ...p, [deviceId]: clamped }));
+    } catch (e) { alert(e.message); }
+  };
+
+  // 서버가 측정한 기기별 시계 스큐(clockSkew)로 오프셋을 일괄 산출·적용 → 시작점 자동 정렬.
+  // offset_i = skew_i - median(skew). 이후 화면 보며 미세조정.
+  const autoAlign = async () => {
+    const withSkew = devices.filter((d) => Number.isFinite(d.clockSkew));
+    if (withSkew.length < 2) { alert('스큐 측정값이 부족합니다. (기기 2대 이상 + 하트비트 수신 필요)'); return; }
+    const sorted = withSkew.map((d) => d.clockSkew).sort((a, b) => a - b);
+    const ref = sorted[Math.floor(sorted.length / 2)]; // median
+    for (const d of withSkew) {
+      await applyOffset(d.id, d.clockSkew - ref);
+    }
+  };
 
   const fetchVideos = useCallback(async () => {
     if (!selectedStoreId) { setVideos([]); return; }
@@ -97,6 +154,49 @@ const VideoWallManager = ({ stores = [], selectedStoreId, setSelectedStoreId }) 
         멀티스크린 비디오월 슬라이스는 파일명에 <code style={{ color: '#3b82f6' }}>wallsync</code> 를 포함하면
         플레이어가 자동으로 동기 재생합니다. (예: <code>wallsync_slice0.mp4</code>)
       </div>
+
+      {/* 기기별 동기 미세조정 (위상 오프셋) */}
+      {devices.length > 0 && (
+        <div style={{ marginBottom: 14, padding: '10px 12px', background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.08)', borderRadius: 8 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 4 }}>
+            <span style={{ fontSize: '0.8rem', fontWeight: 600, color: '#e2e8f0' }}>기기별 동기 미세조정 (위상 오프셋)</span>
+            <div style={{ flex: 1 }} />
+            <button onClick={autoAlign} style={{ padding: '4px 12px', background: '#3b82f6', color: '#fff', border: 'none', borderRadius: 6, cursor: 'pointer', fontSize: '0.74rem', fontWeight: 700 }}>
+              자동 정렬
+            </button>
+          </div>
+          <div style={{ fontSize: '0.68rem', color: '#64748b', marginBottom: 10 }}>
+            <b>자동 정렬</b>로 서버 측정 스큐 기준 시작점을 잡은 뒤, 화면을 보며 <b>늦은 화면</b>을 −, <b>빠른 화면</b>을 + 로 미세조정합니다.
+            즉시 적용·기기에 저장됩니다. (<code style={{ color: '#94a3b8' }}>skew</code>=서버가 잰 시계차, 음수 클수록 뒤처짐)
+          </div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+            {devices.map((d) => {
+              const cur = offsets[d.id] ?? 0;
+              const slideName = (typeof d.slide === 'object' && d.slide) ? d.slide.filename : null;
+              const isWall = /wallsync/i.test(slideName || '');
+              return (
+                <div key={d.id} style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                  <span style={{ minWidth: 72, fontSize: '0.78rem', color: isWall ? '#3b82f6' : '#cbd5e1', fontWeight: isWall ? 700 : 400 }}>{d.id}</span>
+                  <span style={{ minWidth: 78, fontSize: '0.64rem', color: '#94a3b8' }}>
+                    skew {Number.isFinite(d.clockSkew) ? `${d.clockSkew > 0 ? '+' : ''}${d.clockSkew}ms` : '—'}
+                  </span>
+                  {slideName && <span style={{ fontSize: '0.62rem', color: '#64748b', minWidth: 110, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={slideName}>{slideName}</span>}
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                    {[-50, -10, -1].map((s) => (
+                      <button key={s} onClick={() => applyOffset(d.id, cur + s)} style={stepBtn}>{s}</button>
+                    ))}
+                    <span style={{ minWidth: 64, textAlign: 'center', fontSize: '0.82rem', fontWeight: 700, color: '#fbbf24' }}>{cur > 0 ? `+${cur}` : cur}ms</span>
+                    {[1, 10, 50].map((s) => (
+                      <button key={s} onClick={() => applyOffset(d.id, cur + s)} style={stepBtn}>+{s}</button>
+                    ))}
+                    <button onClick={() => applyOffset(d.id, 0)} style={{ ...stepBtn, color: '#f87171' }}>0</button>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
 
       {/* 업로드 진행률 */}
       {uploadProgress && (

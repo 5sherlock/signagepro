@@ -38,7 +38,9 @@ class ControlChannel(
     /** 물리 기기 자체 재부팅 명령 */
     private val onRebootDevice: () -> Unit = {},
     /** server_url 원격 변경 명령 — 앱이 자기 prefs에 직접 write 후 자가 재시작 */
-    private val onSetServerUrl: (url: String) -> Unit = {}
+    private val onSetServerUrl: (url: String) -> Unit = {},
+    /** 비디오월 위상 오프셋(ms) 원격 변경 — 즉시 적용 + prefs 영속 */
+    private val onSetWallOffset: (offsetMs: Long) -> Unit = {}
 ) {
     private var socket: Socket? = null
     @Volatile private var wasConnected = false
@@ -166,6 +168,15 @@ class ControlChannel(
                         Log.i(TAG, "server_url 변경 명령 수신: $url")
                         onSetServerUrl(url)
                     }
+                }
+            }
+            on("set_wall_offset") { args ->
+                val data = args.firstOrNull() as? JSONObject ?: return@on
+                val target = data.optString("deviceId", "")
+                if (target.isBlank() || target == selfDeviceId) {
+                    val ms = data.optLong("offsetMs", 0L)
+                    Log.i(TAG, "wall 위상 오프셋 변경 명령 수신: ${ms}ms")
+                    onSetWallOffset(ms)
                 }
             }
             on("run_cmd") { args ->
