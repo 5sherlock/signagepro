@@ -1,10 +1,11 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { Activity, Monitor, Film, Settings, LayoutGrid, Plus, Subtitles } from 'lucide-react';
+import { Activity, Monitor, Film, Settings, LayoutGrid, Plus, Subtitles, Video } from 'lucide-react';
 import TickerManager from './components/TickerManager';
 import { io } from 'socket.io-client';
 import GroupManager from './components/GroupManager';
 import { SOCKET_URL, apiFetch, getToken } from './config';
 import MediaManager from './components/MediaManager';
+import VideoWallManager from './components/VideoWallManager';
 import DevicePreview from './components/DevicePreview';
 import { tickerLocalX } from './lib/tickerLayout';
 import LoginScreen from './components/LoginScreen';
@@ -1597,6 +1598,10 @@ function App() {
             <Film size={20} />
             <span>미디어 스케줄링</span>
           </a>
+          <a className={`nav-item ${activeTab === 'video' ? 'active' : ''}`} onClick={() => setActiveTab('video')}>
+            <Video size={20} />
+            <span>동영상</span>
+          </a>
           <a className={`nav-item ${activeTab === 'ticker' ? 'active' : ''}`} onClick={() => setActiveTab('ticker')}>
             <Subtitles size={20} />
             <span>자막 관리</span>
@@ -2323,6 +2328,15 @@ function App() {
               setSelectedStoreId={setSelectedStoreId}
               deviceOrder={deviceOrder}
               onDeviceOrderChange={setDeviceOrder}
+            />
+          </div>
+        )}
+        {activeTab === 'video' && (
+          <div className="content-area" style={{ paddingTop: '10px' }}>
+            <VideoWallManager
+              stores={stores}
+              selectedStoreId={selectedStoreId}
+              setSelectedStoreId={setSelectedStoreId}
             />
           </div>
         )}
