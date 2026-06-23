@@ -204,7 +204,7 @@ const VideoWallManager = ({ stores = [], selectedStoreId, setSelectedStoreId }) 
   };
 
   const handleDelete = async (id, filename) => {
-    if (!window.confirm(`'${filename}'을(를) 삭제할까요?`)) return;
+    if (!window.confirm(`'${filename}'을(를) 삭제합니다.\n⚠ 재생목록(기기 화면)에 배포돼 있으면 거기서도 함께 제거되며, 되돌릴 수 없습니다.\n계속할까요?`)) return;
     await apiFetch(`${API}/api/media/${id}`, { method: 'DELETE' });
     fetchVideos();
   };
@@ -220,7 +220,7 @@ const VideoWallManager = ({ stores = [], selectedStoreId, setSelectedStoreId }) 
     if (el) el.querySelectorAll('video').forEach((v) => { v.pause(); }); // 현재 위치에서 정지(되감기 안 함)
   };
   const handleDeleteSet = async (g) => {
-    if (!window.confirm(`'${g.base}' 세트의 슬라이스 ${g.items.length}개를 모두 삭제할까요?`)) return;
+    if (!window.confirm(`'${g.base}' 세트의 슬라이스 ${g.items.length}개를 삭제합니다.\n⚠ 이 슬라이스가 배포된 재생목록(기기 화면)에서도 함께 제거되며, 되돌릴 수 없습니다.\n계속할까요?`)) return;
     for (const v of g.items) {
       await apiFetch(`${API}/api/media/${v.id}`, { method: 'DELETE' }).catch(() => {});
     }
