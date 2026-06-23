@@ -61,6 +61,13 @@ const setBtn = {
 };
 
 const lbl = { display: 'block', fontSize: '0.7rem', color: '#94a3b8', marginBottom: 5, fontWeight: 600 };
+// 해상도 프리셋 버튼 — active면 강조
+const presetBtn = (active) => ({
+  padding: '4px 9px', borderRadius: 6, cursor: 'pointer', fontSize: '0.68rem', fontWeight: 600,
+  background: active ? 'rgba(139,92,246,0.2)' : 'rgba(255,255,255,0.05)',
+  color: active ? '#c4b5fd' : '#cbd5e1',
+  border: `1px solid ${active ? 'rgba(139,92,246,0.5)' : 'rgba(255,255,255,0.12)'}`,
+});
 const inp = {
   width: '100%', padding: '7px 10px', background: 'rgba(255,255,255,0.05)', color: '#e2e8f0',
   border: '1px solid rgba(255,255,255,0.12)', borderRadius: 7, fontSize: '0.82rem', boxSizing: 'border-box',
@@ -363,25 +370,41 @@ const VideoWallManager = ({ stores = [], selectedStoreId, setSelectedStoreId }) 
   const [showProc, setShowProc] = useState(false);
   const [proc, setProc] = useState({ deviceCount: 1, sliceWidth: 3840, sliceHeight: 2160, yOffsetPct: 50, baseName: '' });
   const [procFile, setProcFile] = useState(null);
+  const [procSrcUrl, setProcSrcUrl] = useState(null); // 원본 미리보기 objectURL
+  const [procSrcDim, setProcSrcDim] = useState(null); // { w, h } 원본 해상도(메타 로드 후)
+  const [slcManual, setSlcManual] = useState(false); // 슬라이스 해상도 수동 편집 여부(프리필 덮어쓰기 방지)
   const [job, setJob] = useState(null); // null | { jobId?, status, pct }
+  const [cropPaused, setCropPaused] = useState(false); // 크롭 미리보기 재생/정지 상태
+  const [cropProg, setCropProg] = useState({ cur: 0, dur: 0 }); // 크롭 미리보기 재생 위치
   const procFileRef = useRef();
+  const cropBoxRef = useRef(null); // 크롭 미리보기 컨테이너(드래그 좌표 기준)
+  const cropVidRef = useRef(null); // 크롭 미리보기 video
+  const cropSeekTarget = useRef(null); // 스크럽 목표 시간(코얼레싱)
+  const cropSeeking = useRef(false);   // 시킹 진행 중 플래그
   const overlayDown = useRef(false); // 배경 클릭 판별: mousedown이 오버레이에서 시작됐는지 (텍스트 드래그가 밖에서 끝나도 안 닫히게)
 
-  // 메타 자동 프리필: 온라인 기기 수 → 가로 대수, EDID/stbSpec.maxRes → 슬라이스 해상도(없으면 4K)
+  // 기기들이 보고한 최대 해상도(첫 감지값). stbSpec → tvEdid 순.
+  const detectRes = useCallback(() => {
+    for (const d of devices) {
+      const res = parseRes(d.stbSpec?.maxRes) || parseRes(d.tvEdid?.maxRes);
+      if (res) return res;
+    }
+    return null;
+  }, [devices]);
+
+  // 메타 자동 프리필: 온라인 기기 수 → 가로 대수. 슬라이스 해상도는 수동 편집 전에만 감지값으로 채움.
   const prefillFromMeta = useCallback(() => {
     const count = Math.max(1, devices.length);
-    let res = null;
-    for (const d of devices) {
-      res = parseRes(d.stbSpec?.maxRes) || parseRes(d.tvEdid?.maxRes);
-      if (res) break;
-    }
-    setProc((p) => ({
-      ...p,
-      deviceCount: count,
-      sliceWidth: res?.w || 3840,
-      sliceHeight: res?.h || 2160,
-    }));
-  }, [devices]);
+    setProc((p) => {
+      const next = { ...p, deviceCount: count };
+      if (!slcManual) {
+        const res = detectRes();
+        next.sliceWidth = res?.w || 3840;
+        next.sliceHeight = res?.h || 2160;
+      }
+      return next;
+    });
+  }, [devices, slcManual, detectRes]);
 
   const openProc = () => {
     if (!selectedStoreId) { alert('먼저 사업장을 선택하세요.'); return; }
@@ -407,6 +430,14 @@ const VideoWallManager = ({ stores = [], selectedStoreId, setSelectedStoreId }) 
     });
     return () => socket.disconnect();
   }, [showProc, fetchVideos]);
+
+  // 원본 파일 → 미리보기 objectURL (선택 바뀌면 교체/해제)
+  useEffect(() => {
+    if (!procFile) { setProcSrcUrl(null); setProcSrcDim(null); return; }
+    const url = URL.createObjectURL(procFile);
+    setProcSrcUrl(url); setProcSrcDim(null); setCropPaused(false);
+    return () => URL.revokeObjectURL(url);
+  }, [procFile]);
 
   const startProc = () => {
     if (!procFile) { alert('가공할 원본 동영상을 선택하세요.'); return; }
@@ -452,6 +483,75 @@ const VideoWallManager = ({ stores = [], selectedStoreId, setSelectedStoreId }) 
   const wallW = (parseInt(proc.sliceWidth) || 0) * (parseInt(proc.deviceCount) || 0);
   const procBusy = job && !['done', 'error'].includes(job.status);
   const STATUS_LABEL = { uploading: '업로드 중', queued: '대기 중', probing: '분석 중', encoding: '가공(인코딩) 중', registering: '등록 중', done: '완료', error: '실패' };
+
+  // 서버 크롭 수식 역산: scale(cover) → 가로 중앙 + 세로 yOffset 크롭. 원본 기준 사각형(%)을 반환.
+  const cropRect = (() => {
+    if (!procSrcDim) return null;
+    const sw = procSrcDim.w, sh = procSrcDim.h;
+    const cw = wallW, ch = parseInt(proc.sliceHeight) || 0;
+    if (!sw || !sh || !cw || !ch) return null;
+    const factor = Math.max(cw / sw, ch / sh); // 캔버스를 덮도록 업스케일
+    const cropW = cw / factor, cropH = ch / factor; // 원본 픽셀 기준 크롭 크기
+    const y = Math.max(0, Math.min(100, parseFloat(proc.yOffsetPct) || 0)) / 100;
+    const xSrc = (sw - cropW) / 2, ySrc = (sh - cropH) * y;
+    return { leftPct: (xSrc / sw) * 100, topPct: (ySrc / sh) * 100, wPct: (cropW / sw) * 100, hPct: (cropH / sh) * 100 };
+  })();
+
+  // 크롭 사각형 세로 드래그 → yOffsetPct 갱신 (가로는 항상 중앙 고정이라 세로만)
+  const startCropDrag = (e) => {
+    if (procBusy || !cropRect) return;
+    e.preventDefault();
+    const box = cropBoxRef.current;
+    const hFrac = cropRect.hPct / 100;
+    if (!box || hFrac >= 1) return; // 세로가 꽉 차면 조절 불가
+    const move = (ev) => {
+      const rect = box.getBoundingClientRect();
+      const rel = (ev.clientY - rect.top) / rect.height;           // 마우스 세로 위치 0~1
+      const top = Math.max(0, Math.min(1 - hFrac, rel - hFrac / 2)); // 사각형 top 분율(중앙을 커서에)
+      setProc((p) => ({ ...p, yOffsetPct: Math.round((top / (1 - hFrac)) * 100) }));
+    };
+    move(e);
+    const up = () => { window.removeEventListener('mousemove', move); window.removeEventListener('mouseup', up); };
+    window.addEventListener('mousemove', move);
+    window.addEventListener('mouseup', up);
+  };
+
+  // 진행 중 시킹이 끝나면 최신 목표로 한 번 더 시킹(코얼레싱) → 시킹 폭주 방지로 매끄럽게
+  const flushCropSeek = () => {
+    const v = cropVidRef.current;
+    if (!v || cropSeeking.current || cropSeekTarget.current == null || !isFinite(v.duration)) return;
+    const t = cropSeekTarget.current;
+    cropSeekTarget.current = null;
+    if (Math.abs(v.currentTime - t) < 0.02) return;
+    cropSeeking.current = true;
+    try { v.currentTime = t; } catch (_) { cropSeeking.current = false; }
+  };
+
+  // 크롭 미리보기 재생 위치 스크럽 — 바 드래그/클릭으로 원본 재생 위치 이동
+  const startCropSeek = (e) => {
+    const bar = e.currentTarget;
+    const v0 = cropVidRef.current;
+    const wasPlaying = v0 && !v0.paused;
+    if (v0 && wasPlaying) v0.pause(); // 스크럽 동안 정지 → 재생과 시킹 충돌 방지
+    const move = (ev) => {
+      const v = cropVidRef.current;
+      if (!v || !isFinite(v.duration)) return;
+      const rect = bar.getBoundingClientRect();
+      const ratio = Math.max(0, Math.min(1, (ev.clientX - rect.left) / rect.width));
+      cropSeekTarget.current = ratio * v.duration;
+      setCropProg({ cur: cropSeekTarget.current, dur: v.duration }); // 핸들은 즉시 따라감
+      flushCropSeek();
+    };
+    move(e);
+    const up = () => {
+      window.removeEventListener('mousemove', move);
+      window.removeEventListener('mouseup', up);
+      const v = cropVidRef.current;
+      if (v && wasPlaying) { v.play().catch(() => {}); setCropPaused(false); } // 놓으면 재생 복귀
+    };
+    window.addEventListener('mousemove', move);
+    window.addEventListener('mouseup', up);
+  };
 
   // 동영상 카드 1개 — 비디오월 슬라이스면 sliceIdx(#0,#1…) 배지, 아니면 WALL SYNC/일반.
   const renderCard = (v, sliceIdx, flush, dragProps) => {
@@ -693,12 +793,21 @@ const VideoWallManager = ({ stores = [], selectedStoreId, setSelectedStoreId }) 
               <div>
                 <label style={lbl}>슬라이스 폭 (px)</label>
                 <input type="number" min={16} max={7680} value={proc.sliceWidth} disabled={procBusy}
-                  onChange={(e) => setProc((p) => ({ ...p, sliceWidth: e.target.value }))} style={inp} />
+                  onChange={(e) => { const v = e.target.value; setProc((p) => ({ ...p, sliceWidth: v })); setSlcManual(true); }} style={inp} />
               </div>
               <div>
                 <label style={lbl}>슬라이스 높이 (px)</label>
                 <input type="number" min={16} max={4320} value={proc.sliceHeight} disabled={procBusy}
-                  onChange={(e) => setProc((p) => ({ ...p, sliceHeight: e.target.value }))} style={inp} />
+                  onChange={(e) => { const v = e.target.value; setProc((p) => ({ ...p, sliceHeight: v })); setSlcManual(true); }} style={inp} />
+              </div>
+              {/* 해상도 프리셋 — 원클릭 입력. 감지값은 기기 EDID/스펙 기준. */}
+              <div style={{ gridColumn: '1 / 3', display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap', marginTop: -4 }}>
+                <span style={{ fontSize: '0.62rem', color: '#64748b' }}>프리셋:</span>
+                <button type="button" disabled={procBusy} onClick={() => { setProc((p) => ({ ...p, sliceWidth: 3840, sliceHeight: 2160 })); setSlcManual(true); }} style={presetBtn(proc.sliceWidth == 3840 && proc.sliceHeight == 2160)}>4K · 3840×2160</button>
+                <button type="button" disabled={procBusy} onClick={() => { setProc((p) => ({ ...p, sliceWidth: 1920, sliceHeight: 1080 })); setSlcManual(true); }} style={presetBtn(proc.sliceWidth == 1920 && proc.sliceHeight == 1080)}>FHD · 1920×1080</button>
+                {(() => { const r = detectRes(); return (
+                  <button type="button" disabled={procBusy || !r} onClick={() => { setSlcManual(false); const res = detectRes(); setProc((p) => ({ ...p, sliceWidth: res?.w || 3840, sliceHeight: res?.h || 2160 })); }} style={presetBtn(false)}>감지값{r ? ` · ${r.w}×${r.h}` : ' (없음)'}</button>
+                ); })()}
               </div>
               <div style={{ gridColumn: '1 / 3' }}>
                 <label style={lbl}>파일명 베이스 (선택)</label>
@@ -706,6 +815,49 @@ const VideoWallManager = ({ stores = [], selectedStoreId, setSelectedStoreId }) 
                   onChange={(e) => setProc((p) => ({ ...p, baseName: e.target.value }))} style={inp} />
               </div>
             </div>
+
+            {/* 원본 크롭 미리보기 — 주황 사각형 안쪽이 벽에 표시됨. 세로 드래그로 위치 조절. */}
+            {procSrcUrl && (
+              <div style={{ marginBottom: 16 }}>
+                <div style={{ fontSize: '0.68rem', color: '#94a3b8', marginBottom: 6 }}>
+                  원본 크롭 미리보기 — <b style={{ color: '#fb923c' }}>주황 영역</b>이 벽에 표시됩니다.
+                  {cropRect && cropRect.hPct < 99.5 ? ' 위아래로 드래그해 세로 위치 조절.' : ''}
+                </div>
+                <div ref={cropBoxRef} onMouseDown={startCropDrag}
+                  style={{ position: 'relative', width: '100%', background: '#000', borderRadius: 6, overflow: 'hidden', userSelect: 'none', cursor: procBusy || !cropRect || cropRect.hPct >= 99.5 ? 'default' : 'ns-resize' }}>
+                  <video ref={cropVidRef} src={procSrcUrl} muted loop autoPlay playsInline preload="auto"
+                    onLoadedMetadata={(e) => { setProcSrcDim({ w: e.currentTarget.videoWidth, h: e.currentTarget.videoHeight }); setCropProg({ cur: 0, dur: e.currentTarget.duration || 0 }); }}
+                    onTimeUpdate={(e) => setCropProg({ cur: e.currentTarget.currentTime, dur: e.currentTarget.duration || 0 })}
+                    onSeeked={() => { cropSeeking.current = false; flushCropSeek(); }}
+                    style={{ width: '100%', display: 'block', pointerEvents: 'none' }} />
+                  {/* 재생/정지 토글 — 특정 프레임에서 크롭 확인하고 싶을 때 */}
+                  <button onMouseDown={(e) => e.stopPropagation()}
+                    onClick={(e) => { e.stopPropagation(); const v = cropVidRef.current; if (!v) return; if (v.paused) { v.play().catch(() => {}); setCropPaused(false); } else { v.pause(); setCropPaused(true); } }}
+                    title={cropPaused ? '재생' : '정지'}
+                    style={{ position: 'absolute', bottom: 8, left: 8, width: 30, height: 30, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(0,0,0,0.6)', border: '1px solid rgba(255,255,255,0.2)', borderRadius: 6, color: '#fff', cursor: 'pointer', zIndex: 2 }}>
+                    {cropPaused ? <Play size={14} /> : <Square size={12} />}
+                  </button>
+                  {cropRect && (
+                    <>
+                      {/* 크롭 사각형 + 바깥 어둡게(역마스크) */}
+                      <div style={{ position: 'absolute', left: `${cropRect.leftPct}%`, top: `${cropRect.topPct}%`, width: `${cropRect.wPct}%`, height: `${cropRect.hPct}%`, border: '2px solid #fb923c', boxShadow: '0 0 0 9999px rgba(0,0,0,0.5)', boxSizing: 'border-box', pointerEvents: 'none' }} />
+                      {/* 기기 경계 분할선 */}
+                      {Array.from({ length: Math.max(1, Math.min(12, parseInt(proc.deviceCount) || 1)) - 1 }, (_, i) => {
+                        const n = parseInt(proc.deviceCount) || 1;
+                        return <div key={i} style={{ position: 'absolute', top: `${cropRect.topPct}%`, height: `${cropRect.hPct}%`, left: `${cropRect.leftPct + cropRect.wPct * (i + 1) / n}%`, borderLeft: '1px dashed rgba(251,146,60,0.8)', pointerEvents: 'none' }} />;
+                      })}
+                    </>
+                  )}
+                </div>
+                {/* 재생 위치 스크럽 바 — 드래그/클릭으로 원본 재생 위치 이동(크롭 확인용) */}
+                <div onMouseDown={startCropSeek}
+                  style={{ position: 'relative', height: 10, background: '#1e293b', borderRadius: 5, marginTop: 8, cursor: 'pointer', userSelect: 'none' }}>
+                  <div style={{ position: 'absolute', left: 0, top: 0, height: '100%', width: `${cropProg.dur ? Math.min(100, (cropProg.cur / cropProg.dur) * 100) : 0}%`, background: '#fb923c', borderRadius: 5, pointerEvents: 'none' }} />
+                  <div style={{ position: 'absolute', top: '50%', left: `${cropProg.dur ? Math.min(100, (cropProg.cur / cropProg.dur) * 100) : 0}%`, transform: 'translate(-50%, -50%)', width: 14, height: 14, borderRadius: '50%', background: '#fed7aa', border: '2px solid #fb923c', pointerEvents: 'none' }} />
+                </div>
+                <div style={{ fontSize: '0.6rem', color: '#64748b', marginTop: 4, textAlign: 'right' }}>{fmtTime(cropProg.cur)} / {fmtTime(cropProg.dur)}</div>
+              </div>
+            )}
 
             {/* 벽 미리보기 */}
             <div style={{ marginBottom: 16 }}>
