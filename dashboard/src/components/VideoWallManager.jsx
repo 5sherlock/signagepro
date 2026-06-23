@@ -579,7 +579,7 @@ const VideoWallManager = ({ stores = [], selectedStoreId, setSelectedStoreId }) 
                         const sUrl = slice ? ((slice.path || '').startsWith('http') ? slice.path : `${API}${slice.path}`) : null;
                         const dev = devices[i];
                         return (
-                          <div key={i}
+                          <div key={sliceId ?? `empty-${i}`}
                             draggable={!!slice}
                             onDragStart={(e) => { if (slice) { e.dataTransfer.setData('wallcell', JSON.stringify({ base: g.base, from: i })); e.dataTransfer.effectAllowed = 'move'; } }}
                             onDragOver={(e) => { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; }}
