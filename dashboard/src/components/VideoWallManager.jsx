@@ -941,7 +941,7 @@ const VideoWallManager = ({ stores = [], selectedStoreId, setSelectedStoreId }) 
               ) : (
                 <>
                   <button onClick={() => setShowProc(false)} style={{ padding: '8px 18px', background: 'rgba(255,255,255,0.06)', color: '#cbd5e1', border: '1px solid rgba(255,255,255,0.12)', borderRadius: 8, cursor: 'pointer', fontSize: '0.85rem' }}>닫기</button>
-                  <button onClick={startProc} disabled={!procFile} style={{ padding: '8px 18px', background: procFile ? '#8b5cf6' : '#334155', color: '#fff', border: 'none', borderRadius: 8, cursor: procFile ? 'pointer' : 'not-allowed', fontSize: '0.85rem', fontWeight: 700 }}>
+                  <button onClick={startProc} disabled={!procFile && !procMediaId} style={{ padding: '8px 18px', background: (procFile || procMediaId) ? '#8b5cf6' : '#334155', color: '#fff', border: 'none', borderRadius: 8, cursor: (procFile || procMediaId) ? 'pointer' : 'not-allowed', fontSize: '0.85rem', fontWeight: 700 }}>
                     {job?.status === 'done' ? '다시 가공' : job?.status === 'error' ? '재시도' : '가공 시작'}
                   </button>
                 </>
