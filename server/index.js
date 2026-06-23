@@ -11,7 +11,7 @@ const Busboy = require('busboy');
 const path = require('path');
 const fs = require('fs');
 const crypto = require('crypto');
-const { execFile } = require('child_process');
+const { execFile, spawn } = require('child_process');
 const os = require('os');
 const cron = require('node-cron');
 const { S3Client, PutObjectCommand, DeleteObjectCommand } = require('@aws-sdk/client-s3');
@@ -706,6 +706,160 @@ app.delete('/api/devices/:id', async (req, res) => {
   }
 });
 
+// ── 비디오월 가공(업스케일/크롭/N분할) ────────────────────────────────────────
+// 원본 1개 → 가로 4K(기본 3840×2160) 슬라이스 N개로 가공 후 미디어 자동 등록.
+// 4K×N 인코딩은 수 분 걸려 동기 응답 불가 → jobId 즉시 반환 + socket.io 진행률 푸시.
+// job 상태는 인메모리(PM2 단일 프로세스 전제). 서버 재시작 시 진행중 job은 소실.
+const FFMPEG_BIN = process.env.FFMPEG_PATH || 'ffmpeg';
+const FFPROBE_BIN = process.env.FFPROBE_PATH || 'ffprobe';
+const vwJobs = new Map(); // jobId -> { status, pct, slices, error, proc, createdAt }
+
+// ffprobe로 영상 너비/높이/길이(초) 측정
+function probeVideo(file) {
+  return new Promise((resolve, reject) => {
+    execFile(FFPROBE_BIN, [
+      '-v', 'error',
+      '-select_streams', 'v:0',
+      '-show_entries', 'stream=width,height:format=duration',
+      '-of', 'json', file,
+    ], { windowsHide: true }, (err, stdout) => {
+      if (err) return reject(new Error(`ffprobe 실패: ${err.message}`));
+      try {
+        const j = JSON.parse(stdout);
+        const s = (j.streams && j.streams[0]) || {};
+        resolve({
+          width: parseInt(s.width) || 0,
+          height: parseInt(s.height) || 0,
+          duration: parseFloat(j.format && j.format.duration) || 0,
+        });
+      } catch (e) { reject(new Error(`ffprobe 파싱 실패: ${e.message}`)); }
+    });
+  });
+}
+
+// 파일 SHA-256 (player 캐시 검증용) — /api/media 와 동일 방식
+function sha256File(file) {
+  return new Promise((resolve, reject) => {
+    const h = crypto.createHash('sha256');
+    fs.createReadStream(file)
+      .on('data', (c) => h.update(c))
+      .on('end', () => resolve(h.digest('hex')))
+      .on('error', reject);
+  });
+}
+
+// 비디오월 가공 본체(비동기). job.pct/status 갱신 + 소켓 이벤트.
+async function runVideoWallJob(job, srcPath, opts) {
+  const { storeId, deviceCount, sliceW, sliceH, yOffsetPct, baseName } = opts;
+  const emit = (ev, extra) => io.emit(ev, { jobId: job.id, ...extra });
+  try {
+    job.status = 'probing';
+    emit('vw_progress', { pct: 0, status: 'probing' });
+    const meta = await probeVideo(srcPath);
+    if (!meta.width || !meta.height) throw new Error('원본 해상도를 읽을 수 없습니다.');
+
+    const canvasW = sliceW * deviceCount; // 벽 전체 폭 (가로 N대)
+    const canvasH = sliceH;               // 벽 전체 높이
+    // 캔버스를 덮도록 업스케일(증가 방향) → 세로 위치(yOffsetPct)로 크롭 → N등분.
+    // 슬라이스별 출력을 filter_complex split 로 단일 패스 처리.
+    const splitLabels = Array.from({ length: deviceCount }, (_, i) => `[s${i}]`).join('');
+    const cropChains = Array.from({ length: deviceCount }, (_, i) =>
+      `[s${i}]crop=${sliceW}:${sliceH}:${i * sliceW}:0[o${i}]`).join(';');
+    const yExpr = `(ih-${canvasH})*${Math.max(0, Math.min(100, yOffsetPct)) / 100}`;
+    const filter =
+      `[0:v]scale=${canvasW}:${canvasH}:force_original_aspect_ratio=increase:flags=lanczos,` +
+      `crop=${canvasW}:${canvasH}:(iw-${canvasW})/2:${yExpr},` +
+      `split=${deviceCount}${splitLabels};${cropChains}`;
+
+    // 출력 파일 경로(저장명) + 미디어 표시 파일명
+    const ts = Date.now();
+    const slices = Array.from({ length: deviceCount }, (_, i) => {
+      const display = `${baseName}_wallsync_slice${i}.mp4`;
+      return { i, display, stored: `${ts}-${display}`, path: path.join(uploadDir, `${ts}-${display}`) };
+    });
+
+    // -progress/-nostats 는 전역 옵션 → 출력마다 붙이면 stdout EOF 처리가 꼬여 'close'가 안 옴(무한 대기).
+    // 전역으로 1번만 준다.
+    const args = ['-y', '-progress', 'pipe:1', '-nostats', '-i', srcPath, '-filter_complex', filter];
+    slices.forEach((s) => {
+      args.push(
+        '-map', `[o${s.i}]`,
+        // make_wall_slices.ps1 검증 플래그 + 4K 대응 level 5.1. -g15: HARD_SEEK 동기 핵심.
+        '-c:v', 'libx264', '-preset', 'medium', '-profile:v', 'high', '-level', '5.1',
+        '-g', '15', '-keyint_min', '15', '-sc_threshold', '0',
+        '-pix_fmt', 'yuv420p', '-an',
+        s.path,
+      );
+    });
+
+    job.status = 'encoding';
+    emit('vw_progress', { pct: 1, status: 'encoding' });
+    // 단일 ffmpeg 패스(filter split)로 N개 슬라이스를 동시 출력 → out_time은 원본 길이 1회분만 진행.
+    // (deviceCount를 곱하면 진행률이 1/N에서 멈춘 것처럼 보임)
+    const totalUs = (meta.duration || 0) * 1e6;
+
+    await new Promise((resolve, reject) => {
+      const proc = spawn(FFMPEG_BIN, args, { windowsHide: true });
+      job.proc = proc;
+      let buf = '';
+      proc.stdout.on('data', (d) => {
+        buf += d.toString();
+        let idx;
+        while ((idx = buf.indexOf('\n')) >= 0) {
+          const line = buf.slice(0, idx).trim();
+          buf = buf.slice(idx + 1);
+          if (line.startsWith('out_time_us=') && totalUs > 0) {
+            const us = parseInt(line.slice(12));
+            if (!isNaN(us)) {
+              const pct = Math.max(1, Math.min(99, Math.round((us / totalUs) * 100)));
+              if (pct !== job.pct) { job.pct = pct; emit('vw_progress', { pct, status: 'encoding' }); }
+            }
+          }
+        }
+      });
+      let stderr = '';
+      proc.stderr.on('data', (d) => { stderr += d.toString(); if (stderr.length > 8000) stderr = stderr.slice(-8000); });
+      proc.on('error', (e) => reject(new Error(`ffmpeg 실행 실패: ${e.message} (PATH에 ffmpeg 있는지 확인)`)));
+      proc.on('close', (code) => {
+        if (job.cancelled) return reject(new Error('사용자가 취소함'));
+        if (code === 0) resolve();
+        else reject(new Error(`ffmpeg 종료코드 ${code}: ${stderr.slice(-500)}`));
+      });
+    });
+
+    // 슬라이스를 미디어로 등록 (R2 설정 시 업로드, 아니면 로컬)
+    job.status = 'registering';
+    emit('vw_progress', { pct: 99, status: 'registering' });
+    const created = [];
+    for (const s of slices) {
+      const stat = fs.statSync(s.path);
+      const hash = await sha256File(s.path);
+      const r2Url = await uploadToR2(s.path, s.stored, 'video/mp4');
+      const mediaPath = r2Url || `/uploads/${s.stored}`;
+      if (r2Url) fs.unlink(s.path, () => {});
+      const media = await prisma.media.create({
+        data: { filename: s.display, path: mediaPath, type: 'video', size: stat.size, hash, storeId: storeId || null },
+      });
+      created.push(media);
+    }
+
+    job.status = 'done';
+    job.pct = 100;
+    job.slices = created;
+    emit('vw_done', { slices: created });
+  } catch (err) {
+    job.status = 'error';
+    job.error = err.message;
+    // 실패 시 생성된 부분 슬라이스 정리
+    emit('vw_error', { error: err.message });
+    console.error('[VideoWall] 가공 실패:', err.message);
+  } finally {
+    fs.unlink(srcPath, () => {}); // 원본 임시파일 삭제
+    job.proc = null;
+    setTimeout(() => vwJobs.delete(job.id), 10 * 60 * 1000); // 10분 후 job 정리
+  }
+}
+
 // --- REST API: 미디어 및 재생목록 ---
 
 // 1. 미디어 업로드 및 생성
@@ -757,6 +911,64 @@ app.post('/api/media', (req, res, next) => {
     console.error('[API] 미디어 저장 실패:', err.message);
     res.status(500).json({ error: `미디어 저장 실패: ${err.message}` });
   }
+});
+
+// 1-b. 비디오월 가공: 원본 업로드 + 파라미터 → jobId 즉시 반환(비동기 처리)
+app.post('/api/videowall/process', (req, res, next) => {
+  upload.single('file')(req, res, (err) => {
+    if (err) {
+      if (err.code === 'LIMIT_FILE_SIZE') return res.status(413).json({ error: '파일이 너무 큽니다. 최대 2GB.' });
+      return res.status(400).json({ error: err.message || '업로드 오류' });
+    }
+    next();
+  });
+}, (req, res) => {
+  if (!req.file) return res.status(400).json({ error: '원본 동영상이 없습니다.' });
+  if (!req.file.mimetype.startsWith('video/')) {
+    fs.unlink(req.file.path, () => {});
+    return res.status(400).json({ error: '동영상 파일만 가공할 수 있습니다.' });
+  }
+  const deviceCount = parseInt(req.body.deviceCount);
+  const sliceW = parseInt(req.body.sliceWidth) || 3840;
+  const sliceH = parseInt(req.body.sliceHeight) || 2160;
+  const yOffsetPct = req.body.yOffsetPct !== undefined ? parseFloat(req.body.yOffsetPct) : 50;
+  if (!Number.isInteger(deviceCount) || deviceCount < 1 || deviceCount > 12) {
+    fs.unlink(req.file.path, () => {});
+    return res.status(400).json({ error: '가로 대수(deviceCount)는 1~12 사이여야 합니다.' });
+  }
+  if (sliceW < 16 || sliceH < 16 || sliceW > 7680 || sliceH > 4320) {
+    fs.unlink(req.file.path, () => {});
+    return res.status(400).json({ error: '슬라이스 해상도 범위를 벗어났습니다.' });
+  }
+  // 출력 파일명 베이스 — 원본명에서 확장자/위험문자 제거
+  const rawBase = (req.body.baseName || path.parse(req.file.originalname).name || 'video');
+  // 이미 'wallsync...'가 든 파일명(슬라이스 재가공 등)은 중복 방지 위해 그 뒤를 제거
+  const baseName = rawBase.replace(/[^a-zA-Z0-9._-]/g, '_').replace(/[_-]?wallsync.*$/i, '').replace(/[_.-]+$/, '').slice(0, 40) || 'video';
+
+  const jobId = crypto.randomUUID();
+  const job = { id: jobId, status: 'queued', pct: 0, slices: null, error: null, proc: null, cancelled: false, createdAt: Date.now() };
+  vwJobs.set(jobId, job);
+  // 백그라운드 실행 (응답은 즉시)
+  runVideoWallJob(job, req.file.path, {
+    storeId: req.body.storeId || null, deviceCount, sliceW, sliceH, yOffsetPct, baseName,
+  });
+  res.status(202).json({ jobId, deviceCount, sliceW, sliceH });
+});
+
+// 1-c. 가공 job 상태 조회 (소켓 못 받는 경우 폴백)
+app.get('/api/videowall/jobs/:id', (req, res) => {
+  const job = vwJobs.get(req.params.id);
+  if (!job) return res.status(404).json({ error: 'job 없음(완료 후 만료되었거나 잘못된 id)' });
+  res.json({ jobId: job.id, status: job.status, pct: job.pct, slices: job.slices, error: job.error });
+});
+
+// 1-d. 가공 job 취소
+app.post('/api/videowall/jobs/:id/cancel', (req, res) => {
+  const job = vwJobs.get(req.params.id);
+  if (!job) return res.status(404).json({ error: 'job 없음' });
+  job.cancelled = true;
+  if (job.proc) { try { job.proc.kill('SIGKILL'); } catch (e) {} }
+  res.json({ success: true });
 });
 
 // 2. 미디어 목록 조회 (사업장별)

@@ -1,15 +1,69 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { SOCKET_URL, apiFetch } from '../config';
-import { Upload, Trash2, Video } from 'lucide-react';
+import { io } from 'socket.io-client';
+import { SOCKET_URL, apiFetch, getToken } from '../config';
+import { Upload, Trash2, Video, Scissors, X, Play, Square, MonitorPlay, SlidersHorizontal, RotateCcw } from 'lucide-react';
 
 const API = SOCKET_URL;
 
+// "3840x2160" → { w, h } (실패 시 null)
+const parseRes = (s) => {
+  const m = /^(\d+)\s*[x×]\s*(\d+)/i.exec(String(s || '').trim());
+  return m ? { w: parseInt(m[1]), h: parseInt(m[2]) } : null;
+};
+
 const VIDEO_RE = /\.(mp4|webm|mov|mkv|avi)$/i;
 const fmtSize = (b) => (!b ? '' : b < 1048576 ? `${(b / 1024).toFixed(0)}KB` : `${(b / 1048576).toFixed(1)}MB`);
+const fmtTime = (s) => { if (!isFinite(s) || s < 0) return '0:00'; const m = Math.floor(s / 60); const ss = Math.floor(s % 60); return `${m}:${String(ss).padStart(2, '0')}`; };
+
+// 파일명에서 비디오월 세트(베이스명)와 슬라이스 인덱스 추출: "osulloc_wallsync_slice2.mp4" → base=osulloc, idx=2
+// greedy(.*) — 이름에 wallsync_slice가 여러 번이면 '마지막' 것을 슬라이스 기준으로(앞부분 전체가 base).
+const WALL_SLICE_RE = /^(.*)[_-]?wallsync[_-]?slice(\d+)/i;
+// 비디오월 슬라이스를 세트별로 묶고(슬라이스는 좌→우=인덱스 오름차순), 새 세트를 먼저. 일반 동영상은 분리.
+const groupVideos = (list) => {
+  const setMap = new Map(); // base -> { base, items, newest }
+  const others = [];
+  for (const v of list) {
+    const m = WALL_SLICE_RE.exec(v.filename || '');
+    if (m) {
+      const base = (m[1] || '').replace(/[_.-]+$/, '') || '(이름 없음)';
+      if (!setMap.has(base)) setMap.set(base, { base, items: [], newest: 0 });
+      const g = setMap.get(base);
+      g.items.push({ ...v, _idx: parseInt(m[2]) });
+      const t = v.createdAt ? new Date(v.createdAt).getTime() : 0;
+      if (t > g.newest) g.newest = t;
+    } else {
+      others.push(v);
+    }
+  }
+  const sets = [...setMap.values()];
+  sets.forEach((g) => g.items.sort((a, b) => a._idx - b._idx)); // 좌→우
+  sets.sort((a, b) => b.newest - a.newest);                     // 새 세트 먼저
+  return { sets, others };
+};
+
+// 영상 URL의 자연 길이(초) 측정 — 재생목록 슬롯 duration용 (실패 시 10)
+const getVideoDuration = (url) => new Promise((resolve) => {
+  const v = document.createElement('video');
+  v.preload = 'metadata';
+  v.onloadedmetadata = () => resolve(Math.max(1, Math.round(v.duration) || 10));
+  v.onerror = () => resolve(10);
+  v.src = url;
+});
 
 const stepBtn = {
   minWidth: 30, padding: '3px 6px', background: 'rgba(255,255,255,0.06)', color: '#cbd5e1',
   border: '1px solid rgba(255,255,255,0.12)', borderRadius: 5, cursor: 'pointer', fontSize: '0.72rem', fontWeight: 600,
+};
+
+const setBtn = {
+  display: 'inline-flex', alignItems: 'center', gap: 4, padding: '4px 10px', background: 'rgba(255,255,255,0.06)',
+  color: '#cbd5e1', border: '1px solid rgba(255,255,255,0.14)', borderRadius: 6, cursor: 'pointer', fontSize: '0.72rem', fontWeight: 600,
+};
+
+const lbl = { display: 'block', fontSize: '0.7rem', color: '#94a3b8', marginBottom: 5, fontWeight: 600 };
+const inp = {
+  width: '100%', padding: '7px 10px', background: 'rgba(255,255,255,0.05)', color: '#e2e8f0',
+  border: '1px solid rgba(255,255,255,0.12)', borderRadius: 7, fontSize: '0.82rem', boxSizing: 'border-box',
 };
 
 /**
@@ -85,6 +139,33 @@ const VideoWallManager = ({ stores = [], selectedStoreId, setSelectedStoreId }) 
 
   useEffect(() => { fetchVideos(); }, [fetchVideos]);
 
+  // 미리보기 동기 + 타임라인 — 세트 첫 칸(리더)에 나머지를 맞춤(스크럽 가능). 재생 중일 때만 보정. 리더 위치를 타임라인에 표시.
+  const [playInfo, setPlayInfo] = useState({}); // base -> { cur, dur, paused }
+  useEffect(() => {
+    const id = setInterval(() => {
+      const info = {};
+      Object.entries(setRefs.current).forEach(([base, el]) => {
+        if (!el) return;
+        const vids = el.querySelectorAll('video');
+        if (!vids.length) return;
+        const leader = vids[0];
+        if (isFinite(leader.duration)) {
+          info[base] = { cur: leader.currentTime, dur: leader.duration, paused: leader.paused };
+          // 정지/재생 무관하게 항상 리더 위치로 정렬 → 모든 칸이 같은 프레임(벽 일치)
+          const t = leader.currentTime;
+          for (let i = 1; i < vids.length; i++) {
+            const v = vids[i];
+            if (!isFinite(v.duration)) continue;
+            if (Math.abs(v.currentTime - t) > 0.18) { try { v.currentTime = t; } catch (_) {} }
+            if (!leader.paused && v.paused) { try { v.play(); } catch (_) {} } // 리더 재생 중인데 빠진 칸 합류
+          }
+        }
+      });
+      setPlayInfo(info);
+    }, 350);
+    return () => clearInterval(id);
+  }, []);
+
   const uploadOne = (file) => new Promise((resolve, reject) => {
     const form = new FormData();
     if (selectedStoreId) form.append('storeId', selectedStoreId); // 텍스트 필드를 파일보다 먼저
@@ -121,6 +202,285 @@ const VideoWallManager = ({ stores = [], selectedStoreId, setSelectedStoreId }) 
     fetchVideos();
   };
 
+  // ── 비디오월 세트 단위 동작 (그리드) ─────────────────────────────────────────
+  const setRefs = useRef({}); // base -> 세트 그리드 컨테이너 el
+  const playSet = (base) => {
+    const el = setRefs.current[base];
+    if (el) el.querySelectorAll('video').forEach((v) => { try { v.play(); } catch (e) {} }); // 멈춘 지점부터 이어 재생(리더 기준 동기)
+  };
+  const stopSet = (base) => {
+    const el = setRefs.current[base];
+    if (el) el.querySelectorAll('video').forEach((v) => { v.pause(); }); // 현재 위치에서 정지(되감기 안 함)
+  };
+  const handleDeleteSet = async (g) => {
+    if (!window.confirm(`'${g.base}' 세트의 슬라이스 ${g.items.length}개를 모두 삭제할까요?`)) return;
+    for (const v of g.items) {
+      await apiFetch(`${API}/api/media/${v.id}`, { method: 'DELETE' }).catch(() => {});
+    }
+    fetchVideos();
+  };
+
+  // ── 재생목록 배정 (드래그앤드롭: 슬라이스 → 기기 슬롯) ────────────────────────
+  const [wallOrder, setWallOrder] = useState({}); // base -> [sliceId|null, ...] (index=기기 위치)
+  const [deploying, setDeploying] = useState(null); // 배포 중인 세트 base
+  const [deployMsg, setDeployMsg] = useState({});   // base -> { type:'ok'|'error', text }
+  // 되돌리기 백업: base -> { groupId: prevItems }. 메뉴 이동/새로고침에도 유지되도록 localStorage 영속.
+  const [lastBackup, setLastBackup] = useState(() => {
+    try { return JSON.parse(localStorage.getItem('SIGNAGE_WALL_BACKUP') || '{}'); } catch (e) { return {}; }
+  });
+  useEffect(() => {
+    try { localStorage.setItem('SIGNAGE_WALL_BACKUP', JSON.stringify(lastBackup)); } catch (e) {}
+  }, [lastBackup]);
+  const [showOffset, setShowOffset] = useState(false); // 동기 미세조정(위상 오프셋) 모달
+
+  // 칸 수 = max(기기 수, 슬라이스 수). 기기가 더 많으면 오른쪽이 빈 칸.
+  const rowCells = (g) => Math.max(devices.length, g.items.length);
+  const buildDefaultOrder = (g) => {
+    const arr = new Array(rowCells(g)).fill(null);
+    g.items.forEach((s, i) => { arr[i] = s.id; });
+    return arr;
+  };
+  const effOrder = (g) => {
+    const n = rowCells(g);
+    const saved = wallOrder[g.base];
+    if (!saved) return buildDefaultOrder(g);
+    const arr = saved.slice(0, n);
+    while (arr.length < n) arr.push(null);
+    return arr;
+  };
+  // 칸 from -> 칸 to 내용 swap (순서 바꾸기)
+  const swapCells = (g, from, to) => {
+    if (from === to || from == null || to == null) return;
+    setWallOrder((prev) => {
+      const n = rowCells(g);
+      let arr = prev[g.base] ? prev[g.base].slice(0, n) : buildDefaultOrder(g);
+      while (arr.length < n) arr.push(null);
+      arr = [...arr];
+      const t = arr[to]; arr[to] = arr[from]; arr[from] = t;
+      return { ...prev, [g.base]: arr };
+    });
+  };
+  // 칸 순서를 기본값(슬라이스 좌→우 그대로)으로 복원
+  const resetOrder = (g) => {
+    setWallOrder((prev) => { const n = { ...prev }; delete n[g.base]; return n; });
+    setDeployMsg((m) => ({ ...m, [g.base]: null }));
+  };
+  // 타임라인 클릭 → 세트의 모든 칸을 그 위치로 이동(스크럽)
+  const seekSet = (g, clientX, barEl) => {
+    const el = setRefs.current[g.base];
+    if (!el) return;
+    const vids = el.querySelectorAll('video');
+    if (!vids.length || !isFinite(vids[0].duration)) return;
+    const rect = barEl.getBoundingClientRect();
+    const ratio = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
+    const t = ratio * vids[0].duration;
+    vids.forEach((v) => { try { v.currentTime = t; } catch (_) {} });
+    setPlayInfo((p) => ({ ...p, [g.base]: { ...(p[g.base] || {}), cur: t } }));
+  };
+  // 타임라인 드래그 스크럽 — 누른 채 움직이면 전 칸이 실시간으로 같이 이동
+  const startScrub = (g, e) => {
+    e.preventDefault();
+    const barEl = e.currentTarget;
+    seekSet(g, e.clientX, barEl);
+    const onMove = (ev) => seekSet(g, ev.clientX, barEl);
+    const onUp = () => { window.removeEventListener('mousemove', onMove); window.removeEventListener('mouseup', onUp); };
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onUp);
+  };
+
+  // 현재 칸 배치대로 배포: 칸 i 슬라이스 -> devices[i] (빈 칸이면 그 기기의 wall 항목 제거)
+  const deploySet = async (g) => {
+    const order = effOrder(g);
+    const pairs = []; const clearIds = [];
+    order.forEach((sliceId, i) => {
+      const dev = devices[i];
+      if (!dev) return;
+      if (sliceId) { const slice = g.items.find((s) => s.id === sliceId); if (slice) pairs.push({ deviceId: dev.id, slice, dev }); }
+      else clearIds.push({ deviceId: dev.id, dev });
+    });
+    if (pairs.length === 0) { setDeployMsg((m) => ({ ...m, [g.base]: { type: 'error', text: '배정된 칸이 없습니다.' } })); return; }
+    if (!window.confirm(`현재 배치대로 ${pairs.length}개 기기의 재생목록을 덮어씁니다.\n해당 기기의 기존 영상은 교체됩니다. 진행할까요?\n(배포 후 '되돌리기'로 복구 가능)`)) return;
+    setDeploying(g.base);
+    setDeployMsg((m) => ({ ...m, [g.base]: null }));
+    try {
+      const enriched = [];
+      for (const p of pairs) {
+        if (!p.dev.groupId) throw new Error(`${p.dev.name || p.deviceId}: 그룹 미지정으로 배정 불가`);
+        const url = (p.slice.path || '').startsWith('http') ? p.slice.path : `${API}${p.slice.path}`;
+        const duration = await getVideoDuration(url);
+        enriched.push({ ...p, groupId: p.dev.groupId, duration });
+      }
+      const addByGroup = enriched.reduce((acc, e) => { (acc[e.groupId] ||= []).push(e); return acc; }, {});
+      const clearByGroup = {};
+      clearIds.forEach((c) => { if (c.dev.groupId) (clearByGroup[c.dev.groupId] ||= new Set()).add(c.deviceId); });
+      const groups = new Set([...Object.keys(addByGroup), ...Object.keys(clearByGroup)]);
+      const backup = {}; // 되돌리기용: 그룹별 직전 전체 재생목록
+      for (const groupId of groups) {
+        const adds = addByGroup[groupId] || [];
+        const managed = new Set([...adds.map((e) => e.deviceId), ...((clearByGroup[groupId] && [...clearByGroup[groupId]]) || [])]);
+        const res = await apiFetch(`${API}/api/groups/${groupId}/playlist`);
+        const data = await res.json().catch(() => ({ medias: [] }));
+        const existing = Array.isArray(data.medias) ? data.medias : [];
+        const toItem = (it) => ({ mediaId: it.mediaId, duration: it.duration || 10, targetDeviceId: it.targetDeviceId || null, transition: it.transition || 'none', transitionTime: it.transitionTime || 0, slideDirection: it.slideDirection || 'right' });
+        backup[groupId] = existing.map(toItem); // 덮어쓰기 전 원본 보관
+        const kept = existing.filter((it) => !(it.targetDeviceId && managed.has(it.targetDeviceId))).map(toItem);
+        const added = adds.map((e) => ({ mediaId: e.slice.id, duration: e.duration, targetDeviceId: e.deviceId, transition: 'none', transitionTime: 0, slideDirection: 'right' }));
+        const save = await apiFetch(`${API}/api/groups/${groupId}/playlist`, { method: 'POST', body: JSON.stringify({ items: [...kept, ...added] }) });
+        if (!save.ok) { const er = await save.json().catch(() => ({})); throw new Error(er.error || '재생목록 저장 실패'); }
+      }
+      setLastBackup((b) => ({ ...b, [g.base]: backup }));
+      setDeployMsg((m) => ({ ...m, [g.base]: { type: 'ok', text: `${pairs.length}개 기기에 배포 완료 (즉시 반영)` } }));
+      fetchDevices();
+    } catch (err) {
+      setDeployMsg((m) => ({ ...m, [g.base]: { type: 'error', text: err.message } }));
+    } finally {
+      setDeploying(null);
+    }
+  };
+
+  // 직전 배포 되돌리기 (배포 전 보관한 원본 재생목록으로 복구)
+  const undoDeploy = async (g) => {
+    const backup = lastBackup[g.base];
+    if (!backup) return;
+    if (!window.confirm('직전 배포를 되돌려 이전 재생목록으로 복구합니다. 진행할까요?')) return;
+    setDeploying(g.base);
+    try {
+      for (const [groupId, items] of Object.entries(backup)) {
+        const save = await apiFetch(`${API}/api/groups/${groupId}/playlist`, { method: 'POST', body: JSON.stringify({ items }) });
+        if (!save.ok) { const er = await save.json().catch(() => ({})); throw new Error(er.error || '복구 실패'); }
+      }
+      setLastBackup((b) => { const n = { ...b }; delete n[g.base]; return n; });
+      setDeployMsg((m) => ({ ...m, [g.base]: { type: 'ok', text: '되돌렸습니다. (이전 재생목록으로 복구)' } }));
+      fetchDevices();
+    } catch (err) {
+      setDeployMsg((m) => ({ ...m, [g.base]: { type: 'error', text: err.message } }));
+    } finally {
+      setDeploying(null);
+    }
+  };
+
+  // ── 비디오월 가공(업스케일/크롭/N분할) ──────────────────────────────────────
+  const [showProc, setShowProc] = useState(false);
+  const [proc, setProc] = useState({ deviceCount: 1, sliceWidth: 3840, sliceHeight: 2160, yOffsetPct: 50, baseName: '' });
+  const [procFile, setProcFile] = useState(null);
+  const [job, setJob] = useState(null); // null | { jobId?, status, pct }
+  const procFileRef = useRef();
+  const overlayDown = useRef(false); // 배경 클릭 판별: mousedown이 오버레이에서 시작됐는지 (텍스트 드래그가 밖에서 끝나도 안 닫히게)
+
+  // 메타 자동 프리필: 온라인 기기 수 → 가로 대수, EDID/stbSpec.maxRes → 슬라이스 해상도(없으면 4K)
+  const prefillFromMeta = useCallback(() => {
+    const count = Math.max(1, devices.length);
+    let res = null;
+    for (const d of devices) {
+      res = parseRes(d.stbSpec?.maxRes) || parseRes(d.tvEdid?.maxRes);
+      if (res) break;
+    }
+    setProc((p) => ({
+      ...p,
+      deviceCount: count,
+      sliceWidth: res?.w || 3840,
+      sliceHeight: res?.h || 2160,
+    }));
+  }, [devices]);
+
+  const openProc = () => {
+    if (!selectedStoreId) { alert('먼저 사업장을 선택하세요.'); return; }
+    setProcFile(null);
+    setJob(null);
+    prefillFromMeta();
+    setShowProc(true);
+  };
+
+  // 가공 진행률 소켓 — 모달 열려 있을 때만 연결
+  useEffect(() => {
+    if (!showProc) return;
+    const socket = io(SOCKET_URL, { auth: { token: getToken() } });
+    socket.on('vw_progress', ({ jobId, pct, status }) => {
+      setJob((j) => (j && j.jobId === jobId ? { ...j, pct, status } : j));
+    });
+    socket.on('vw_done', ({ jobId, slices }) => {
+      setJob((j) => (j && j.jobId === jobId ? { ...j, status: 'done', pct: 100, slices } : j));
+      fetchVideos();
+    });
+    socket.on('vw_error', ({ jobId, error }) => {
+      setJob((j) => (j && j.jobId === jobId ? { ...j, status: 'error', error } : j));
+    });
+    return () => socket.disconnect();
+  }, [showProc, fetchVideos]);
+
+  const startProc = () => {
+    if (!procFile) { alert('가공할 원본 동영상을 선택하세요.'); return; }
+    const n = parseInt(proc.deviceCount);
+    if (!Number.isInteger(n) || n < 1 || n > 12) { alert('가로 대수는 1~12 사이여야 합니다.'); return; }
+    const form = new FormData();
+    form.append('storeId', selectedStoreId);
+    form.append('deviceCount', String(n));
+    form.append('sliceWidth', String(proc.sliceWidth));
+    form.append('sliceHeight', String(proc.sliceHeight));
+    form.append('yOffsetPct', String(proc.yOffsetPct));
+    if (proc.baseName) form.append('baseName', proc.baseName);
+    form.append('file', procFile);
+
+    setJob({ status: 'uploading', pct: 0 });
+    const xhr = new XMLHttpRequest();
+    xhr.open('POST', `${API}/api/videowall/process`);
+    const token = getToken();
+    if (token) xhr.setRequestHeader('Authorization', `Bearer ${token}`);
+    xhr.upload.onprogress = (ev) => {
+      if (ev.lengthComputable) setJob((j) => ({ ...j, status: 'uploading', pct: Math.round((ev.loaded / ev.total) * 100) }));
+    };
+    xhr.onload = () => {
+      if (xhr.status >= 400) {
+        let msg = `업로드 실패 (${xhr.status})`;
+        try { msg = JSON.parse(xhr.responseText).error || msg; } catch (e) {}
+        setJob({ status: 'error', error: msg });
+        return;
+      }
+      const { jobId } = JSON.parse(xhr.responseText);
+      // 업로드 완료 → 서버 가공 시작. 이후 진행률은 소켓이 채움.
+      setJob({ jobId, status: 'probing', pct: 0 });
+    };
+    xhr.onerror = () => setJob({ status: 'error', error: '네트워크 오류' });
+    xhr.send(form);
+  };
+
+  const cancelProc = () => {
+    if (job?.jobId) apiFetch(`${API}/api/videowall/jobs/${job.jobId}/cancel`, { method: 'POST' }).catch(() => {});
+    setJob(null);
+  };
+
+  const wallW = (parseInt(proc.sliceWidth) || 0) * (parseInt(proc.deviceCount) || 0);
+  const procBusy = job && !['done', 'error'].includes(job.status);
+  const STATUS_LABEL = { uploading: '업로드 중', queued: '대기 중', probing: '분석 중', encoding: '가공(인코딩) 중', registering: '등록 중', done: '완료', error: '실패' };
+
+  // 동영상 카드 1개 — 비디오월 슬라이스면 sliceIdx(#0,#1…) 배지, 아니면 WALL SYNC/일반.
+  const renderCard = (v, sliceIdx, flush, dragProps) => {
+    const isWall = /wallsync/i.test(v.filename || '');
+    const url = (v.path || '').startsWith('http') ? v.path : `${API}${v.path}`;
+    return (
+      <div key={v.id} {...(dragProps || {})} style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.08)', borderRadius: flush ? 0 : 10, overflow: 'hidden', position: 'relative', cursor: dragProps ? 'grab' : 'default' }}>
+        <div style={{ aspectRatio: '16 / 9', background: '#000' }}>
+          <video src={url} muted loop playsInline preload="metadata" style={{ width: '100%', height: '100%', objectFit: 'contain' }}
+            onMouseEnter={(e) => e.currentTarget.play().catch(() => {})}
+            onMouseLeave={(e) => { e.currentTarget.pause(); e.currentTarget.currentTime = 0; }} />
+        </div>
+        {sliceIdx != null ? (
+          <span style={{ position: 'absolute', top: 8, left: 8, padding: '2px 8px', background: '#3b82f6', color: '#fff', fontSize: '0.62rem', fontWeight: 700, borderRadius: 6 }}>#{sliceIdx}</span>
+        ) : isWall ? (
+          <span style={{ position: 'absolute', top: 8, left: 8, padding: '2px 8px', background: '#3b82f6', color: '#fff', fontSize: '0.62rem', fontWeight: 700, borderRadius: 6, letterSpacing: '0.3px' }}>WALL SYNC</span>
+        ) : null}
+        <button onClick={() => handleDelete(v.id, v.filename)} title="삭제"
+          style={{ position: 'absolute', top: 6, right: 6, width: 26, height: 26, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(0,0,0,0.55)', border: 'none', borderRadius: 6, color: '#f87171', cursor: 'pointer' }}>
+          <Trash2 size={14} />
+        </button>
+        <div style={{ padding: '8px 10px' }}>
+          <div style={{ fontSize: '0.78rem', color: '#e2e8f0', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={v.filename}>{v.filename}</div>
+          {v.size ? <div style={{ fontSize: '0.66rem', color: '#64748b', marginTop: 2 }}>{fmtSize(v.size)}</div> : null}
+        </div>
+      </div>
+    );
+  };
+
   return (
     <div style={{ padding: '4px 8px', height: '100%', display: 'flex', flexDirection: 'column' }}>
       {/* 헤더 */}
@@ -134,6 +494,19 @@ const VideoWallManager = ({ stores = [], selectedStoreId, setSelectedStoreId }) 
           {stores.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
         </select>
         <div style={{ flex: 1 }} />
+        <button
+          onClick={openProc}
+          disabled={!selectedStoreId}
+          title="원본 동영상 1개를 업스케일·크롭 후 가로 대수만큼 슬라이스로 분할해 자동 등록"
+          style={{
+            display: 'flex', alignItems: 'center', gap: 6, padding: '8px 16px',
+            background: selectedStoreId ? '#8b5cf6' : '#334155', color: '#fff',
+            border: 'none', borderRadius: 8, cursor: selectedStoreId ? 'pointer' : 'not-allowed',
+            fontSize: '0.85rem', fontWeight: 600,
+          }}
+        >
+          <Scissors size={16} /> 비디오월 가공
+        </button>
         <button
           onClick={() => fileRef.current?.click()}
           disabled={!selectedStoreId}
@@ -155,48 +528,6 @@ const VideoWallManager = ({ stores = [], selectedStoreId, setSelectedStoreId }) 
         플레이어가 자동으로 동기 재생합니다. (예: <code>wallsync_slice0.mp4</code>)
       </div>
 
-      {/* 기기별 동기 미세조정 (위상 오프셋) */}
-      {devices.length > 0 && (
-        <div style={{ marginBottom: 14, padding: '10px 12px', background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.08)', borderRadius: 8 }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 4 }}>
-            <span style={{ fontSize: '0.8rem', fontWeight: 600, color: '#e2e8f0' }}>기기별 동기 미세조정 (위상 오프셋)</span>
-            <div style={{ flex: 1 }} />
-            <button onClick={autoAlign} style={{ padding: '4px 12px', background: '#3b82f6', color: '#fff', border: 'none', borderRadius: 6, cursor: 'pointer', fontSize: '0.74rem', fontWeight: 700 }}>
-              자동 정렬
-            </button>
-          </div>
-          <div style={{ fontSize: '0.68rem', color: '#64748b', marginBottom: 10 }}>
-            <b>자동 정렬</b>로 서버 측정 스큐 기준 시작점을 잡은 뒤, 화면을 보며 <b>늦은 화면</b>을 −, <b>빠른 화면</b>을 + 로 미세조정합니다.
-            즉시 적용·기기에 저장됩니다. (<code style={{ color: '#94a3b8' }}>skew</code>=서버가 잰 시계차, 음수 클수록 뒤처짐)
-          </div>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-            {devices.map((d) => {
-              const cur = offsets[d.id] ?? 0;
-              const slideName = (typeof d.slide === 'object' && d.slide) ? d.slide.filename : null;
-              const isWall = /wallsync/i.test(slideName || '');
-              return (
-                <div key={d.id} style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-                  <span style={{ minWidth: 72, fontSize: '0.78rem', color: isWall ? '#3b82f6' : '#cbd5e1', fontWeight: isWall ? 700 : 400 }}>{d.id}</span>
-                  <span style={{ minWidth: 78, fontSize: '0.64rem', color: '#94a3b8' }}>
-                    skew {Number.isFinite(d.clockSkew) ? `${d.clockSkew > 0 ? '+' : ''}${d.clockSkew}ms` : '—'}
-                  </span>
-                  {slideName && <span style={{ fontSize: '0.62rem', color: '#64748b', minWidth: 110, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={slideName}>{slideName}</span>}
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-                    {[-50, -10, -1].map((s) => (
-                      <button key={s} onClick={() => applyOffset(d.id, cur + s)} style={stepBtn}>{s}</button>
-                    ))}
-                    <span style={{ minWidth: 64, textAlign: 'center', fontSize: '0.82rem', fontWeight: 700, color: '#fbbf24' }}>{cur > 0 ? `+${cur}` : cur}ms</span>
-                    {[1, 10, 50].map((s) => (
-                      <button key={s} onClick={() => applyOffset(d.id, cur + s)} style={stepBtn}>+{s}</button>
-                    ))}
-                    <button onClick={() => applyOffset(d.id, 0)} style={{ ...stepBtn, color: '#f87171' }}>0</button>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        </div>
-      )}
 
       {/* 업로드 진행률 */}
       {uploadProgress && (
@@ -208,37 +539,289 @@ const VideoWallManager = ({ stores = [], selectedStoreId, setSelectedStoreId }) 
         </div>
       )}
 
-      {/* 동영상 그리드 */}
+      {/* 동영상 목록 — 비디오월은 세트별 한 줄(좌→우 슬라이스), 새 세트 먼저 */}
       {!selectedStoreId ? (
         <div style={{ color: '#64748b', fontSize: '0.85rem', marginTop: 24 }}>사업장을 선택하면 업로드된 동영상이 표시됩니다.</div>
       ) : videos.length === 0 ? (
         <div style={{ color: '#64748b', fontSize: '0.85rem', marginTop: 24 }}>업로드된 동영상이 없습니다. 우측 상단 <b>동영상 업로드</b>로 추가하세요.</div>
-      ) : (
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: 14, overflowY: 'auto', paddingBottom: 16 }}>
-          {videos.map((v) => {
-            const isWall = /wallsync/i.test(v.filename || '');
-            const url = (v.path || '').startsWith('http') ? v.path : `${API}${v.path}`;
-            return (
-              <div key={v.id} style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.08)', borderRadius: 10, overflow: 'hidden', position: 'relative' }}>
-                <div style={{ aspectRatio: '16 / 9', background: '#000' }}>
-                  <video src={url} muted loop playsInline preload="metadata" style={{ width: '100%', height: '100%', objectFit: 'contain' }}
-                    onMouseEnter={(e) => e.currentTarget.play().catch(() => {})}
-                    onMouseLeave={(e) => { e.currentTarget.pause(); e.currentTarget.currentTime = 0; }} />
+      ) : (() => {
+        const { sets, others } = groupVideos(videos);
+        return (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 18, overflowY: 'auto', paddingBottom: 16 }}>
+            {sets.map((g) => (
+              <div key={g.base}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+                  <span style={{ padding: '2px 8px', background: 'rgba(59,130,246,0.15)', border: '1px solid rgba(59,130,246,0.35)', color: '#93c5fd', fontSize: '0.66rem', fontWeight: 700, borderRadius: 6 }}>비디오월</span>
+                  <span style={{ fontSize: '0.82rem', color: '#e2e8f0', fontWeight: 600 }} title={g.base}>{g.base}</span>
+                  <span style={{ fontSize: '0.7rem', color: '#64748b' }}>슬라이스 {g.items.length}개 · 좌→우</span>
+                  <div style={{ flex: 1 }} />
+                  <button onClick={() => resetOrder(g)} title="칸 순서를 기본(슬라이스 좌→우)으로 되돌리기" style={setBtn}><RotateCcw size={13} /> 순서 원래대로</button>
+                  <button onClick={() => deploySet(g)} disabled={deploying === g.base} title="아래 배정대로 재생목록에 배포" style={{ ...setBtn, color: '#c4b5fd', borderColor: 'rgba(139,92,246,0.45)', cursor: deploying === g.base ? 'wait' : 'pointer' }}><MonitorPlay size={13} /> {deploying === g.base ? '배포 중…' : '배포'}</button>
+                  {lastBackup[g.base] && (
+                    <button onClick={() => undoDeploy(g)} disabled={deploying === g.base} title="직전 배포 취소(이전 재생목록 복구)" style={{ ...setBtn, color: '#fbbf24', borderColor: 'rgba(251,191,36,0.45)' }}><RotateCcw size={13} /> 되돌리기</button>
+                  )}
+                  <button onClick={() => playSet(g.base)} title="세트 동시 재생" style={setBtn}><Play size={13} /> 재생</button>
+                  <button onClick={() => stopSet(g.base)} title="정지" style={setBtn}><Square size={12} /> 정지</button>
+                  <button onClick={() => setShowOffset(true)} title="기기별 동기 미세조정(위상 오프셋)" style={setBtn}><SlidersHorizontal size={13} /> 동기 미세조정</button>
+                  <button onClick={() => handleDeleteSet(g)} title="세트 전체 삭제" style={{ ...setBtn, color: '#fca5a5', borderColor: 'rgba(248,113,113,0.4)' }}><Trash2 size={13} /> 세트 삭제</button>
                 </div>
-                {isWall && (
-                  <span style={{ position: 'absolute', top: 8, left: 8, padding: '2px 8px', background: '#3b82f6', color: '#fff', fontSize: '0.62rem', fontWeight: 700, borderRadius: 6, letterSpacing: '0.3px' }}>WALL SYNC</span>
+                {/* 슬라이스(드래그 소스) — '5개 기준' 크기 고정. 직각 맞붙임. */}
+                <div style={{ fontSize: '0.66rem', color: '#64748b', marginBottom: 6 }}>
+                  칸을 드래그해 순서를 바꾸세요. 칸 위치 = 모니터(아래 기기명). 기기가 더 많으면 오른쪽이 빈 칸. · 배치 후 <b>배포</b>
+                </div>
+                {(() => {
+                  const order = effOrder(g);
+                  const n = order.length || 1;
+                  return (
+                    <div ref={(el) => { setRefs.current[g.base] = el; }} style={{ width: `${Math.min(100, (n / 5) * 100)}%`, display: 'grid', gridTemplateColumns: `repeat(${n}, 1fr)`, gap: 0, border: '1px solid rgba(255,255,255,0.1)' }}>
+                      {order.map((sliceId, i) => {
+                        const slice = sliceId ? g.items.find((s) => s.id === sliceId) : null;
+                        const sUrl = slice ? ((slice.path || '').startsWith('http') ? slice.path : `${API}${slice.path}`) : null;
+                        const dev = devices[i];
+                        return (
+                          <div key={i}
+                            draggable={!!slice}
+                            onDragStart={(e) => { if (slice) { e.dataTransfer.setData('wallcell', JSON.stringify({ base: g.base, from: i })); e.dataTransfer.effectAllowed = 'move'; } }}
+                            onDragOver={(e) => { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; }}
+                            onDrop={(e) => { e.preventDefault(); try { const data = JSON.parse(e.dataTransfer.getData('wallcell')); if (data.base === g.base) swapCells(g, data.from, i); } catch (_) {} }}
+                            style={{ position: 'relative', background: '#000', cursor: slice ? 'grab' : 'default', borderRight: i < n - 1 ? '1px solid rgba(255,255,255,0.12)' : 'none', outline: slice ? 'none' : '1px dashed rgba(255,255,255,0.18)', outlineOffset: -3 }}>
+                            <div style={{ aspectRatio: '16 / 9', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                              {slice ? (
+                                <video src={sUrl} muted loop playsInline preload="metadata" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                              ) : (
+                                <span style={{ color: '#475569', fontSize: '0.68rem' }}>빈 칸</span>
+                              )}
+                            </div>
+                            {slice && <span style={{ position: 'absolute', top: 4, left: 4, padding: '1px 6px', background: '#3b82f6', color: '#fff', fontSize: '0.6rem', fontWeight: 700, borderRadius: 5 }}>#{slice._idx}</span>}
+                            {slice && (
+                              <button onClick={() => handleDelete(slice.id, slice.filename)} title="삭제"
+                                style={{ position: 'absolute', top: 3, right: 3, width: 20, height: 20, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(0,0,0,0.55)', border: 'none', borderRadius: 4, color: '#f87171', cursor: 'pointer' }}><Trash2 size={12} /></button>
+                            )}
+                            <div style={{ position: 'absolute', bottom: 0, left: 0, right: 0, padding: '2px 4px', background: 'rgba(0,0,0,0.55)', fontSize: '0.6rem', color: dev ? '#cbd5e1' : '#64748b', textAlign: 'center', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={dev ? (dev.name || dev.id) : '기기 없음'}>
+                              {dev ? (dev.name || dev.id) : '— 기기 없음 —'}
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  );
+                })()}
+
+                {/* 세트 타임라인 — 리더 칸 재생 위치. 클릭하면 그 지점으로 이동(전 칸 동시). */}
+                {playInfo[g.base] && playInfo[g.base].dur > 0 && (
+                  <div style={{ marginTop: 8, display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <span style={{ fontSize: '0.66rem', color: '#94a3b8', minWidth: 84, fontVariantNumeric: 'tabular-nums' }}>
+                      {fmtTime(playInfo[g.base].cur)} / {fmtTime(playInfo[g.base].dur)}
+                    </span>
+                    <div onMouseDown={(e) => startScrub(g, e)}
+                      title="클릭/드래그해 위치 이동 (전 칸 동시 스크럽)"
+                      style={{ flex: 1, height: 10, background: '#1e293b', borderRadius: 5, cursor: 'pointer', position: 'relative' }}>
+                      <div style={{ height: '100%', width: `${Math.min(100, (playInfo[g.base].cur / playInfo[g.base].dur) * 100)}%`, background: '#8b5cf6', borderRadius: 5, pointerEvents: 'none' }} />
+                      <div style={{ position: 'absolute', top: '50%', left: `${Math.min(100, (playInfo[g.base].cur / playInfo[g.base].dur) * 100)}%`, transform: 'translate(-50%, -50%)', width: 14, height: 14, borderRadius: '50%', background: '#c4b5fd', border: '2px solid #8b5cf6', pointerEvents: 'none' }} />
+                    </div>
+                    {playInfo[g.base].paused && <span style={{ fontSize: '0.62rem', color: '#64748b' }}>정지</span>}
+                  </div>
                 )}
-                <button onClick={() => handleDelete(v.id, v.filename)} title="삭제"
-                  style={{ position: 'absolute', top: 6, right: 6, width: 26, height: 26, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(0,0,0,0.55)', border: 'none', borderRadius: 6, color: '#f87171', cursor: 'pointer' }}>
-                  <Trash2 size={14} />
-                </button>
-                <div style={{ padding: '8px 10px' }}>
-                  <div style={{ fontSize: '0.78rem', color: '#e2e8f0', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={v.filename}>{v.filename}</div>
-                  {v.size ? <div style={{ fontSize: '0.66rem', color: '#64748b', marginTop: 2 }}>{fmtSize(v.size)}</div> : null}
+
+                {deployMsg[g.base] && (
+                  <div style={{ marginTop: 8, fontSize: '0.72rem', color: deployMsg[g.base].type === 'error' ? '#fca5a5' : '#86efac' }}>
+                    {deployMsg[g.base].text}
+                  </div>
+                )}
+              </div>
+            ))}
+            {others.length > 0 && (
+              <div>
+                {sets.length > 0 && <div style={{ fontSize: '0.8rem', color: '#94a3b8', fontWeight: 600, marginBottom: 8 }}>일반 동영상</div>}
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: 14 }}>
+                  {others.map((v) => renderCard(v))}
                 </div>
               </div>
-            );
-          })}
+            )}
+          </div>
+        );
+      })()}
+
+      {/* 비디오월 가공 모달 */}
+      {showProc && (
+        <div
+          onMouseDown={(e) => { overlayDown.current = e.target === e.currentTarget; }}
+          onClick={(e) => { if (overlayDown.current && e.target === e.currentTarget && !procBusy) setShowProc(false); }}
+          style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            style={{ width: 560, maxWidth: '92vw', maxHeight: '90vh', overflowY: 'auto', background: '#0f172a', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 14, padding: 22 }}
+          >
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
+              <Scissors size={18} color="#8b5cf6" />
+              <span style={{ fontSize: '1.05rem', fontWeight: 700, color: '#f1f5f9' }}>비디오월 가공</span>
+              <div style={{ flex: 1 }} />
+              <button onClick={() => { if (!procBusy) setShowProc(false); }} disabled={procBusy}
+                style={{ background: 'none', border: 'none', color: procBusy ? '#475569' : '#94a3b8', cursor: procBusy ? 'not-allowed' : 'pointer' }}>
+                <X size={18} />
+              </button>
+            </div>
+            <div style={{ fontSize: '0.7rem', color: '#64748b', marginBottom: 16 }}>
+              원본 동영상 1개를 <b>가로 대수만큼</b> 업스케일·크롭 후 슬라이스로 분할해
+              <code style={{ color: '#8b5cf6' }}> wallsync </code>파일명으로 자동 등록합니다.
+            </div>
+
+            {/* 원본 파일 */}
+            <div style={{ marginBottom: 14 }}>
+              <label style={lbl}>원본 동영상</label>
+              <input ref={procFileRef} type="file" accept="video/*" style={{ display: 'none' }}
+                onChange={(e) => setProcFile(e.target.files[0] || null)} />
+              <button onClick={() => procFileRef.current?.click()} disabled={procBusy}
+                style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '9px 14px', background: 'rgba(255,255,255,0.06)', color: procFile ? '#e2e8f0' : '#94a3b8', border: '1px dashed rgba(255,255,255,0.2)', borderRadius: 8, cursor: procBusy ? 'not-allowed' : 'pointer', fontSize: '0.8rem', width: '100%', textAlign: 'left', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                <Upload size={15} /> {procFile ? `${procFile.name} (${fmtSize(procFile.size)})` : '파일 선택…'}
+              </button>
+            </div>
+
+            {/* 파라미터 */}
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 14 }}>
+              <div>
+                <label style={lbl}>가로 대수</label>
+                <input type="number" min={1} max={12} value={proc.deviceCount} disabled={procBusy}
+                  onChange={(e) => setProc((p) => ({ ...p, deviceCount: e.target.value }))} style={inp} />
+              </div>
+              <div>
+                <label style={lbl}>세로 위치 (%)</label>
+                <input type="number" min={0} max={100} value={proc.yOffsetPct} disabled={procBusy}
+                  onChange={(e) => setProc((p) => ({ ...p, yOffsetPct: e.target.value }))} style={inp} />
+              </div>
+              <div>
+                <label style={lbl}>슬라이스 폭 (px)</label>
+                <input type="number" min={16} max={7680} value={proc.sliceWidth} disabled={procBusy}
+                  onChange={(e) => setProc((p) => ({ ...p, sliceWidth: e.target.value }))} style={inp} />
+              </div>
+              <div>
+                <label style={lbl}>슬라이스 높이 (px)</label>
+                <input type="number" min={16} max={4320} value={proc.sliceHeight} disabled={procBusy}
+                  onChange={(e) => setProc((p) => ({ ...p, sliceHeight: e.target.value }))} style={inp} />
+              </div>
+              <div style={{ gridColumn: '1 / 3' }}>
+                <label style={lbl}>파일명 베이스 (선택)</label>
+                <input type="text" placeholder="비우면 원본 파일명 사용" value={proc.baseName} disabled={procBusy}
+                  onChange={(e) => setProc((p) => ({ ...p, baseName: e.target.value }))} style={inp} />
+              </div>
+            </div>
+
+            {/* 벽 미리보기 */}
+            <div style={{ marginBottom: 16 }}>
+              <div style={{ fontSize: '0.68rem', color: '#94a3b8', marginBottom: 6 }}>
+                벽 전체 <b style={{ color: '#cbd5e1' }}>{wallW || 0}×{proc.sliceHeight || 0}</b> · 슬라이스 {proc.deviceCount || 0}개
+              </div>
+              <div style={{ display: 'flex', gap: 3, aspectRatio: wallW && proc.sliceHeight ? `${wallW} / ${proc.sliceHeight}` : '16 / 9', width: '100%', background: '#000', borderRadius: 6, overflow: 'hidden' }}>
+                {Array.from({ length: Math.max(1, Math.min(12, parseInt(proc.deviceCount) || 1)) }, (_, i) => (
+                  <div key={i} style={{ flex: 1, background: 'rgba(139,92,246,0.18)', border: '1px solid rgba(139,92,246,0.45)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#a78bfa', fontSize: '0.72rem', fontWeight: 700 }}>{i}</div>
+                ))}
+              </div>
+            </div>
+
+            {/* 진행 상태 */}
+            {job && (
+              <div style={{ marginBottom: 16, padding: '10px 12px', background: job.status === 'error' ? 'rgba(248,113,113,0.1)' : 'rgba(139,92,246,0.1)', border: `1px solid ${job.status === 'error' ? 'rgba(248,113,113,0.3)' : 'rgba(139,92,246,0.3)'}`, borderRadius: 8 }}>
+                <div style={{ fontSize: '0.76rem', color: job.status === 'error' ? '#fca5a5' : '#cbd5e1', marginBottom: job.status === 'error' ? 0 : 6 }}>
+                  {STATUS_LABEL[job.status] || job.status}{job.status !== 'error' && job.pct != null ? ` — ${job.pct}%` : ''}{job.error ? `: ${job.error}` : ''}
+                </div>
+                {job.status !== 'error' && (
+                  <div style={{ height: 6, background: '#1e293b', borderRadius: 3, overflow: 'hidden' }}>
+                    <div style={{ height: '100%', width: `${job.pct || 0}%`, background: job.status === 'done' ? '#22c55e' : '#8b5cf6', transition: 'width 0.3s' }} />
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* 결과 미리보기 — 슬라이스를 좌→우로 붙여 벽 재구성 확인 */}
+            {job?.status === 'done' && Array.isArray(job.slices) && job.slices.length > 0 && (
+              <div style={{ marginBottom: 16 }}>
+                <div style={{ fontSize: '0.68rem', color: '#86efac', marginBottom: 6 }}>
+                  ✓ 결과 미리보기 — 슬라이스 {job.slices.length}개가 좌→우로 이어집니다 (벽 재구성)
+                </div>
+                <div style={{ display: 'flex', gap: 0, width: '100%', aspectRatio: wallW && proc.sliceHeight ? `${wallW} / ${proc.sliceHeight}` : '32 / 9', background: '#000', border: '1px solid rgba(255,255,255,0.1)' }}>
+                  {job.slices.map((s, i) => {
+                    const url = (s.path || '').startsWith('http') ? s.path : `${API}${s.path}`;
+                    return (
+                      <video key={s.id || i} src={url} muted loop autoPlay playsInline preload="metadata"
+                        title={s.filename}
+                        style={{ flex: 1, minWidth: 0, height: '100%', objectFit: 'cover', background: '#000', borderRight: i < job.slices.length - 1 ? '1px solid rgba(255,255,255,0.15)' : 'none' }} />
+                    );
+                  })}
+                </div>
+                <div style={{ fontSize: '0.62rem', color: '#64748b', marginTop: 5 }}>
+                  각 칸이 한 화면(기기)입니다. 경계에서 영상이 자연스럽게 이어지면 정상.
+                </div>
+              </div>
+            )}
+
+            {/* 액션 */}
+            <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+              {procBusy ? (
+                <button onClick={cancelProc} style={{ padding: '8px 18px', background: '#7f1d1d', color: '#fecaca', border: 'none', borderRadius: 8, cursor: 'pointer', fontSize: '0.85rem', fontWeight: 600 }}>취소</button>
+              ) : (
+                <>
+                  <button onClick={() => setShowProc(false)} style={{ padding: '8px 18px', background: 'rgba(255,255,255,0.06)', color: '#cbd5e1', border: '1px solid rgba(255,255,255,0.12)', borderRadius: 8, cursor: 'pointer', fontSize: '0.85rem' }}>닫기</button>
+                  <button onClick={startProc} disabled={!procFile} style={{ padding: '8px 18px', background: procFile ? '#8b5cf6' : '#334155', color: '#fff', border: 'none', borderRadius: 8, cursor: procFile ? 'pointer' : 'not-allowed', fontSize: '0.85rem', fontWeight: 700 }}>
+                    {job?.status === 'done' ? '다시 가공' : job?.status === 'error' ? '재시도' : '가공 시작'}
+                  </button>
+                </>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 동기 미세조정 (위상 오프셋) 모달 */}
+      {showOffset && (
+        <div
+          onMouseDown={(e) => { overlayDown.current = e.target === e.currentTarget; }}
+          onClick={(e) => { if (overlayDown.current && e.target === e.currentTarget) setShowOffset(false); }}
+          style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }}
+        >
+          <div onClick={(e) => e.stopPropagation()} style={{ width: 620, maxWidth: '94vw', maxHeight: '90vh', overflowY: 'auto', background: '#0f172a', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 14, padding: 22 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
+              <SlidersHorizontal size={18} color="#3b82f6" />
+              <span style={{ fontSize: '1.05rem', fontWeight: 700, color: '#f1f5f9' }}>기기별 동기 미세조정 (위상 오프셋)</span>
+              <div style={{ flex: 1 }} />
+              <button onClick={autoAlign} style={{ padding: '5px 14px', background: '#3b82f6', color: '#fff', border: 'none', borderRadius: 6, cursor: 'pointer', fontSize: '0.76rem', fontWeight: 700 }}>자동 정렬</button>
+              <button onClick={() => setShowOffset(false)} style={{ background: 'none', border: 'none', color: '#94a3b8', cursor: 'pointer', marginLeft: 4 }}><X size={18} /></button>
+            </div>
+            <div style={{ fontSize: '0.68rem', color: '#64748b', marginBottom: 14 }}>
+              <b>자동 정렬</b>로 서버 측정 스큐 기준 시작점을 잡은 뒤, 화면을 보며 <b>늦은 화면</b>을 −, <b>빠른 화면</b>을 + 로 미세조정합니다.
+              즉시 적용·기기에 저장됩니다. (<code style={{ color: '#94a3b8' }}>skew</code>=서버가 잰 시계차, 음수 클수록 뒤처짐)
+            </div>
+            {devices.length === 0 ? (
+              <div style={{ color: '#64748b', fontSize: '0.8rem', padding: '12px 0' }}>온라인 기기가 없습니다.</div>
+            ) : (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                {devices.map((d) => {
+                  const cur = offsets[d.id] ?? 0;
+                  const slideName = (typeof d.slide === 'object' && d.slide) ? d.slide.filename : null;
+                  const isWall = /wallsync/i.test(slideName || '');
+                  return (
+                    <div key={d.id} style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                      <span style={{ minWidth: 72, fontSize: '0.78rem', color: isWall ? '#3b82f6' : '#cbd5e1', fontWeight: isWall ? 700 : 400 }}>{d.id}</span>
+                      <span style={{ minWidth: 78, fontSize: '0.64rem', color: '#94a3b8' }}>
+                        skew {Number.isFinite(d.clockSkew) ? `${d.clockSkew > 0 ? '+' : ''}${d.clockSkew}ms` : '—'}
+                      </span>
+                      {slideName && <span style={{ fontSize: '0.62rem', color: '#64748b', minWidth: 110, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={slideName}>{slideName}</span>}
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                        {[-50, -10, -1].map((s) => (
+                          <button key={s} onClick={() => applyOffset(d.id, cur + s)} style={stepBtn}>{s}</button>
+                        ))}
+                        <span style={{ minWidth: 64, textAlign: 'center', fontSize: '0.82rem', fontWeight: 700, color: '#fbbf24' }}>{cur > 0 ? `+${cur}` : cur}ms</span>
+                        {[1, 10, 50].map((s) => (
+                          <button key={s} onClick={() => applyOffset(d.id, cur + s)} style={stepBtn}>+{s}</button>
+                        ))}
+                        <button onClick={() => applyOffset(d.id, 0)} style={{ ...stepBtn, color: '#f87171' }}>0</button>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
         </div>
       )}
     </div>
