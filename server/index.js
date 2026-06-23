@@ -750,7 +750,7 @@ function sha256File(file) {
 
 // 비디오월 가공 본체(비동기). job.pct/status 갱신 + 소켓 이벤트.
 async function runVideoWallJob(job, srcPath, opts) {
-  const { storeId, deviceCount, sliceW, sliceH, yOffsetPct, baseName } = opts;
+  const { storeId, deviceCount, sliceW, sliceH, yOffsetPct, baseName, keepSource } = opts;
   const emit = (ev, extra) => io.emit(ev, { jobId: job.id, ...extra });
   try {
     job.status = 'probing';
@@ -854,7 +854,7 @@ async function runVideoWallJob(job, srcPath, opts) {
     emit('vw_error', { error: err.message });
     console.error('[VideoWall] 가공 실패:', err.message);
   } finally {
-    fs.unlink(srcPath, () => {}); // 원본 임시파일 삭제
+    if (!keepSource) fs.unlink(srcPath, () => {}); // 업로드 임시파일만 삭제 (라이브러리 원본은 보존)
     job.proc = null;
     setTimeout(() => vwJobs.delete(job.id), 10 * 60 * 1000); // 10분 후 job 정리
   }
@@ -922,26 +922,37 @@ app.post('/api/videowall/process', (req, res, next) => {
     }
     next();
   });
-}, (req, res) => {
-  if (!req.file) return res.status(400).json({ error: '원본 동영상이 없습니다.' });
-  if (!req.file.mimetype.startsWith('video/')) {
-    fs.unlink(req.file.path, () => {});
-    return res.status(400).json({ error: '동영상 파일만 가공할 수 있습니다.' });
+}, async (req, res) => {
+  const cleanupUpload = () => { if (req.file?.path) fs.unlink(req.file.path, () => {}); };
+  // 원본 = 업로드 파일 또는 라이브러리(mediaId). mediaId면 기존 파일 경로를 쓰고 가공 후 보존.
+  const mediaId = (req.body.mediaId || '').trim();
+  let srcPath, srcName, keepSource = false;
+  if (mediaId) {
+    cleanupUpload(); // 파일도 함께 왔으면 임시파일 정리(라이브러리 우선)
+    const media = await prisma.media.findUnique({ where: { id: mediaId } }).catch(() => null);
+    if (!media) return res.status(404).json({ error: '원본 미디어를 찾을 수 없습니다.' });
+    if (media.type !== 'video') return res.status(400).json({ error: '동영상만 가공할 수 있습니다.' });
+    if ((media.path || '').startsWith('http')) return res.status(400).json({ error: '원격(R2) 원본은 가공을 지원하지 않습니다 (로컬 업로드만).' });
+    srcPath = path.join(__dirname, media.path);
+    if (!fs.existsSync(srcPath)) return res.status(404).json({ error: '원본 파일을 찾을 수 없습니다.' });
+    srcName = media.filename;
+    keepSource = true;
+  } else if (req.file) {
+    if (!req.file.mimetype.startsWith('video/')) { cleanupUpload(); return res.status(400).json({ error: '동영상 파일만 가공할 수 있습니다.' }); }
+    srcPath = req.file.path;
+    srcName = req.file.originalname;
+  } else {
+    return res.status(400).json({ error: '원본 동영상이 없습니다 (파일 업로드 또는 라이브러리 선택).' });
   }
   const deviceCount = parseInt(req.body.deviceCount);
   const sliceW = parseInt(req.body.sliceWidth) || 3840;
   const sliceH = parseInt(req.body.sliceHeight) || 2160;
   const yOffsetPct = req.body.yOffsetPct !== undefined ? parseFloat(req.body.yOffsetPct) : 50;
-  if (!Number.isInteger(deviceCount) || deviceCount < 1 || deviceCount > 12) {
-    fs.unlink(req.file.path, () => {});
-    return res.status(400).json({ error: '가로 대수(deviceCount)는 1~12 사이여야 합니다.' });
-  }
-  if (sliceW < 16 || sliceH < 16 || sliceW > 7680 || sliceH > 4320) {
-    fs.unlink(req.file.path, () => {});
-    return res.status(400).json({ error: '슬라이스 해상도 범위를 벗어났습니다.' });
-  }
+  // cleanupUpload는 업로드 임시파일만 지움(라이브러리 원본엔 무해 — req.file 없음).
+  if (!Number.isInteger(deviceCount) || deviceCount < 1 || deviceCount > 12) { cleanupUpload(); return res.status(400).json({ error: '가로 대수(deviceCount)는 1~12 사이여야 합니다.' }); }
+  if (sliceW < 16 || sliceH < 16 || sliceW > 7680 || sliceH > 4320) { cleanupUpload(); return res.status(400).json({ error: '슬라이스 해상도 범위를 벗어났습니다.' }); }
   // 출력 파일명 베이스 — 원본명에서 확장자/위험문자 제거
-  const rawBase = (req.body.baseName || path.parse(req.file.originalname).name || 'video');
+  const rawBase = (req.body.baseName || path.parse(srcName).name || 'video');
   // 이미 'wallsync...'가 든 파일명(슬라이스 재가공 등)은 중복 방지 위해 그 뒤를 제거
   const baseName = rawBase.replace(/[^a-zA-Z0-9._-]/g, '_').replace(/[_-]?wallsync.*$/i, '').replace(/[_.-]+$/, '').slice(0, 40) || 'video';
 
@@ -949,8 +960,8 @@ app.post('/api/videowall/process', (req, res, next) => {
   const job = { id: jobId, status: 'queued', pct: 0, slices: null, error: null, proc: null, cancelled: false, createdAt: Date.now() };
   vwJobs.set(jobId, job);
   // 백그라운드 실행 (응답은 즉시)
-  runVideoWallJob(job, req.file.path, {
-    storeId: req.body.storeId || null, deviceCount, sliceW, sliceH, yOffsetPct, baseName,
+  runVideoWallJob(job, srcPath, {
+    storeId: req.body.storeId || null, deviceCount, sliceW, sliceH, yOffsetPct, baseName, keepSource,
   });
   res.status(202).json({ jobId, deviceCount, sliceW, sliceH });
 });

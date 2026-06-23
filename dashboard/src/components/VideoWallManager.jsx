@@ -372,6 +372,8 @@ const VideoWallManager = ({ stores = [], selectedStoreId, setSelectedStoreId }) 
   const [procFile, setProcFile] = useState(null);
   const [procSrcUrl, setProcSrcUrl] = useState(null); // 원본 미리보기 objectURL
   const [procSrcDim, setProcSrcDim] = useState(null); // { w, h } 원본 해상도(메타 로드 후)
+  const [procMediaId, setProcMediaId] = useState(null);   // 라이브러리에서 고른 원본 mediaId (파일 업로드 대신)
+  const [procMediaName, setProcMediaName] = useState(''); // 그 표시명
   const [slcManual, setSlcManual] = useState(false); // 슬라이스 해상도 수동 편집 여부(프리필 덮어쓰기 방지)
   const [job, setJob] = useState(null); // null | { jobId?, status, pct }
   const [cropPaused, setCropPaused] = useState(false); // 크롭 미리보기 재생/정지 상태
@@ -409,6 +411,7 @@ const VideoWallManager = ({ stores = [], selectedStoreId, setSelectedStoreId }) 
   const openProc = () => {
     if (!selectedStoreId) { alert('먼저 사업장을 선택하세요.'); return; }
     setProcFile(null);
+    setProcMediaId(null); setProcMediaName(''); setProcSrcUrl(null); setProcSrcDim(null);
     setJob(null);
     prefillFromMeta();
     setShowProc(true);
@@ -431,16 +434,30 @@ const VideoWallManager = ({ stores = [], selectedStoreId, setSelectedStoreId }) 
     return () => socket.disconnect();
   }, [showProc, fetchVideos]);
 
-  // 원본 파일 → 미리보기 objectURL (선택 바뀌면 교체/해제)
+  // 원본 파일 → 미리보기 objectURL. (라이브러리 선택 모드면 procFile=null이라 여기선 안 건드림)
   useEffect(() => {
-    if (!procFile) { setProcSrcUrl(null); setProcSrcDim(null); return; }
+    if (!procFile) return;
     const url = URL.createObjectURL(procFile);
     setProcSrcUrl(url); setProcSrcDim(null); setCropPaused(false);
     return () => URL.revokeObjectURL(url);
   }, [procFile]);
 
+  // 원본 선택: 디스크 파일 ↔ 라이브러리 (서로 배타 — 하나 고르면 다른 쪽 해제)
+  const pickFile = (file) => {
+    setProcMediaId(null); setProcMediaName('');
+    setProcFile(file);
+    if (!file) { setProcSrcUrl(null); setProcSrcDim(null); }
+  };
+  const pickLibrary = (m) => {
+    setProcFile(null);
+    if (!m) { setProcMediaId(null); setProcMediaName(''); setProcSrcUrl(null); setProcSrcDim(null); return; }
+    setProcMediaId(m.id); setProcMediaName(m.filename);
+    setProcSrcUrl((m.path || '').startsWith('http') ? m.path : `${API}${m.path}`);
+    setProcSrcDim(null); setCropPaused(false);
+  };
+
   const startProc = () => {
-    if (!procFile) { alert('가공할 원본 동영상을 선택하세요.'); return; }
+    if (!procFile && !procMediaId) { alert('가공할 원본 동영상을 선택하세요 (파일 업로드 또는 라이브러리).'); return; }
     const n = parseInt(proc.deviceCount);
     if (!Number.isInteger(n) || n < 1 || n > 12) { alert('가로 대수는 1~12 사이여야 합니다.'); return; }
     const form = new FormData();
@@ -450,7 +467,8 @@ const VideoWallManager = ({ stores = [], selectedStoreId, setSelectedStoreId }) 
     form.append('sliceHeight', String(proc.sliceHeight));
     form.append('yOffsetPct', String(proc.yOffsetPct));
     if (proc.baseName) form.append('baseName', proc.baseName);
-    form.append('file', procFile);
+    if (procMediaId) form.append('mediaId', procMediaId); // 라이브러리 원본 (재업로드 없음)
+    else form.append('file', procFile);
 
     setJob({ status: 'uploading', pct: 0 });
     const xhr = new XMLHttpRequest();
@@ -767,15 +785,24 @@ const VideoWallManager = ({ stores = [], selectedStoreId, setSelectedStoreId }) 
               <code style={{ color: '#8b5cf6' }}> wallsync </code>파일명으로 자동 등록합니다.
             </div>
 
-            {/* 원본 파일 */}
+            {/* 원본 파일 업로드 또는 라이브러리에서 선택 */}
             <div style={{ marginBottom: 14 }}>
               <label style={lbl}>원본 동영상</label>
               <input ref={procFileRef} type="file" accept="video/*" style={{ display: 'none' }}
-                onChange={(e) => setProcFile(e.target.files[0] || null)} />
+                onChange={(e) => pickFile(e.target.files[0] || null)} />
               <button onClick={() => procFileRef.current?.click()} disabled={procBusy}
                 style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '9px 14px', background: 'rgba(255,255,255,0.06)', color: procFile ? '#e2e8f0' : '#94a3b8', border: '1px dashed rgba(255,255,255,0.2)', borderRadius: 8, cursor: procBusy ? 'not-allowed' : 'pointer', fontSize: '0.8rem', width: '100%', textAlign: 'left', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                <Upload size={15} /> {procFile ? `${procFile.name} (${fmtSize(procFile.size)})` : '파일 선택…'}
+                <Upload size={15} /> {procFile ? `${procFile.name} (${fmtSize(procFile.size)})` : '새 파일 업로드…'}
               </button>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, margin: '8px 0 6px', fontSize: '0.64rem', color: '#475569' }}>
+                <div style={{ flex: 1, height: 1, background: 'rgba(255,255,255,0.08)' }} />또는<div style={{ flex: 1, height: 1, background: 'rgba(255,255,255,0.08)' }} />
+              </div>
+              <select value={procMediaId || ''} disabled={procBusy}
+                onChange={(e) => pickLibrary(videos.find((v) => v.id === e.target.value) || null)}
+                style={{ ...inp, color: procMediaId ? '#e2e8f0' : '#94a3b8', cursor: procBusy ? 'not-allowed' : 'pointer' }}>
+                <option value="">라이브러리에서 선택… (재업로드 없이)</option>
+                {videos.map((v) => <option key={v.id} value={v.id}>{v.filename}</option>)}
+              </select>
             </div>
 
             {/* 파라미터 */}
