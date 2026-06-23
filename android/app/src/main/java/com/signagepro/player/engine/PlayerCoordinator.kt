@@ -101,6 +101,9 @@ class PlayerCoordinator(
     @Volatile private var wallSyncDebug: String? = null   // 디버그 오버레이용 wall 동기 상태
     @Volatile private var lastHdmiConnected: Boolean = true  // HDMI 핫플러그 재연결 감지용
     @Volatile private var wallOffsetMs: Long = 0L            // 비디오월 기기별 위상 오프셋(ms)
+    @Volatile private var debugOverlayOn: Boolean = false    // 디버그 오버레이 표시 여부(기본 OFF, 원격 토글)
+    private var debugJob: Job? = null                        // 디버그 오버레이 루프 Job
+    private var debugDeviceId: String? = null                // 디버그 오버레이용 deviceId 보관
 
     private val audioManager by lazy {
         context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
@@ -203,7 +206,8 @@ class PlayerCoordinator(
         scheduleManager.start(scope)
         startTimeSyncLoop(serverUrl)
         startStallWatchdog()
-        if (DEBUG_OVERLAY) startDebugLoop(deviceId)
+        debugDeviceId = deviceId
+        if (debugOverlayOn) startDebugLoop(deviceId)
     }
 
     /**
@@ -247,8 +251,9 @@ class PlayerCoordinator(
 
     /** 진단 오버레이 */
     private fun startDebugLoop(deviceId: String) {
+        debugJob?.cancel()
         val fmt = SimpleDateFormat("HH:mm:ss.SSS", Locale.US)
-        scope.launch {
+        debugJob = scope.launch {
             while (isActive) {
                 val slot = engine?.current()
                 val dbg = buildString {
@@ -267,6 +272,19 @@ class PlayerCoordinator(
                 onDebug(dbg)
                 delay(1000)
             }
+        }
+    }
+
+    /** 디버그 오버레이 on/off 토글 — 원격 명령(set_debug_overlay)에서 호출. 기본 OFF. */
+    fun setDebugOverlay(on: Boolean) {
+        if (debugOverlayOn == on) return
+        debugOverlayOn = on
+        if (on) {
+            debugDeviceId?.let { startDebugLoop(it) }
+        } else {
+            debugJob?.cancel()
+            debugJob = null
+            onDebug("")  // 빈 문자열 → MainActivity가 오버레이 숨김(View.GONE)
         }
     }
 
@@ -777,6 +795,10 @@ class PlayerCoordinator(
                 wallOffsetMs = ms
                 config.wallOffsetMs = ms
             },
+            onSetDebugOverlay = { on ->
+                Log.i(TAG, "디버그 오버레이 토글: $on")
+                setDebugOverlay(on)
+            },
             onRebootDevice = {
                 Log.i(TAG, "물리 기기 재부팅 수행")
                 
@@ -1042,7 +1064,6 @@ class PlayerCoordinator(
 
     companion object {
         private const val TAG = "PlayerCoordinator"
-        private const val DEBUG_OVERLAY = true           // wall drift 진단용 — 검증 후 false로
         private const val WALL_SYNC_INTERVAL_MS = 500L   // wall 비디오 위치 보정 주기
         private const val BURST_REFRESH_MS = 20_000L     // burst 시각 재동기 주기
         private const val STALL_WATCH_INTERVAL_MS = 2_000L  // 멈춤 워치독 점검 주기

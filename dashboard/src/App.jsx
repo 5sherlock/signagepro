@@ -1288,6 +1288,7 @@ function App() {
   const [selectedStoreId, setSelectedStoreId] = useState('');
   const [gridLayout, setGridLayout] = useState('auto');
   const [wallView, setWallView] = useState(false); // 월 미리보기 바 토글
+  const [debugOverlay, setDebugOverlay] = useState(false); // 디버그 오버레이 전 기기 토글
   const [deviceMeta, setDeviceMeta] = useState({});
   // 음소거 전 볼륨 기억 — 음소거 해제 시 원래 볼륨으로 복원
   const preMuteVol = useRef({});
@@ -1685,6 +1686,22 @@ function App() {
                     style={{ cursor: 'pointer', marginLeft: '12px', display: 'inline-flex', alignItems: 'center', gap: 6, fontWeight: 700, color: wallView ? '#60a5fa' : 'var(--text-secondary)', background: wallView ? 'rgba(59,130,246,0.16)' : undefined, borderColor: wallView ? '#3b82f6' : undefined }}
                   >
                     <Monitor size={14} /> 월 미리보기{wallView ? ' ✓' : ''}
+                  </button>
+                )}
+                {wallGroups.length > 0 && (
+                  <button
+                    onClick={async () => {
+                      const next = !debugOverlay;
+                      try {
+                        await apiFetch(`${SOCKET_URL}/api/debug-overlay`, { method: 'POST', body: JSON.stringify({ enabled: next }) });
+                        setDebugOverlay(next);
+                      } catch (e) { /* noop */ }
+                    }}
+                    className="glass-select"
+                    title="전 기기 화면 좌상단에 동기/드리프트 진단 오버레이 표시 (그룹/전체)"
+                    style={{ cursor: 'pointer', marginLeft: '8px', display: 'inline-flex', alignItems: 'center', gap: 6, fontWeight: 700, color: debugOverlay ? '#f59e0b' : 'var(--text-secondary)', background: debugOverlay ? 'rgba(245,158,11,0.16)' : undefined, borderColor: debugOverlay ? '#f59e0b' : undefined }}
+                  >
+                    <Activity size={14} /> 디버그{debugOverlay ? ' ✓' : ''}
                   </button>
                 )}
                 {gridLayout === 'custom' && (

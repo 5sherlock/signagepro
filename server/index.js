@@ -1815,6 +1815,18 @@ app.post('/api/devices/:id/wall-offset', async (req, res) => {
   }
 });
 
+// 디버그 오버레이 on/off — 전 기기 브로드캐스트(그룹/전체 진단용). 기기는 deviceId 빈값이면 자기에게 적용.
+app.post('/api/debug-overlay', async (req, res) => {
+  try {
+    const enabled = !!req.body?.enabled;
+    io.emit('set_debug_overlay', { deviceId: '', enabled });
+    console.log(`[DebugOverlay] set_debug_overlay 브로드캐스트: ${enabled}`);
+    res.json({ ok: true, enabled });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // 디버그용 쉘 명령어 실행
 app.post('/api/debug/run-cmd', async (req, res) => {
   try {

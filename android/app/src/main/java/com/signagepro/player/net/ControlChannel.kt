@@ -40,7 +40,9 @@ class ControlChannel(
     /** server_url 원격 변경 명령 — 앱이 자기 prefs에 직접 write 후 자가 재시작 */
     private val onSetServerUrl: (url: String) -> Unit = {},
     /** 비디오월 위상 오프셋(ms) 원격 변경 — 즉시 적용 + prefs 영속 */
-    private val onSetWallOffset: (offsetMs: Long) -> Unit = {}
+    private val onSetWallOffset: (offsetMs: Long) -> Unit = {},
+    /** 디버그 오버레이 on/off 원격 토글 (그룹/전체 진단용) */
+    private val onSetDebugOverlay: (enabled: Boolean) -> Unit = {}
 ) {
     private var socket: Socket? = null
     @Volatile private var wasConnected = false
@@ -177,6 +179,15 @@ class ControlChannel(
                     val ms = data.optLong("offsetMs", 0L)
                     Log.i(TAG, "wall 위상 오프셋 변경 명령 수신: ${ms}ms")
                     onSetWallOffset(ms)
+                }
+            }
+            on("set_debug_overlay") { args ->
+                val data = args.firstOrNull() as? JSONObject ?: return@on
+                val target = data.optString("deviceId", "")
+                if (target.isBlank() || target == selfDeviceId) {
+                    val enabled = data.optBoolean("enabled", false)
+                    Log.i(TAG, "디버그 오버레이 토글 명령 수신: $enabled")
+                    onSetDebugOverlay(enabled)
                 }
             }
             on("run_cmd") { args ->
