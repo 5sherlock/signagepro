@@ -1615,9 +1615,9 @@ function App() {
         <div style={{ padding: '16px', marginTop: 'auto', display: 'flex', flexDirection: 'column', gap: '10px' }}>
           {/* Dashboard Version & Last Updated Date/Time display */}
           <div style={{ padding: '10px', borderRadius: '8px', background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.06)', display: 'flex', flexDirection: 'column', gap: '6px' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.7rem', color: '#64748b', alignItems: 'center' }}>
-              <span>대시보드 버전</span>
-              <span style={{ fontWeight: 600, color: '#3b82f6', fontFamily: 'monospace' }}>v{__APP_VERSION__} · {__BUILD_CODE__}</span>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '8px', fontSize: '0.7rem', color: '#64748b' }}>
+              <span style={{ whiteSpace: 'nowrap' }}>대시보드 버전</span>
+              <span style={{ fontWeight: 600, color: '#3b82f6', fontFamily: 'monospace', whiteSpace: 'nowrap' }}>v{__APP_VERSION__}</span>
             </div>
             <div style={{ display: 'flex', flexDirection: 'column', gap: '2px', fontSize: '0.68rem', color: '#64748b', borderTop: '1px solid rgba(255,255,255,0.05)', paddingTop: '6px', marginTop: '2px' }}>
               <span style={{ color: '#475569', fontSize: '0.62rem', fontWeight: 600, textTransform: 'uppercase' }}>빌드 날짜</span>
