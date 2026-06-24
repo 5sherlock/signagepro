@@ -7,7 +7,7 @@
 FROM node:22-bookworm AS dashboard
 WORKDIR /build/dashboard
 COPY dashboard/package.json dashboard/package-lock.json ./
-RUN npm ci
+RUN npm install
 COPY dashboard/ ./
 RUN npm run build
 
@@ -15,7 +15,7 @@ RUN npm run build
 FROM node:22-bookworm AS mobile
 WORKDIR /build/mobile
 COPY mobile/package.json mobile/package-lock.json ./
-RUN npm ci
+RUN npm install
 COPY mobile/ ./
 RUN npm run build
 
@@ -25,7 +25,7 @@ RUN npm run build
 FROM node:22-bookworm AS serverdeps
 WORKDIR /build/server
 COPY server/package.json server/package-lock.json ./
-RUN npm ci
+RUN npm install
 COPY server/prisma ./prisma
 RUN npx prisma generate
 
@@ -52,5 +52,7 @@ COPY --from=mobile    /build/mobile/dist    /app/mobile/dist
 #   /app/server/uploads   → 업로드 미디어 (정적 서빙 경로와 동일, UPLOADS_DIR 설정 금지)
 EXPOSE 3300 10080
 
-# 기동 시 마이그레이션 적용 후 서버 시작.
-CMD ["sh", "-c", "npx prisma migrate deploy && node index.js"]
+# 기동 시 스키마 동기화(db push) 후 서버 시작.
+# ※ migrations 폴더가 init 하나뿐이고 이후 변경은 dev에서 db push로 반영돼 와서,
+#   migrate deploy로는 ScreenSchedule 등 신규 테이블이 안 생김 → db push 사용.
+CMD ["sh", "-c", "npx prisma db push --skip-generate && node index.js"]
