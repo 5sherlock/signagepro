@@ -1,0 +1,50 @@
+# 빌드 컨텍스트 최소화 — server/dashboard/mobile 소스만 필요.
+# 무거운/불필요/비밀 파일 제외.
+
+.git
+**/node_modules
+**/dist
+**/dist_electron
+**/.vite
+**/.cache
+
+# 비밀/런타임 데이터 (이미지에 넣지 않음 — env/볼륨으로 주입)
+**/.env
+**/.env.*
+!**/.env.example
+**/*.db
+**/*.db-journal
+server/uploads
+server/data
+
+# 안드로이드/네이티브/APK/대용량 산출물
+android
+android_mobile
+android_player
+player
+mobile/android
+**/*.apk
+**/*.keystore
+**/*.jks
+gradle-build.log
+
+# 문서/샘플/참고 자료
+docs
+reference
+sample_media
+scratch
+scratchpad
+*.pdf
+*.md
+*.log
+*.svg
+*.html
+*.bat
+*.ps1
+
+# 에디터/OS
+.vscode
+.idea
+**/*.iml
+.DS_Store
+Thumbs.db

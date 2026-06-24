@@ -1,0 +1,33 @@
+# SignagePro 운영 서버 (NAS jeju-osulloc, 192.168.5.2)
+# 비밀값은 같은 폴더의 .env 파일에서 주입 (.env.docker.example 참고).
+# 빌드: docker compose build   /   기동: docker compose up -d
+
+services:
+  signagepro:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: signagepro:latest
+    container_name: signagepro
+    restart: unless-stopped
+    ports:
+      - "3300:3300"     # HTTP: API + 대시보드 + /mobile
+      - "10080:10080"   # TCP: STB 하트비트 (heartbeat-port 정책)
+    environment:
+      NODE_ENV: production
+      PORT: "3300"
+      TCP_PORT: "10080"
+      DATABASE_URL: "file:/data/prod.db"
+      # ⚠ 반드시 소문자 키 'adminPassword' (코드가 process.env.adminPassword 를 읽음, 리눅스는 대소문자 구분)
+      adminPassword: "${adminPassword}"
+      DEVICE_SECRET: "${DEVICE_SECRET}"           # STB 의 deviceSecret 과 동일해야 함
+      WEB_PLAYER_SECRET: "${WEB_PLAYER_SECRET}"
+      # SOCKET_CORS_ORIGINS: "http://192.168.5.2:3300"  # 필요 시 제한 (미설정=느슨)
+      # R2_* 미설정 → 로컬 스토리지(uploads 볼륨) 폴백
+    volumes:
+      - signagepro_db:/data                       # sqlite DB 영속
+      - signagepro_uploads:/app/server/uploads    # 업로드 미디어 영속 (정적 서빙 경로와 동일)
+
+volumes:
+  signagepro_db:
+  signagepro_uploads:
