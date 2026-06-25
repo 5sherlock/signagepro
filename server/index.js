@@ -215,13 +215,24 @@ app.use('/api', (req, res, next) => {
 });
 app.get('/api/auth/verify', requireAuth, (req, res) => res.json({ ok: true }));
 
-app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
-
 // Ensure uploads folder exists
-// 프로덕션(Electron)에서는 UPLOADS_DIR 환경변수로 userData 경로 사용
+// 프로덕션(Electron/NAS Docker)에서는 UPLOADS_DIR 환경변수로 영속 경로 사용
 const uploadDir = process.env.UPLOADS_DIR || path.join(__dirname, 'uploads');
 if (!fs.existsSync(uploadDir)) {
   fs.mkdirSync(uploadDir, { recursive: true });
+}
+
+// ⚠ 반드시 uploadDir(=저장 위치)에서 서빙해야 한다. __dirname/uploads로 하드코딩하면
+// UPLOADS_DIR가 다른 경로일 때(NAS 볼륨) 업로드 파일을 못 찾아 catch-all이 index.html을
+// 반환 → 바이너리가 HTML로 깨져 내려간다.
+app.use('/uploads', express.static(uploadDir));
+
+// multipart 파일명 헤더는 busboy(multer)가 기본 latin1로 디코드한다.
+// 한글 등 비ASCII 파일명은 latin1로 잘못 읽혀 깨지므로(mojibake) utf8로 복원한다.
+// (ASCII는 latin1↔utf8 왕복이 동일하므로 영향 없음)
+function decodeOriginalName(name) {
+  if (!name) return name;
+  return Buffer.from(name, 'latin1').toString('utf8');
 }
 
 // Configure multer
@@ -230,7 +241,7 @@ const storage = multer.diskStorage({
   filename: (req, file, cb) => {
     // 파일명 sanitize — originalname의 경로 성분(../) 제거 + 위험문자 치환.
     // 정화 안 하면 path.join에서 uploadDir 밖으로 탈출(Path Traversal) 가능.
-    const safe = path.basename(file.originalname).replace(/[^a-zA-Z0-9._-]/g, '_');
+    const safe = path.basename(decodeOriginalName(file.originalname)).replace(/[^a-zA-Z0-9._-]/g, '_');
     cb(null, `${Date.now()}-${safe}`);
   }
 });
@@ -897,7 +908,7 @@ app.post('/api/media', (req, res, next) => {
 
     const media = await prisma.media.create({
       data: {
-        filename: req.file.originalname,
+        filename: decodeOriginalName(req.file.originalname),
         path: mediaPath,
         type,
         size: req.file.size,
@@ -940,7 +951,7 @@ app.post('/api/videowall/process', (req, res, next) => {
   } else if (req.file) {
     if (!req.file.mimetype.startsWith('video/')) { cleanupUpload(); return res.status(400).json({ error: '동영상 파일만 가공할 수 있습니다.' }); }
     srcPath = req.file.path;
-    srcName = req.file.originalname;
+    srcName = decodeOriginalName(req.file.originalname);
   } else {
     return res.status(400).json({ error: '원본 동영상이 없습니다 (파일 업로드 또는 라이브러리 선택).' });
   }
@@ -2307,7 +2318,12 @@ if (fs.existsSync(mobileDist)) {
 const dashboardDist = path.join(__dirname, '../dashboard/dist');
 if (fs.existsSync(dashboardDist)) {
   app.use(express.static(dashboardDist));
-  app.get('/{*splat}', (req, res) => res.sendFile(path.join(dashboardDist, 'index.html')));
+  app.get('/{*splat}', (req, res) => {
+    // API/업로드/모바일 경로는 SPA fallback 대상이 아니다. 없으면 404를 반환해야지
+    // index.html(HTML)을 내려보내면 바이너리/JSON 응답이 HTML로 깨진다.
+    if (/^\/(api|uploads|mobile)\//.test(req.path)) return res.status(404).json({ error: 'Not found' });
+    res.sendFile(path.join(dashboardDist, 'index.html'));
+  });
   console.log('[Express] 대시보드 정적 파일 서빙 활성화');
 }
 
