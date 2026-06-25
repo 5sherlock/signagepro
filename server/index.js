@@ -2335,6 +2335,24 @@ async function reloadCrons() {
 // 서버 시작 시 스케줄 로드
 reloadCrons();
 
+// SPA 캐시 정책 ───────────────────────────────────────────────────────────
+// index.html은 매 요청 재검증(no-cache)해야 배포 후 브라우저가 옛 번들을 물고
+// 있다가 "접속하면 데이터가 안 보여 강제새로고침해야 보이는" 문제가 사라진다.
+// 해시 파일명을 가진 빌드 산출물(assets)은 내용이 바뀌면 이름도 바뀌므로 영구 캐시.
+const SPA_STATIC_OPTS = {
+  setHeaders: (res, filePath) => {
+    if (filePath.endsWith('index.html')) {
+      res.setHeader('Cache-Control', 'no-cache');
+    } else if (filePath.includes(`${path.sep}assets${path.sep}`)) {
+      res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+    }
+  },
+};
+const sendSpaIndex = (res, dir) => {
+  res.setHeader('Cache-Control', 'no-cache');
+  res.sendFile(path.join(dir, 'index.html'));
+};
+
 // 모바일 대시보드 정적 파일 서빙 (vite build 결과물)
 const mobileDist = path.join(__dirname, '../mobile/dist');
 if (fs.existsSync(mobileDist)) {
@@ -2346,20 +2364,20 @@ if (fs.existsSync(mobileDist)) {
     }
     next();
   });
-  app.use('/mobile', express.static(mobileDist));
-  app.get('/mobile/{*splat}', (req, res) => res.sendFile(path.join(mobileDist, 'index.html')));
+  app.use('/mobile', express.static(mobileDist, SPA_STATIC_OPTS));
+  app.get('/mobile/{*splat}', (req, res) => sendSpaIndex(res, mobileDist));
   console.log('[Express] 모바일 대시보드 정적 파일 서빙 활성화');
 }
 
 // 대시보드 정적 파일 서빙 (vite build 결과물)
 const dashboardDist = path.join(__dirname, '../dashboard/dist');
 if (fs.existsSync(dashboardDist)) {
-  app.use(express.static(dashboardDist));
+  app.use(express.static(dashboardDist, SPA_STATIC_OPTS));
   app.get('/{*splat}', (req, res) => {
     // API/업로드/모바일 경로는 SPA fallback 대상이 아니다. 없으면 404를 반환해야지
     // index.html(HTML)을 내려보내면 바이너리/JSON 응답이 HTML로 깨진다.
     if (/^\/(api|uploads|mobile)\//.test(req.path)) return res.status(404).json({ error: 'Not found' });
-    res.sendFile(path.join(dashboardDist, 'index.html'));
+    sendSpaIndex(res, dashboardDist);
   });
   console.log('[Express] 대시보드 정적 파일 서빙 활성화');
 }
