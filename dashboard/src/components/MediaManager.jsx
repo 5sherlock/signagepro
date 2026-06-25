@@ -59,15 +59,22 @@ import './MediaManager.css';
 const API = SOCKET_URL;
 
 // ── 미디어 렌더러 ─────────────────────────────────────────
+// 썸네일은 서버가 생성한 480px 축소본(/thumb)을 쓴다. 원본 풀해상도를 다수
+// 동시 디코드하면 브라우저 이미지 메모리가 고갈돼 일부가 검게 렌더되기 때문.
+// 서버 썸네일 생성 실패 시 원본으로 폴백(onError). + lazy/async 로딩.
+export const thumbUrlFor = (path) => {
+  if (!path) return '';
+  if (path.startsWith('http')) return path;        // 외부(R2 등)는 그대로
+  return `${API}/thumb/${path.split('/').pop()}`;  // /uploads/<file> → /thumb/<file>
+};
 const MediaThumb = ({ path, style = {} }) => {
   if (!path) return <div style={{ background: '#111', ...style }} />;
   const url = path.startsWith('http') ? path : `${API}${path}`;
   const isVideo = /\.(mp4|webm|mov)$/i.test(path);
-  // 썸네일은 원본을 그대로 쓰므로, 다수의 풀해상도 미디어를 동시에 디코드하면
-  // 브라우저 이미지 메모리가 고갈돼 일부가 검게 렌더된다. lazy/async 로딩으로
-  // 화면에 보이는 것만 점진 디코드하고, 영상 썸네일은 autoplay(스트리밍)를 끈다.
   if (isVideo) return <video src={url} muted loop playsInline preload="metadata" style={{ objectFit: 'contain', ...style }} />;
-  return <img src={url} alt="" loading="lazy" decoding="async" style={{ objectFit: 'contain', ...style }} />;
+  return <img src={thumbUrlFor(path)} alt="" loading="lazy" decoding="async"
+    onError={(e) => { if (e.currentTarget.src !== url) e.currentTarget.src = url; }}
+    style={{ objectFit: 'contain', ...style }} />;
 };
 
 // ── 트랙 효과 오버레이 계산 ─────────────────────────────────────
@@ -125,7 +132,8 @@ const TrackFilmstrip = ({ item }) => {
           {isVideo ? (
             <video className="track-frame-thumb" src={url} muted preload="metadata" />
           ) : (
-            <img className="track-frame-thumb" src={url} alt="" loading="lazy" decoding="async" />
+            <img className="track-frame-thumb" src={thumbUrlFor(item.media.path)} alt="" loading="lazy" decoding="async"
+              onError={(e) => { if (e.currentTarget.src !== url) e.currentTarget.src = url; }} />
           )}
         </div>
       ))}

@@ -725,6 +725,43 @@ const FFMPEG_BIN = process.env.FFMPEG_PATH || 'ffmpeg';
 const FFPROBE_BIN = process.env.FFPROBE_PATH || 'ffprobe';
 const vwJobs = new Map(); // jobId -> { status, pct, slices, error, proc, createdAt }
 
+// ── 미디어 썸네일 (대시보드 라이브러리/타임라인용) ────────────────────────────
+// 대시보드가 원본 풀해상도(1920x1080 등) 다수를 동시에 디코드하면 브라우저 이미지
+// 메모리가 고갈돼 일부가 검게 렌더된다. 요청 시 ffmpeg로 480px 썸네일을 만들어
+// 캐시·서빙한다(기존/신규 모두 자동, DB 스키마 변경 없음). 실패하면 원본으로 폴백.
+// 주의: 디렉터리명에 점(.)을 쓰면 Express res.sendFile(send)이 dotfile로 보고 거부함 → 'thumbs'.
+const thumbsDir = path.join(uploadDir, 'thumbs');
+if (!fs.existsSync(thumbsDir)) fs.mkdirSync(thumbsDir, { recursive: true });
+const thumbLocks = new Map(); // file -> Promise<boolean> (동시 중복 생성 방지)
+function buildThumb(file, src, cache) {
+  let p = thumbLocks.get(file);
+  if (p) return p;
+  const isVideo = /\.(mp4|webm|mov|avi|mkv)$/i.test(file);
+  const vf = "scale='min(480,iw)':-2";
+  const args = isVideo
+    ? ['-y', '-ss', '1', '-i', src, '-frames:v', '1', '-vf', vf, '-q:v', '5', cache]
+    : ['-y', '-i', src, '-vf', vf, '-q:v', '5', cache];
+  p = new Promise((resolve) => {
+    execFile(FFMPEG_BIN, args, { windowsHide: true, timeout: 30000 }, (err) => {
+      thumbLocks.delete(file);
+      resolve(!err && fs.existsSync(cache));
+    });
+  });
+  thumbLocks.set(file, p);
+  return p;
+}
+app.get('/thumb/:file', (req, res) => {
+  const file = path.basename(req.params.file); // path traversal 방지
+  const cache = path.join(thumbsDir, `${file}.jpg`);
+  if (fs.existsSync(cache)) return res.sendFile(cache);
+  const src = path.join(uploadDir, file);
+  if (!fs.existsSync(src)) return res.status(404).json({ error: 'Not found' });
+  buildThumb(file, src, cache).then((ok) => {
+    if (ok) return res.sendFile(cache);
+    res.redirect(302, `/uploads/${encodeURIComponent(file)}`); // ffmpeg 실패 시 원본
+  });
+});
+
 // ffprobe로 영상 너비/높이/길이(초) 측정
 function probeVideo(file) {
   return new Promise((resolve, reject) => {
