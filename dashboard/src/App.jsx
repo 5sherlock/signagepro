@@ -1517,7 +1517,9 @@ function App() {
   const filteredDevices = (() => {
     const base = devices.filter(d => {
       if (!d.groupId) return false;
-      if (selectedStoreId === 'all') return true;
+      // selectedStoreId가 아직 비어있으면(스토어 목록 로드 전 과도기) 전체 표시 —
+      // 안 그러면 d.storeId===''로 전 기기가 걸러져 "첫 화면 빈 그리드"가 된다.
+      if (selectedStoreId === 'all' || !selectedStoreId) return true;
       if (selectedStoreId === 'unassigned') return !d.storeId;
       return d.storeId === selectedStoreId;
     });
