@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { io } from 'socket.io-client';
 import { SOCKET_URL, apiFetch, getToken } from '../config';
 import { Upload, Trash2, Video, Scissors, X, Play, Square, MonitorPlay, SlidersHorizontal, RotateCcw } from 'lucide-react';
+import { encodeWall, webcodecsSupported } from '../wallEncode';
 
 const API = SOCKET_URL;
 
@@ -335,8 +336,13 @@ const VideoWallManager = ({ stores = [], selectedStoreId, setSelectedStoreId }) 
         const save = await apiFetch(`${API}/api/groups/${groupId}/playlist`, { method: 'POST', body: JSON.stringify({ items: [...kept, ...added] }) });
         if (!save.ok) { const er = await save.json().catch(() => ({})); throw new Error(er.error || '재생목록 저장 실패'); }
       }
+      // 기본 = 전 기기 음소거(의도치 않은 사운드/에코 방지). 모든 슬라이스에 오디오가 있으므로
+      // 출력할 기기를 관제에서 음소거 해제(볼륨↑)해 선택하면 된다.
+      for (const p of pairs) {
+        apiFetch(`${API}/api/devices/${p.deviceId}/volume`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ level: 0 }) }).catch(() => {});
+      }
       setLastBackup((b) => ({ ...b, [g.base]: backup }));
-      setDeployMsg((m) => ({ ...m, [g.base]: { type: 'ok', text: `${pairs.length}개 기기에 배포 완료 (즉시 반영)` } }));
+      setDeployMsg((m) => ({ ...m, [g.base]: { type: 'ok', text: `${pairs.length}개 기기에 배포 완료 (즉시 반영, 기본 음소거 — 관제에서 출력 기기 선택)` } }));
       fetchDevices();
     } catch (err) {
       setDeployMsg((m) => ({ ...m, [g.base]: { type: 'error', text: err.message } }));
@@ -434,6 +440,13 @@ const VideoWallManager = ({ stores = [], selectedStoreId, setSelectedStoreId }) 
     return () => socket.disconnect();
   }, [showProc, fetchVideos]);
 
+  // 가공 완료 시 모달 자동 닫기(잠깐 100% 보여준 뒤)
+  useEffect(() => {
+    if (job?.status !== 'done') return;
+    const t = setTimeout(() => { setShowProc(false); setJob(null); }, 1500);
+    return () => clearTimeout(t);
+  }, [job?.status]);
+
   // 원본 파일 → 미리보기 objectURL. (라이브러리 선택 모드면 procFile=null이라 여기선 안 건드림)
   useEffect(() => {
     if (!procFile) return;
@@ -493,9 +506,56 @@ const VideoWallManager = ({ stores = [], selectedStoreId, setSelectedStoreId }) 
     xhr.send(form);
   };
 
+  const procAbortRef = useRef(null);
   const cancelProc = () => {
-    if (job?.jobId) apiFetch(`${API}/api/videowall/jobs/${job.jobId}/cancel`, { method: 'POST' }).catch(() => {});
+    if (procAbortRef.current) procAbortRef.current.abort();      // 브라우저 가공 중단
+    if (job?.jobId) apiFetch(`${API}/api/videowall/jobs/${job.jobId}/cancel`, { method: 'POST' }).catch(() => {}); // 서버 가공 중단
     setJob(null);
+  };
+
+  // 브라우저(PC GPU)에서 직접 인코딩 → 슬라이스 mp4를 /api/media 로 업로드. NAS 부담 없음.
+  const startProcLocal = async () => {
+    if (!procFile && !procMediaId) { alert('가공할 원본 동영상을 선택하세요 (파일 업로드 또는 라이브러리).'); return; }
+    if (!webcodecsSupported()) {
+      const insecure = typeof window !== 'undefined' && !window.isSecureContext;
+      alert(insecure
+        ? 'WebCodecs는 보안 컨텍스트(HTTPS 또는 localhost)에서만 동작합니다.\n현재 http+IP 접속이라 비활성화됨.\n\n→ dev PC에서 http://localhost:3001 로 접속하거나, HTTPS(예: Tailscale Serve)로 접속하세요.\n(대신 아래 "서버 가공"도 가능합니다)'
+        : '이 브라우저는 WebCodecs를 지원하지 않습니다. Chrome/Edge 최신 버전에서 사용하세요.\n(대신 아래 "서버 가공"도 가능합니다)');
+      return;
+    }
+    const n = parseInt(proc.deviceCount);
+    if (!Number.isInteger(n) || n < 1 || n > 12) { alert('가로 대수는 1~12 사이여야 합니다.'); return; }
+    const sliceWidth = parseInt(proc.sliceWidth), sliceHeight = parseInt(proc.sliceHeight);
+    if (!sliceWidth || !sliceHeight) { alert('슬라이스 해상도를 확인하세요.'); return; }
+    const rawName = proc.baseName || (procMediaName || procFile?.name || 'wall').replace(/\.[^.]+$/, '');
+    const base = (rawName.replace(/[_-]?wallsync.*$/i, '').replace(/[^\w가-힣.-]+/g, '_').replace(/_+$/, '')) || 'wall';
+    const src = procFile || procSrcUrl;
+    if (!src) { alert('원본을 불러올 수 없습니다.'); return; }
+
+    const ctrl = new AbortController();
+    procAbortRef.current = ctrl;
+    setJob({ status: 'encoding', pct: 0 });
+    try {
+      const slices = await encodeWall({
+        src, deviceCount: n, sliceWidth, sliceHeight,
+        yOffsetPct: parseFloat(proc.yOffsetPct) || 0,
+        onProgress: (p) => setJob((j) => (j && j.status === 'encoding' ? { ...j, pct: Math.round(p * 100) } : j)),
+        signal: ctrl.signal,
+      });
+      for (let i = 0; i < slices.length; i++) {
+        setJob({ status: 'registering', pct: Math.round((i / slices.length) * 100) });
+        const f = new File([slices[i].blob], `${base}_wallsync_slice${slices[i].index}.mp4`, { type: 'video/mp4' });
+        await uploadOne(f);
+      }
+      setJob({ status: 'done', pct: 100 });
+      setUploadProgress(null);
+      fetchVideos();
+    } catch (e) {
+      setJob({ status: 'error', error: e.message || '가공 실패' });
+      setUploadProgress(null);
+    } finally {
+      procAbortRef.current = null;
+    }
   };
 
   const wallW = (parseInt(proc.sliceWidth) || 0) * (parseInt(proc.deviceCount) || 0);
@@ -941,8 +1001,11 @@ const VideoWallManager = ({ stores = [], selectedStoreId, setSelectedStoreId }) 
               ) : (
                 <>
                   <button onClick={() => setShowProc(false)} style={{ padding: '8px 18px', background: 'rgba(255,255,255,0.06)', color: '#cbd5e1', border: '1px solid rgba(255,255,255,0.12)', borderRadius: 8, cursor: 'pointer', fontSize: '0.85rem' }}>닫기</button>
-                  <button onClick={startProc} disabled={!procFile && !procMediaId} style={{ padding: '8px 18px', background: (procFile || procMediaId) ? '#8b5cf6' : '#334155', color: '#fff', border: 'none', borderRadius: 8, cursor: (procFile || procMediaId) ? 'pointer' : 'not-allowed', fontSize: '0.85rem', fontWeight: 700 }}>
-                    {job?.status === 'done' ? '다시 가공' : job?.status === 'error' ? '재시도' : '가공 시작'}
+                  <button onClick={startProc} disabled={!procFile && !procMediaId} title="서버(NAS)에서 ffmpeg로 가공 — NAS가 약하면 느림" style={{ padding: '8px 18px', background: (procFile || procMediaId) ? 'rgba(139,92,246,0.18)' : '#334155', color: (procFile || procMediaId) ? '#c4b5fd' : '#fff', border: '1px solid rgba(139,92,246,0.4)', borderRadius: 8, cursor: (procFile || procMediaId) ? 'pointer' : 'not-allowed', fontSize: '0.85rem', fontWeight: 600 }}>
+                    {job?.status === 'error' ? '서버 재시도' : '서버 가공'}
+                  </button>
+                  <button onClick={startProcLocal} disabled={!procFile && !procMediaId} title="브라우저(이 PC의 GPU)에서 직접 인코딩 — NAS 부담 없이 빠름. Chrome/Edge 권장." style={{ padding: '8px 18px', background: (procFile || procMediaId) ? '#10b981' : '#334155', color: '#fff', border: 'none', borderRadius: 8, cursor: (procFile || procMediaId) ? 'pointer' : 'not-allowed', fontSize: '0.85rem', fontWeight: 700 }}>
+                    {job?.status === 'done' ? '다시 가공' : '⚡ PC에서 가공'}
                   </button>
                 </>
               )}

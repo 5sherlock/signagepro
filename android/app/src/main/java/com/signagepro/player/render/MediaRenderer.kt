@@ -30,9 +30,22 @@ class MediaRenderer(
     private val layerA: FrameLayout,
     private val layerB: FrameLayout
 ) {
-    private val player: ExoPlayer = ExoPlayer.Builder(context).build().apply {
+    private var player: ExoPlayer = buildPlayer()
+
+    private fun buildPlayer(): ExoPlayer = ExoPlayer.Builder(context).build().apply {
         repeatMode = Player.REPEAT_MODE_ONE  // playlist duration이 비디오 길이보다 길 때 루프
-        volume = 0f                          // 동영상 기본 음소거 — 사이니지에서 의도치 않은 사운드 방지
+        volume = 1f                          // 플레이어는 풀볼륨, 실제 출력은 OS 미디어 볼륨(STREAM_MUSIC)으로 제어.
+                                             // OS 볼륨은 기본 음소거(최초 1회)라 의도치 않은 사운드 없음 + 관제에서 올리면 재생/이퀄라이저 동작.
+        addListener(object : Player.Listener {
+            override fun onRenderedFirstFrame() { firstFrameRendered = true }
+        })
+    }
+
+    // 앱 재시작과 동일하게 ExoPlayer를 새로 만든다. 비디오→비디오 교체(배포) 시 기존 디코더가
+    // 스톨해 "배포 후 화면 멈춤, 앱 재시작해야 풀림"이 발생 → 재시작 없이 플레이어 재생성으로 해소.
+    private fun recreatePlayer() {
+        try { player.release() } catch (e: Exception) {}
+        player = buildPlayer()
     }
 
     private var active: FrameLayout = layerA
@@ -81,11 +94,7 @@ class MediaRenderer(
         imageOf(active).visibility = View.GONE
         videoOf(standby).visibility = View.GONE
         imageOf(standby).visibility = View.GONE
-
-        // 실제 첫 프레임이 표면에 그려졌는지 확정 — 검은화면(표면 미렌더) 자가 복구 판단용
-        player.addListener(object : Player.Listener {
-            override fun onRenderedFirstFrame() { firstFrameRendered = true }
-        })
+        // 첫 프레임 렌더 리스너는 buildPlayer()에서 부착됨(플레이어 재생성 시에도 유지).
     }
 
     /**
@@ -133,6 +142,7 @@ class MediaRenderer(
     }
 
     private fun loadVideo(layer: FrameLayout, file: File) {
+        recreatePlayer()  // 앱 재시작과 동일하게 새 ExoPlayer — 비디오 교체(배포) 시 디코더 스톨(멈춤) 방지
         val playerView = videoOf(layer)
         val imageView = imageOf(layer)
         imageView.visibility = View.GONE
@@ -142,10 +152,7 @@ class MediaRenderer(
         // 이전 player가 다른 layer에 attach돼 있어도 setPlayer로 자동 이동
         videoOf(otherLayer(layer)).player = null
 
-        // 잔존 재생속도(이전 wall-sync nudge)를 항상 1.0x로 복구한 뒤 새 미디어 로드
-        if (player.playbackParameters.speed != 1f) {
-            player.playbackParameters = PlaybackParameters(1f)
-        }
+        // (새 ExoPlayer라 속도 1.0x·미디어 없음 — 별도 리셋 불필요)
         player.setMediaItem(MediaItem.fromUri(file.toURI().toString()))
         player.prepare()
         player.playWhenReady = true

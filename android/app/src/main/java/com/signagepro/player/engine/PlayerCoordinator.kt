@@ -144,6 +144,15 @@ class PlayerCoordinator(
     }
 
     fun start() {
+        // 기본값: 미디어 볼륨 0(음소거). 최초 1회만 적용 — 이후엔 사용자가 설정한 볼륨을 유지(재부팅 시 리셋 안 함).
+        runCatching {
+            val prefs = context.getSharedPreferences("signagepro_player", Context.MODE_PRIVATE)
+            if (!prefs.getBoolean("volume_initialized", false)) {
+                audioManager.setStreamVolume(AudioManager.STREAM_MUSIC, 0, 0)
+                prefs.edit().putBoolean("volume_initialized", true).apply()
+                Log.i(TAG, "최초 실행 — 미디어 볼륨을 0(음소거)으로 초기화")
+            }
+        }
         scope.launch {
             try {
                 bootstrap()
@@ -322,12 +331,14 @@ class PlayerCoordinator(
         // 중복 hash 제거 — 같은 파일을 여러 기기에 배치해도 한 번만 다운로드
         val uniqueItems = filtered.distinctBy { it.media.hash ?: it.media.id }
         val total = uniqueItems.size
-        val activeHashes = mutableSetOf<String>()
+        // 활성 hash 전체를 미리 산출 → 다운로드 전에 옛 캐시를 비워 공간 확보
+        val activeHashes = uniqueItems.mapNotNull { it.media.hash }.toMutableSet()
+
+        // 새 playlist에 없는 옛 파일부터 먼저 삭제 (작은 파티션 보드 ENOSPC 방지)
+        cache.evictInactive(activeHashes)
 
         try {
             uniqueItems.forEachIndexed { idx, item ->
-                item.media.hash?.let { activeHashes.add(it) }
-
                 // 이미 캐시된 파일은 건너뜀
                 if (cache.cachedFile(item.media) != null) {
                     onStatus("확인 중… (${idx + 1}/$total)  ${item.media.filename}")

@@ -15,16 +15,21 @@ import java.util.concurrent.ConcurrentHashMap
 /**
  * 미디어 파일 다운로드 + SHA-256 검증 + LRU 정리.
  *
- * 정책 (Track A-1):
+ * 정책:
  * - 전체 prefetch: 현재 playlist의 모든 미디어를 미리 받음 → 서버 오프라인에도 재생 유지
  * - 캐시 키: 서버가 내려준 hash (SHA-256). 같은 hash면 재다운로드 안 함.
- * - 스토리지 쿼터 [quotaBytes] 초과 시, playlist에 포함되지 않은 가장 오래된 파일부터 삭제.
+ * - 정리 기준은 "고정 쿼터"가 아니라 **실제 여유공간**:
+ *     · 캐시 폴더가 [maxCacheBytes] 를 넘거나
+ *     · 파티션 여유공간이 [minFreeBytes] 아래로 떨어지면
+ *   playlist에 없는(inactive) 파일부터 오래된 순으로 삭제.
+ * - 다운로드는 정리(evict) **후**에 수행 → 작은 파티션 보드의 ENOSPC 방지.
  *
- * 8GB Flash 환경 고려: 기본 quota 2GB.
+ * 작은 플래시(예: 2.9GB) 보드에서도 디스크를 꽉 채우지 않도록 여유공간을 항상 확보한다.
  */
 class MediaCacheRepo(
     private val context: Context,
-    private val quotaBytes: Long = DEFAULT_QUOTA
+    private val maxCacheBytes: Long = DEFAULT_MAX_CACHE,
+    private val minFreeBytes: Long = DEFAULT_MIN_FREE
 ) {
 
     private val baseDir: File by lazy {
@@ -77,6 +82,15 @@ class MediaCacheRepo(
                     val body = resp.body ?: throw DownloadException("Empty body for $url")
                     val contentLength = body.contentLength() // -1이면 알 수 없음
 
+                    // 다운로드 직전 여유공간 확인 — 부족하면 디스크를 채우지 않고 즉시 실패(명확한 사유)
+                    val free = baseDir.usableSpace
+                    val needed = (if (contentLength > 0) contentLength else 0L) + SAFETY_MARGIN
+                    if (free < needed) {
+                        throw DownloadException(
+                            "저장공간 부족: ${media.filename} 필요 ${needed / 1_048_576}MB / 여유 ${free / 1_048_576}MB"
+                        )
+                    }
+
                     val buf = ByteArray(32 * 1024) // 32KB 버퍼
                     var downloaded = 0L
                     var lastReportedPct = -1
@@ -127,25 +141,39 @@ class MediaCacheRepo(
     }
 
     /**
-     * 현재 playlist에 포함된 미디어의 hash 집합을 받아, 미포함 + 오래된 파일부터 삭제.
+     * 다운로드 *전에* 호출 — 새 playlist에 없는(inactive) 파일을 오래된 순으로 삭제해
+     * 여유공간을 미리 확보한다. 활성 파일은 건드리지 않으므로 재사용 파일 재다운로드가 없다.
      */
-    suspend fun trim(activeHashes: Set<String>) = withContext(Dispatchers.IO) {
-        val files = baseDir.listFiles()?.toMutableList() ?: return@withContext
-        // 활성 hash가 들어있지 않은 파일은 우선 삭제 대상
-        val inactive = files.filter { f -> activeHashes.none { f.name.startsWith(it) } }
-            .sortedBy { it.lastModified() }
+    suspend fun evictInactive(activeHashes: Set<String>) = withContext(Dispatchers.IO) {
+        val inactive = baseDir.listFiles()
+            ?.filter { f -> activeHashes.none { f.name.startsWith(it) } }
+            ?.sortedBy { it.lastModified() }
+            ?: return@withContext
         for (f in inactive) {
-            if (currentSize() <= quotaBytes) break
+            if (!needsEviction()) break
             f.delete()
         }
-        // 그래도 초과면 활성 파일 중에서도 오래된 것부터 삭제 (최후의 수단)
-        if (currentSize() > quotaBytes) {
-            files.filter { it.exists() }.sortedBy { it.lastModified() }.forEach { f ->
-                if (currentSize() <= quotaBytes) return@forEach
-                f.delete()
-            }
+    }
+
+    /**
+     * 다운로드 *후* 정리 — inactive부터 비우고, 그래도 부족하면 활성 파일까지(최후의 수단).
+     */
+    suspend fun trim(activeHashes: Set<String>) = withContext(Dispatchers.IO) {
+        evictInactive(activeHashes)
+        if (needsEviction()) {
+            baseDir.listFiles()
+                ?.filter { it.exists() }
+                ?.sortedBy { it.lastModified() }
+                ?.forEach { f ->
+                    if (!needsEviction()) return@forEach
+                    f.delete()
+                }
         }
     }
+
+    /** 캐시가 상한을 넘었거나 파티션 여유공간이 최소치 아래면 정리 필요. */
+    private fun needsEviction(): Boolean =
+        currentSize() > maxCacheBytes || baseDir.usableSpace < minFreeBytes
 
     fun currentSize(): Long =
         baseDir.listFiles()?.sumOf { it.length() } ?: 0L
@@ -171,6 +199,11 @@ class MediaCacheRepo(
     class DownloadException(message: String) : RuntimeException(message)
 
     companion object {
-        private const val DEFAULT_QUOTA: Long = 2L * 1024 * 1024 * 1024  // 2GB
+        /** 캐시 폴더 상한 (큰 디스크에서도 무한정 쌓지 않도록). */
+        private const val DEFAULT_MAX_CACHE: Long = 2L * 1024 * 1024 * 1024   // 2GB
+        /** 파티션에 항상 남겨둘 최소 여유공간 (작은 플래시 보드 ENOSPC 방지). */
+        private const val DEFAULT_MIN_FREE: Long = 600L * 1024 * 1024         // 600MB
+        /** 다운로드 직전 추가로 요구하는 여유 마진. */
+        private const val SAFETY_MARGIN: Long = 64L * 1024 * 1024             // 64MB
     }
 }

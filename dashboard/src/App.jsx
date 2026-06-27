@@ -1285,7 +1285,8 @@ function App() {
 
   // PC 스피커로 듣기 — deviceId Set (체크된 기기만 음소거 해제)
   const [pcAudioSet, setPcAudioSet] = useState(new Set());
-  const [selectedStoreId, setSelectedStoreId] = useState('');
+  const [selectedStoreId, setSelectedStoreId] = useState(() => localStorage.getItem('SIGNAGE_MONITOR_STORE') || ''); // 마지막 선택 사업장 복원(새로고침 시 깜빡임 방지)
+  const [storesLoaded, setStoresLoaded] = useState(false); // 사업장 목록 로드 완료 — 로드 전 전체-혼합 표시 방지
   const [gridLayout, setGridLayout] = useState('auto');
   const [wallView, setWallView] = useState(false); // 월 미리보기 바 토글
   const [debugOverlay, setDebugOverlay] = useState(false); // 디버그 오버레이 전 기기 토글
@@ -1367,10 +1368,17 @@ function App() {
       .then(data => {
         if (!data) return;
         setStores(data);
-        setSelectedStoreId(prev => prev || (data.length > 0 ? data[0].id : prev));
+        // 저장된 선택이 유효하면 유지, 아니면 첫 사업장 자동선택 (혼합 표시 방지)
+        setSelectedStoreId(prev => (prev && data.some(s => s.id === prev)) ? prev : (data.length > 0 ? data[0].id : prev));
+        setStoresLoaded(true);
       })
       .catch(err => console.error('사업장 목록 불러오기 실패:', err));
   }, [onUnauth]);
+
+  // 선택 사업장 저장 — 새로고침/재접속 시 같은 사업장 즉시 표시(전체 혼합 깜빡임 방지)
+  useEffect(() => {
+    if (selectedStoreId && selectedStoreId !== 'all') localStorage.setItem('SIGNAGE_MONITOR_STORE', selectedStoreId);
+  }, [selectedStoreId]);
 
   useEffect(() => {
     const checkServer = () => {
@@ -1517,9 +1525,9 @@ function App() {
   const filteredDevices = (() => {
     const base = devices.filter(d => {
       if (!d.groupId) return false;
-      // selectedStoreId가 아직 비어있으면(스토어 목록 로드 전 과도기) 전체 표시 —
-      // 안 그러면 d.storeId===''로 전 기기가 걸러져 "첫 화면 빈 그리드"가 된다.
-      if (selectedStoreId === 'all' || !selectedStoreId) return true;
+      // 'all'(사용자가 명시적으로 전체 선택)일 때만 전체. ''(로드 전 과도기)는 아무것도
+      // 매칭 안 함 — 대신 렌더에서 storesLoaded 가드로 "불러오는 중"을 보여줘 전체-혼합 깜빡임을 막는다.
+      if (selectedStoreId === 'all') return true;
       if (selectedStoreId === 'unassigned') return !d.storeId;
       return d.storeId === selectedStoreId;
     });
@@ -1797,6 +1805,9 @@ function App() {
                     );
                   })}
                 </div>
+              )}
+              {!storesLoaded && filteredDevices.length === 0 && (
+                <div style={{ padding: 40, textAlign: 'center', color: '#94a3b8', fontSize: '0.9rem' }}>사업장 불러오는 중…</div>
               )}
               <div
                 className={`dashboard-grid ${gridLayout !== 'custom' ? (gridLayout === 'auto' ? `count-${filteredDevices.length > 0 && filteredDevices.length <= 6 ? filteredDevices.length : filteredDevices.length > 6 ? 'many' : '1'}` : `layout-${gridLayout}`) : ''}`}
@@ -2079,11 +2090,11 @@ function App() {
                                 onChange={e => {
                                   if (e.target.checked) {
                                     // 음소거: 현재 볼륨 기억 후 0으로
-                                    preMuteVol.current[device.id] = vol ?? 8;
+                                    preMuteVol.current[device.id] = vol || 1;
                                     sendVol(0);
                                   } else {
-                                    // 음소거 해제: 기억된 볼륨 복원 (없으면 8)
-                                    sendVol(preMuteVol.current[device.id] ?? 8);
+                                    // 음소거 해제: 기억된 볼륨 복원 (없으면 낮게 1=약 7% — 53%는 너무 큼)
+                                    sendVol(preMuteVol.current[device.id] || 1);
                                   }
                                 }}
                                 style={{ accentColor: '#ef4444', cursor: 'pointer', width: 13, height: 13 }}
