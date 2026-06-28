@@ -793,7 +793,14 @@ const MediaManager = ({ stores = [], groups = [], devices = [], selectedStoreId,
   const [uploadProgress, setUploadProgress] = useState(null); // null | { name, pct }
   const [deployPanel, setDeployPanel] = useState(null); // null | 'saving' | 'deploying'
   const [undoInfo, setUndoInfo] = useState({ available: false, mode: null, deployedAt: null }); // 되돌리기/다시원복
-  const [undoActive, setUndoActive] = useState(false); // 이번 화면에서 배포(변경)했을 때만 버튼 노출 — 안 바꿨는데 뜨는 것 방지
+  // 배포한 그룹만 되돌리기 버튼 노출 + 안 누르면 유지(탭 세션 동안). 새 탭/새 세션에선 숨김.
+  const [activeGroups, setActiveGroups] = useState(() => {
+    try { return new Set(JSON.parse(sessionStorage.getItem('SIGNAGE_UNDO_ACTIVE_GROUPS') || '[]')); } catch { return new Set(); }
+  });
+  useEffect(() => {
+    try { sessionStorage.setItem('SIGNAGE_UNDO_ACTIVE_GROUPS', JSON.stringify([...activeGroups])); } catch {}
+  }, [activeGroups]);
+  const markGroupActive = (gid) => setActiveGroups((prev) => { const n = new Set(prev); n.add(gid); return n; });
   const [reverting, setReverting] = useState(false);
   const deployHasSeenDl = useRef(false); // 기기 다운로드가 한 번이라도 감지됐는지
   const fileRef = useRef();
@@ -879,8 +886,6 @@ const MediaManager = ({ stores = [], groups = [], devices = [], selectedStoreId,
   }, [selectedGroupId]);
 
   useEffect(() => { fetchUndo(); }, [fetchUndo]);
-  // 그룹을 바꾸면 "이번에 배포함" 표시 초기화 → 안 바꾼 그룹은 버튼 숨김
-  useEffect(() => { setUndoActive(false); }, [selectedGroupId]);
 
   // 직전 배포 되돌리기 실행
   const handleRevert = async () => {
@@ -895,7 +900,7 @@ const MediaManager = ({ stores = [], groups = [], devices = [], selectedStoreId,
       if (!res.ok) { const e = await res.json().catch(() => ({})); throw new Error(e.error || '되돌리기 실패'); }
       await fetchPlaylist();   // 복구된 상태로 편집기 동기화
       await fetchUndo();
-      setUndoActive(true);     // 되돌리기/다시원복 토글 유지
+      markGroupActive(selectedGroupId); // 되돌리기/다시원복 토글 유지
       setDeployPanel('deploying'); // 기기 재다운로드 단계 표시
     } catch (e) {
       alert(e.message || '되돌리기 실패');
@@ -1067,7 +1072,7 @@ const MediaManager = ({ stores = [], groups = [], devices = [], selectedStoreId,
       // 서버 저장 후 서버 상태를 다시 불러와 타임라인과 라이브러리를 정확히 동기화
       await fetchPlaylist();
       await fetchUndo();          // 배포 직후 되돌리기 가능 상태 갱신
-      setUndoActive(true);        // 이번 화면에서 배포함 → 되돌리기 버튼 노출
+      markGroupActive(selectedGroupId); // 배포함 → 되돌리기 버튼 노출(안 누르면 탭 세션 동안 유지)
       setShowArchived(false);
       setDeployPanel('deploying'); // 기기 다운로드 단계로 전환
     } catch (e) {
@@ -1321,8 +1326,8 @@ const MediaManager = ({ stores = [], groups = [], devices = [], selectedStoreId,
           <button className={`btn-deploy ${isDirty ? '' : 'inactive'}`} onClick={handleSave} disabled={saving || !isDirty}>
             <Save size={18} style={{ marginRight: 8 }} /> {saving ? '저장 중...' : '변경사항 저장 및 배포'}
           </button>
-          {/* 되돌리기 ↔ 다시 원복 토글. 이번 화면에서 배포했을 때만 노출(안 바꿨는데 뜨는 것 방지) */}
-          {undoActive && undoInfo.available && (
+          {/* 되돌리기 ↔ 다시 원복 토글. 배포한 그룹만 노출, 안 누르면 탭 세션 동안 유지 */}
+          {activeGroups.has(selectedGroupId) && undoInfo.available && (
             <button
               onClick={handleRevert}
               disabled={reverting || saving}

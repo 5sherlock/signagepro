@@ -236,7 +236,13 @@ const VideoWallManager = ({ stores = [], selectedStoreId, setSelectedStoreId }) 
   // 한쪽 메뉴에서 되돌리면 서버 스냅샷이 소비되어 다른 메뉴의 버튼도 (마운트 시 재조회로) 사라진다.
   // 과거 localStorage 백업은 메뉴별로 따로 놀아 한쪽만 사라지던 문제가 있었음.
   const [groupUndo, setGroupUndo] = useState({}); // { groupId: 'undo'|'redo'|null }
-  const [activeSets, setActiveSets] = useState({}); // { base: true } — 이번 화면에서 배포한 세트만 되돌리기 버튼 노출
+  // 배포한 세트만 되돌리기 버튼 노출 + 안 누르면 유지(탭 세션 동안). 새 탭/세션엔 숨김.
+  const [activeSets, setActiveSets] = useState(() => {
+    try { return JSON.parse(sessionStorage.getItem('SIGNAGE_UNDO_ACTIVE_WALLSETS') || '{}'); } catch { return {}; }
+  });
+  useEffect(() => {
+    try { sessionStorage.setItem('SIGNAGE_UNDO_ACTIVE_WALLSETS', JSON.stringify(activeSets)); } catch {}
+  }, [activeSets]);
   const refreshGroupUndo = useCallback(async (gids) => {
     const list = [...new Set((gids || []).filter(Boolean))];
     if (list.length === 0) return;
