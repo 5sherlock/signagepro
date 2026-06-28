@@ -2517,7 +2517,9 @@ setInterval(async () => {
     for (const dev of onlineDevices) {
       const raw = dev.appVersion || '';
       const currentVer = raw.includes(' (') ? raw.slice(0, raw.indexOf(' (')) : raw;
-      if (!currentVer || currentVer === targetVersion) continue;
+      // 기기가 목표보다 "엄격히 구버전"일 때만 재발송. 같거나 더 최신이면 skip
+      // (과거 `=== targetVersion`만 비교 → 1.0.6을 1.0.5로 다운그레이드 푸시하는 버그였음).
+      if (!needsOtaUpdate(currentVer, targetVersion)) continue;
 
       const room = `device:${dev.id}`;
       const socketsInRoom = await io.in(room).allSockets();
