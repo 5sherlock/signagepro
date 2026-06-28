@@ -232,13 +232,27 @@ const VideoWallManager = ({ stores = [], selectedStoreId, setSelectedStoreId }) 
   const [wallOrder, setWallOrder] = useState({}); // base -> [sliceId|null, ...] (index=기기 위치)
   const [deploying, setDeploying] = useState(null); // 배포 중인 세트 base
   const [deployMsg, setDeployMsg] = useState({});   // base -> { type:'ok'|'error', text }
-  // 되돌리기 백업: base -> { groupId: prevItems }. 메뉴 이동/새로고침에도 유지되도록 localStorage 영속.
-  const [lastBackup, setLastBackup] = useState(() => {
-    try { return JSON.parse(localStorage.getItem('SIGNAGE_WALL_BACKUP') || '{}'); } catch (e) { return {}; }
-  });
-  useEffect(() => {
-    try { localStorage.setItem('SIGNAGE_WALL_BACKUP', JSON.stringify(lastBackup)); } catch (e) {}
-  }, [lastBackup]);
+  // 되돌리기: 서버 스냅샷(직전 1단계, 그룹별)을 MediaManager(미디어 스케줄링)와 공유.
+  // 한쪽 메뉴에서 되돌리면 서버 스냅샷이 소비되어 다른 메뉴의 버튼도 (마운트 시 재조회로) 사라진다.
+  // 과거 localStorage 백업은 메뉴별로 따로 놀아 한쪽만 사라지던 문제가 있었음.
+  const [groupUndo, setGroupUndo] = useState({}); // { groupId: available(bool) }
+  const refreshGroupUndo = useCallback(async (gids) => {
+    const list = [...new Set((gids || []).filter(Boolean))];
+    if (list.length === 0) return;
+    const entries = await Promise.all(list.map(async (gid) => {
+      try { const r = await apiFetch(`${API}/api/groups/${gid}/playlist/undo`); const d = await r.json(); return [gid, !!d.available]; }
+      catch { return [gid, false]; }
+    }));
+    setGroupUndo((prev) => ({ ...prev, ...Object.fromEntries(entries) }));
+  }, []);
+  const groupIdsKey = [...new Set(devices.map((d) => d.groupId).filter(Boolean))].sort().join(',');
+  useEffect(() => { if (groupIdsKey) refreshGroupUndo(groupIdsKey.split(',')); }, [groupIdsKey, refreshGroupUndo]);
+  // 세트가 배포/되돌리는 대상 그룹들 = 그 세트 칸에 배정된 기기들의 groupId
+  const setGroupIds = (g) => {
+    const ids = new Set();
+    effOrder(g).forEach((_, i) => { const dev = devices[i]; if (dev?.groupId) ids.add(dev.groupId); });
+    return [...ids];
+  };
   const [showOffset, setShowOffset] = useState(false); // 동기 미세조정(위상 오프셋) 모달
 
   // 칸 수 = max(기기 수, 슬라이스 수). 기기가 더 많으면 오른쪽이 빈 칸.
@@ -322,7 +336,6 @@ const VideoWallManager = ({ stores = [], selectedStoreId, setSelectedStoreId }) 
       const clearByGroup = {};
       clearIds.forEach((c) => { if (c.dev.groupId) (clearByGroup[c.dev.groupId] ||= new Set()).add(c.deviceId); });
       const groups = new Set([...Object.keys(addByGroup), ...Object.keys(clearByGroup)]);
-      const backup = {}; // 되돌리기용: 그룹별 직전 전체 재생목록
       for (const groupId of groups) {
         const adds = addByGroup[groupId] || [];
         const managed = new Set([...adds.map((e) => e.deviceId), ...((clearByGroup[groupId] && [...clearByGroup[groupId]]) || [])]);
@@ -330,7 +343,7 @@ const VideoWallManager = ({ stores = [], selectedStoreId, setSelectedStoreId }) 
         const data = await res.json().catch(() => ({ medias: [] }));
         const existing = Array.isArray(data.medias) ? data.medias : [];
         const toItem = (it) => ({ mediaId: it.mediaId, duration: it.duration || 10, targetDeviceId: it.targetDeviceId || null, transition: it.transition || 'none', transitionTime: it.transitionTime || 0, slideDirection: it.slideDirection || 'right' });
-        backup[groupId] = existing.map(toItem); // 덮어쓰기 전 원본 보관
+        // 덮어쓰기 직전 상태는 서버가 자동 스냅샷(POST /playlist에서) → 별도 백업 불필요
         const kept = existing.filter((it) => !(it.targetDeviceId && managed.has(it.targetDeviceId))).map(toItem);
         const added = adds.map((e) => ({ mediaId: e.slice.id, duration: e.duration, targetDeviceId: e.deviceId, transition: 'none', transitionTime: 0, slideDirection: 'right' }));
         const save = await apiFetch(`${API}/api/groups/${groupId}/playlist`, { method: 'POST', body: JSON.stringify({ items: [...kept, ...added] }) });
@@ -341,7 +354,7 @@ const VideoWallManager = ({ stores = [], selectedStoreId, setSelectedStoreId }) 
       for (const p of pairs) {
         apiFetch(`${API}/api/devices/${p.deviceId}/volume`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ level: 0 }) }).catch(() => {});
       }
-      setLastBackup((b) => ({ ...b, [g.base]: backup }));
+      await refreshGroupUndo([...groups]); // 서버 스냅샷 생성됨 → 되돌리기 버튼 활성
       setDeployMsg((m) => ({ ...m, [g.base]: { type: 'ok', text: `${pairs.length}개 기기에 배포 완료 (즉시 반영, 기본 음소거 — 관제에서 출력 기기 선택)` } }));
       fetchDevices();
     } catch (err) {
@@ -351,18 +364,18 @@ const VideoWallManager = ({ stores = [], selectedStoreId, setSelectedStoreId }) 
     }
   };
 
-  // 직전 배포 되돌리기 (배포 전 보관한 원본 재생목록으로 복구)
+  // 직전 배포 되돌리기 — 서버 스냅샷(직전 1단계)으로 복구. 되돌리면 스냅샷 소비되어 버튼 사라짐.
   const undoDeploy = async (g) => {
-    const backup = lastBackup[g.base];
-    if (!backup) return;
+    const gids = setGroupIds(g).filter((id) => groupUndo[id]);
+    if (gids.length === 0) return;
     if (!window.confirm('직전 배포를 되돌려 이전 재생목록으로 복구합니다. 진행할까요?')) return;
     setDeploying(g.base);
     try {
-      for (const [groupId, items] of Object.entries(backup)) {
-        const save = await apiFetch(`${API}/api/groups/${groupId}/playlist`, { method: 'POST', body: JSON.stringify({ items }) });
-        if (!save.ok) { const er = await save.json().catch(() => ({})); throw new Error(er.error || '복구 실패'); }
+      for (const groupId of gids) {
+        const r = await apiFetch(`${API}/api/groups/${groupId}/playlist/revert`, { method: 'POST' });
+        if (!r.ok) { const er = await r.json().catch(() => ({})); throw new Error(er.error || '복구 실패'); }
       }
-      setLastBackup((b) => { const n = { ...b }; delete n[g.base]; return n; });
+      await refreshGroupUndo(setGroupIds(g));
       setDeployMsg((m) => ({ ...m, [g.base]: { type: 'ok', text: '되돌렸습니다. (이전 재생목록으로 복구)' } }));
       fetchDevices();
     } catch (err) {
@@ -735,7 +748,7 @@ const VideoWallManager = ({ stores = [], selectedStoreId, setSelectedStoreId }) 
                   <div style={{ flex: 1 }} />
                   <button onClick={() => resetOrder(g)} title="칸 순서를 기본(슬라이스 좌→우)으로 되돌리기" style={setBtn}><RotateCcw size={13} /> 순서 원래대로</button>
                   <button onClick={() => deploySet(g)} disabled={deploying === g.base} title="아래 배정대로 재생목록에 배포" style={{ ...setBtn, color: '#c4b5fd', borderColor: 'rgba(139,92,246,0.45)', cursor: deploying === g.base ? 'wait' : 'pointer' }}><MonitorPlay size={13} /> {deploying === g.base ? '배포 중…' : '배포'}</button>
-                  {lastBackup[g.base] && (
+                  {setGroupIds(g).some((id) => groupUndo[id]) && (
                     <button onClick={() => undoDeploy(g)} disabled={deploying === g.base} title="직전 배포 취소(이전 재생목록 복구)" style={{ ...setBtn, color: '#fbbf24', borderColor: 'rgba(251,191,36,0.45)' }}><RotateCcw size={13} /> 되돌리기</button>
                   )}
                   <button onClick={() => playSet(g.base)} title="세트 동시 재생" style={setBtn}><Play size={13} /> 재생</button>
