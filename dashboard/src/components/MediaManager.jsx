@@ -51,7 +51,8 @@ import {
   ArrowRight,
   ArrowUp,
   ArrowDown,
-  GripVertical
+  GripVertical,
+  RotateCcw
 } from 'lucide-react';
 import './PreviewModal.css';
 import './MediaManager.css';
@@ -791,6 +792,8 @@ const MediaManager = ({ stores = [], groups = [], devices = [], selectedStoreId,
   const [transPreview, setTransPreview] = useState(null);
   const [uploadProgress, setUploadProgress] = useState(null); // null | { name, pct }
   const [deployPanel, setDeployPanel] = useState(null); // null | 'saving' | 'deploying'
+  const [undoInfo, setUndoInfo] = useState({ available: false, deployedAt: null }); // 직전 배포 되돌리기
+  const [reverting, setReverting] = useState(false);
   const deployHasSeenDl = useRef(false); // 기기 다운로드가 한 번이라도 감지됐는지
   const fileRef = useRef();
   const groupDevicesRef = useRef([]); // fetchPlaylist 스테일 클로저 방지용 ref
@@ -863,6 +866,34 @@ const MediaManager = ({ stores = [], groups = [], devices = [], selectedStoreId,
       setUsedMediaIds(new Set(medias.map(pm => pm.mediaId)));
     } catch (e) { console.error(e); }
   }, [selectedGroupId]);
+
+  // 직전 배포 되돌리기 상태 조회
+  const fetchUndo = useCallback(async () => {
+    if (!selectedGroupId) { setUndoInfo({ available: false, deployedAt: null }); return; }
+    try {
+      const res = await apiFetch(`${API}/api/groups/${selectedGroupId}/playlist/undo`);
+      const d = await res.json();
+      setUndoInfo({ available: !!d.available, deployedAt: d.deployedAt || null });
+    } catch { setUndoInfo({ available: false, deployedAt: null }); }
+  }, [selectedGroupId]);
+
+  useEffect(() => { fetchUndo(); }, [fetchUndo]);
+
+  // 직전 배포 되돌리기 실행
+  const handleRevert = async () => {
+    if (!selectedGroupId || !undoInfo.available || reverting) return;
+    if (!window.confirm('직전 배포를 되돌려 이전 재생목록으로 복구합니다.\n현재 그룹의 기기들이 이전 콘텐츠를 다시 받습니다. 진행할까요?')) return;
+    setReverting(true);
+    try {
+      const res = await apiFetch(`${API}/api/groups/${selectedGroupId}/playlist/revert`, { method: 'POST' });
+      if (!res.ok) { const e = await res.json().catch(() => ({})); throw new Error(e.error || '되돌리기 실패'); }
+      await fetchPlaylist();   // 복구된 상태로 편집기 동기화
+      await fetchUndo();
+      setDeployPanel('deploying'); // 기기 재다운로드 단계 표시
+    } catch (e) {
+      alert(e.message || '되돌리기 실패');
+    } finally { setReverting(false); }
+  };
 
   useEffect(() => { fetchMedia(); }, [fetchMedia]);
 
@@ -1028,6 +1059,7 @@ const MediaManager = ({ stores = [], groups = [], devices = [], selectedStoreId,
       await apiFetch(`${API}/api/groups/${selectedGroupId}/playlist`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ items: allItems }), });
       // 서버 저장 후 서버 상태를 다시 불러와 타임라인과 라이브러리를 정확히 동기화
       await fetchPlaylist();
+      await fetchUndo();          // 배포 직후 되돌리기 가능 상태 갱신
       setShowArchived(false);
       setDeployPanel('deploying'); // 기기 다운로드 단계로 전환
     } catch (e) {
@@ -1280,6 +1312,23 @@ const MediaManager = ({ stores = [], groups = [], devices = [], selectedStoreId,
           </button>
           <button className={`btn-deploy ${isDirty ? '' : 'inactive'}`} onClick={handleSave} disabled={saving || !isDirty}>
             <Save size={18} style={{ marginRight: 8 }} /> {saving ? '저장 중...' : '변경사항 저장 및 배포'}
+          </button>
+          <button
+            onClick={handleRevert}
+            disabled={!undoInfo.available || reverting || saving}
+            title={undoInfo.available
+              ? `직전 배포(${undoInfo.deployedAt ? new Date(undoInfo.deployedAt).toLocaleString() : ''})로 되돌립니다`
+              : '되돌릴 직전 배포가 없습니다'}
+            style={{
+              display: 'inline-flex', alignItems: 'center', gap: 6, marginLeft: 8,
+              padding: '0 14px', height: 40, borderRadius: 8, fontSize: '0.85rem', fontWeight: 600,
+              background: 'transparent',
+              color: undoInfo.available ? '#fbbf24' : '#475569',
+              border: `1px solid ${undoInfo.available ? 'rgba(251,191,36,0.45)' : 'var(--border)'}`,
+              cursor: (undoInfo.available && !reverting && !saving) ? 'pointer' : 'not-allowed',
+            }}
+          >
+            <RotateCcw size={16} /> {reverting ? '되돌리는 중...' : '직전 배포 되돌리기'}
           </button>
         </div>
       </div>

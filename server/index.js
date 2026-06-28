@@ -1196,6 +1196,61 @@ app.delete('/api/media/:id', async (req, res) => {
   }
 });
 
+// ── 미디어 스케줄링 직전 1단계 되돌리기 ───────────────────────────────────
+// 배포(재생목록 덮어쓰기) 직전의 그룹별 재생목록을 영속 스냅샷으로 보관해,
+// "직전 배포 되돌리기"로 한 단계 복구한다. (브라우저 localStorage가 아니라 서버측이라
+//  다른 PC/브라우저에서도 동일하게 되돌릴 수 있음.) 저장은 uploads 영속 볼륨의 JSON.
+const playlistUndoPath = path.join(uploadDir, 'playlist-undo.json');
+function loadPlaylistUndo() {
+  try {
+    if (fs.existsSync(playlistUndoPath)) return JSON.parse(fs.readFileSync(playlistUndoPath, 'utf8'));
+  } catch (e) { console.warn('[UNDO] 스냅샷 읽기 실패:', e.message); }
+  return {};
+}
+function savePlaylistUndo(map) {
+  try { fs.writeFileSync(playlistUndoPath, JSON.stringify(map), 'utf8'); }
+  catch (e) { console.warn('[UNDO] 스냅샷 저장 실패:', e.message); }
+}
+// 그룹의 현재 재생목록을 배포 endpoint 입력(items)과 동일한 shape으로 추출
+async function snapshotGroupPlaylist(groupId) {
+  const playlist = await prisma.playlist.findFirst({
+    where: { groupId },
+    include: { medias: { orderBy: { order: 'asc' } } },
+  });
+  return (playlist?.medias || []).map(m => ({
+    mediaId: m.mediaId,
+    duration: m.duration,
+    targetDeviceId: m.targetDeviceId,
+    transition: m.transition,
+    transitionTime: m.transitionTime,
+    slideDirection: m.slideDirection,
+  }));
+}
+// items로 그룹 재생목록 덮어쓰기 (배포·되돌리기 공용)
+async function overwriteGroupPlaylist(groupId, items) {
+  return prisma.$transaction(async (tx) => {
+    let playlist = await tx.playlist.findFirst({ where: { groupId } });
+    if (!playlist) {
+      playlist = await tx.playlist.create({ data: { name: 'Default Playlist', groupId } });
+    }
+    await tx.playlistMedia.deleteMany({ where: { playlistId: playlist.id } });
+    if (items && items.length > 0) {
+      const createData = items.map((item, idx) => ({
+        playlistId: playlist.id,
+        mediaId: item.mediaId,
+        order: idx,
+        duration: item.duration || 10,
+        targetDeviceId: item.targetDeviceId || null,
+        transition: item.transition || 'dissolve',
+        transitionTime: item.transitionTime || 1000,
+        slideDirection: item.slideDirection || 'right',
+      }));
+      await tx.playlistMedia.createMany({ data: createData });
+    }
+    return playlist;
+  });
+}
+
 // 3. 특정 그룹의 재생목록 조회
 app.get('/api/groups/:groupId/playlist', async (req, res) => {
   const { groupId } = req.params;
@@ -1234,46 +1289,43 @@ app.post('/api/groups/:groupId/playlist', async (req, res) => {
   const { items } = req.body; // items: [{ mediaId, duration }]
 
   try {
-    // 트랜잭션으로 안전하게 덮어쓰기
-    const result = await prisma.$transaction(async (tx) => {
-      let playlist = await tx.playlist.findFirst({ where: { groupId } });
-      
-      // 재생목록이 없으면 생성
-      if (!playlist) {
-        playlist = await tx.playlist.create({
-          data: { name: 'Default Playlist', groupId }
-        });
-      }
+    // 되돌리기용: 덮어쓰기 직전 현재 재생목록을 그룹별 스냅샷으로 보관 (직전 1단계)
+    try {
+      const prevItems = await snapshotGroupPlaylist(groupId);
+      const undo = loadPlaylistUndo();
+      undo[groupId] = { items: prevItems, deployedAt: new Date().toISOString() };
+      savePlaylistUndo(undo);
+    } catch (e) { console.warn('[UNDO] 배포 스냅샷 실패:', e.message); }
 
-      // 기존 연결(PlaylistMedia) 전체 삭제
-      await tx.playlistMedia.deleteMany({
-        where: { playlistId: playlist.id }
-      });
-
-      // 새 연결 데이터 삽입
-      if (items && items.length > 0) {
-        const createData = items.map((item, idx) => ({
-          playlistId: playlist.id,
-          mediaId: item.mediaId,
-          order: idx,
-          duration: item.duration || 10,
-          targetDeviceId: item.targetDeviceId || null,
-          transition: item.transition || 'dissolve',
-          transitionTime: item.transitionTime || 1000,
-          slideDirection: item.slideDirection || 'right'
-        }));
-        await tx.playlistMedia.createMany({ data: createData });
-      }
-
-      return playlist;
-    });
+    const result = await overwriteGroupPlaylist(groupId, items);
 
     // 보드들에게 재생목록 변경됨을 알림 (Socket.io)
     io.emit('playlist_updated', { groupId });
-    
+
     res.json({ success: true, result });
   } catch (err) {
     res.status(500).json({ error: '재생목록 저장 실패' });
+  }
+});
+
+// 직전 배포 되돌리기 상태 — 버튼 활성/시각 표시용
+app.get('/api/groups/:groupId/playlist/undo', (req, res) => {
+  const snap = loadPlaylistUndo()[req.params.groupId];
+  res.json({ available: !!snap, deployedAt: snap?.deployedAt || null, count: snap?.items?.length ?? null });
+});
+
+// 직전 배포 되돌리기 — 보관된 스냅샷으로 재생목록 복구 (직전 1단계)
+app.post('/api/groups/:groupId/playlist/revert', async (req, res) => {
+  const { groupId } = req.params;
+  const snap = loadPlaylistUndo()[groupId];
+  if (!snap) return res.status(404).json({ error: '되돌릴 직전 배포가 없습니다.' });
+  try {
+    await overwriteGroupPlaylist(groupId, snap.items || []);
+    io.emit('playlist_updated', { groupId });
+    res.json({ success: true, restored: snap.items?.length ?? 0, deployedAt: snap.deployedAt });
+  } catch (err) {
+    console.error('[UNDO] 되돌리기 실패:', err);
+    res.status(500).json({ error: '되돌리기 실패' });
   }
 });
 
