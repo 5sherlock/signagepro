@@ -236,6 +236,7 @@ const VideoWallManager = ({ stores = [], selectedStoreId, setSelectedStoreId }) 
   // 한쪽 메뉴에서 되돌리면 서버 스냅샷이 소비되어 다른 메뉴의 버튼도 (마운트 시 재조회로) 사라진다.
   // 과거 localStorage 백업은 메뉴별로 따로 놀아 한쪽만 사라지던 문제가 있었음.
   const [groupUndo, setGroupUndo] = useState({}); // { groupId: 'undo'|'redo'|null }
+  const [activeSets, setActiveSets] = useState({}); // { base: true } — 이번 화면에서 배포한 세트만 되돌리기 버튼 노출
   const refreshGroupUndo = useCallback(async (gids) => {
     const list = [...new Set((gids || []).filter(Boolean))];
     if (list.length === 0) return;
@@ -354,7 +355,8 @@ const VideoWallManager = ({ stores = [], selectedStoreId, setSelectedStoreId }) 
       for (const p of pairs) {
         apiFetch(`${API}/api/devices/${p.deviceId}/volume`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ level: 0 }) }).catch(() => {});
       }
-      await refreshGroupUndo([...groups]); // 서버 스냅샷 생성됨 → 되돌리기 버튼 활성
+      await refreshGroupUndo([...groups]); // 서버 스냅샷 생성됨
+      setActiveSets((s) => ({ ...s, [g.base]: true })); // 이번 화면에서 배포함 → 되돌리기 버튼 노출
       setDeployMsg((m) => ({ ...m, [g.base]: { type: 'ok', text: `${pairs.length}개 기기에 배포 완료 (즉시 반영, 기본 음소거 — 관제에서 출력 기기 선택)` } }));
       fetchDevices();
     } catch (err) {
@@ -749,6 +751,7 @@ const VideoWallManager = ({ stores = [], selectedStoreId, setSelectedStoreId }) 
                   <button onClick={() => resetOrder(g)} title="칸 순서를 기본(슬라이스 좌→우)으로 되돌리기" style={setBtn}><RotateCcw size={13} /> 순서 원래대로</button>
                   <button onClick={() => deploySet(g)} disabled={deploying === g.base} title="아래 배정대로 재생목록에 배포" style={{ ...setBtn, color: '#c4b5fd', borderColor: 'rgba(139,92,246,0.45)', cursor: deploying === g.base ? 'wait' : 'pointer' }}><MonitorPlay size={13} /> {deploying === g.base ? '배포 중…' : '배포'}</button>
                   {(() => {
+                    if (!activeSets[g.base]) return null; // 이번 화면에서 배포한 세트만
                     const gids = setGroupIds(g).filter((id) => groupUndo[id]);
                     if (gids.length === 0) return null;
                     const isRedo = gids.every((id) => groupUndo[id] === 'redo');
