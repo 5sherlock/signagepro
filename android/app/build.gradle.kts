@@ -14,8 +14,8 @@ android {
         applicationId = "com.signagepro.player"
         minSdk = 22                // Android 5.1.1 (RK3229 U4X+ CM)
         targetSdk = 29             // V1-only 서명 유지: RK3229(API22) PM이 V2 블록을 못 읽음. Android 11+는 targetSdk<30이면 V2 강제 없음
-        versionCode = 10005        // 6자리 빌드번호 = major*10000 + minor*100 + patch (1.0.5 → 표기 010005)
-        versionName = "1.0.5"      // 1.0.5: 미디어 캐시 정리를 여유공간 기반으로 + 다운로드 전 옛 캐시 evict — 작은 파티션 보드 ENOSPC로 "배포해도 이전영상/멈춤" 근본 수정. 다음 WebView 개편 = 2.x.x
+        versionCode = 10006        // 6자리 빌드번호 = major*10000 + minor*100 + patch (1.0.6 → 표기 010006)
+        versionName = "1.0.6"      // 1.0.6: Visualizer 재초기화 setCaptureSize wrong-state2 수정 → 이퀄라이저(VU) 복구. 다음 WebView 개편 = 2.x.x
 
         // 빌드 날짜를 BuildConfig에 자동 삽입 (관제 화면 버전 표시용)
         val buildDate = SimpleDateFormat("yyyy-MM-dd HH:mm").format(Date())
