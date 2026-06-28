@@ -904,6 +904,7 @@ const MediaManager = ({ stores = [], groups = [], devices = [], selectedStoreId,
       setDeployPanel('deploying'); // 기기 재다운로드 단계 표시
     } catch (e) {
       alert(e.message || '되돌리기 실패');
+      fetchUndo(); // 만료/없음(404)이면 상태 갱신 → 버튼 자동 숨김
     } finally { setReverting(false); }
   };
 

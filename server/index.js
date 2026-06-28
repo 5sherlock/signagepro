@@ -1201,6 +1201,8 @@ app.delete('/api/media/:id', async (req, res) => {
 // "직전 배포 되돌리기"로 한 단계 복구한다. (브라우저 localStorage가 아니라 서버측이라
 //  다른 PC/브라우저에서도 동일하게 되돌릴 수 있음.) 저장은 uploads 영속 볼륨의 JSON.
 const playlistUndoPath = path.join(uploadDir, 'playlist-undo.json');
+const UNDO_TTL_MS = 60 * 60 * 1000; // 되돌리기/다시원복 유지 시간 = 배포 후 1시간(그 후 자동 만료=확정)
+const undoExpired = (snap) => !snap || !snap.deployedAt || (Date.now() - new Date(snap.deployedAt).getTime() > UNDO_TTL_MS);
 function loadPlaylistUndo() {
   try {
     if (fs.existsSync(playlistUndoPath)) return JSON.parse(fs.readFileSync(playlistUndoPath, 'utf8'));
@@ -1309,10 +1311,13 @@ app.post('/api/groups/:groupId/playlist', async (req, res) => {
   }
 });
 
-// 되돌리기/다시원복 상태 — 버튼 표시(있는지)와 라벨(mode) 결정용
+// 되돌리기/다시원복 상태 — 버튼 표시(있는지)와 라벨(mode) 결정용. 1시간 지난 건 만료 처리+정리.
 app.get('/api/groups/:groupId/playlist/undo', (req, res) => {
-  const snap = loadPlaylistUndo()[req.params.groupId];
-  res.json({ available: !!snap, mode: snap?.mode || null, deployedAt: snap?.deployedAt || null, count: snap?.items?.length ?? null });
+  const map = loadPlaylistUndo();
+  const snap = map[req.params.groupId];
+  if (snap && undoExpired(snap)) { delete map[req.params.groupId]; savePlaylistUndo(map); }
+  const valid = snap && !undoExpired(snap);
+  res.json({ available: !!valid, mode: valid ? snap.mode : null, deployedAt: valid ? snap.deployedAt : null, count: valid ? (snap.items?.length ?? null) : null });
 });
 
 // 직전 1단계 토글 — 보관된 상태로 전환하고, 떠난 상태를 보관(mode 플립)해 다시 원복 가능하게.
@@ -1321,7 +1326,10 @@ app.post('/api/groups/:groupId/playlist/revert', async (req, res) => {
   const { groupId } = req.params;
   const undoMap = loadPlaylistUndo();
   const snap = undoMap[groupId];
-  if (!snap) return res.status(404).json({ error: '되돌릴/원복할 상태가 없습니다.' });
+  if (!snap || undoExpired(snap)) {
+    if (snap) { delete undoMap[groupId]; savePlaylistUndo(undoMap); }
+    return res.status(404).json({ error: '되돌릴/원복할 상태가 없습니다(만료 또는 없음).' });
+  }
   try {
     const leaving = await snapshotGroupPlaylist(groupId);   // 지금(떠나는) 상태
     await overwriteGroupPlaylist(groupId, snap.items || []); // 보관된 상태로 전환

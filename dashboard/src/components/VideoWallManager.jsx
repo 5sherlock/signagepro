@@ -391,6 +391,7 @@ const VideoWallManager = ({ stores = [], selectedStoreId, setSelectedStoreId }) 
       fetchDevices();
     } catch (err) {
       setDeployMsg((m) => ({ ...m, [g.base]: { type: 'error', text: err.message } }));
+      refreshGroupUndo(setGroupIds(g)); // 만료/없음(404)이면 상태 갱신 → 버튼 자동 숨김
     } finally {
       setDeploying(null);
     }
