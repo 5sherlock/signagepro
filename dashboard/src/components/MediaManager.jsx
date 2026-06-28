@@ -1313,23 +1313,23 @@ const MediaManager = ({ stores = [], groups = [], devices = [], selectedStoreId,
           <button className={`btn-deploy ${isDirty ? '' : 'inactive'}`} onClick={handleSave} disabled={saving || !isDirty}>
             <Save size={18} style={{ marginRight: 8 }} /> {saving ? '저장 중...' : '변경사항 저장 및 배포'}
           </button>
-          <button
-            onClick={handleRevert}
-            disabled={!undoInfo.available || reverting || saving}
-            title={undoInfo.available
-              ? `직전 배포(${undoInfo.deployedAt ? new Date(undoInfo.deployedAt).toLocaleString() : ''})로 되돌립니다`
-              : '되돌릴 직전 배포가 없습니다'}
-            style={{
-              display: 'inline-flex', alignItems: 'center', gap: 6, marginLeft: 8,
-              padding: '0 14px', height: 40, borderRadius: 8, fontSize: '0.85rem', fontWeight: 600,
-              background: 'transparent',
-              color: undoInfo.available ? '#fbbf24' : '#475569',
-              border: `1px solid ${undoInfo.available ? 'rgba(251,191,36,0.45)' : 'var(--border)'}`,
-              cursor: (undoInfo.available && !reverting && !saving) ? 'pointer' : 'not-allowed',
-            }}
-          >
-            <RotateCcw size={16} /> {reverting ? '되돌리는 중...' : '직전 배포 되돌리기'}
-          </button>
+          {/* 직전 배포가 있을 때만 노출 — 되돌리면 스냅샷이 소비되어 버튼이 사라진다 */}
+          {undoInfo.available && (
+            <button
+              onClick={handleRevert}
+              disabled={reverting || saving}
+              title={`직전 배포(${undoInfo.deployedAt ? new Date(undoInfo.deployedAt).toLocaleString() : ''})로 되돌립니다`}
+              style={{
+                display: 'inline-flex', alignItems: 'center', gap: 6, marginLeft: 8,
+                padding: '0 14px', height: 40, borderRadius: 8, fontSize: '0.85rem', fontWeight: 600,
+                background: 'transparent', color: '#fbbf24',
+                border: '1px solid rgba(251,191,36,0.45)',
+                cursor: (!reverting && !saving) ? 'pointer' : 'not-allowed',
+              }}
+            >
+              <RotateCcw size={16} /> {reverting ? '되돌리는 중...' : '직전 배포 되돌리기'}
+            </button>
+          )}
         </div>
       </div>
 

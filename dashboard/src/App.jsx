@@ -2302,6 +2302,32 @@ function App() {
                         </button>
                         <button
                           disabled={device.status !== 'online'}
+                          title={device.status !== 'online' ? '오프라인 기기는 앱 재시작할 수 없습니다' : '플레이어 앱만 재시작(기기 재부팅 아님)'}
+                          style={{
+                            fontSize: '0.7rem', padding: '3px 10px',
+                            background: 'transparent',
+                            border: `1px solid ${device.status !== 'online' ? '#1e293b' : 'var(--border)'}`,
+                            borderRadius: '4px',
+                            color: device.status !== 'online' ? '#334155' : 'var(--text-secondary)',
+                            cursor: device.status !== 'online' ? 'not-allowed' : 'pointer',
+                            opacity: device.status !== 'online' ? 0.4 : 1,
+                          }}
+                          onClick={() => {
+                            if (device.status !== 'online') return;
+                            if (!window.confirm(`${device.name || device.id} 플레이어 앱을 재시작할까요?\n(기기 재부팅이 아니라 앱만 다시 시작합니다)`)) return;
+                            apiFetch(`${SOCKET_URL}/api/devices/${device.id}/restart-app`, { method: 'POST' })
+                              .then(r => r.json())
+                              .then(r => {
+                                if (r.ok) alert('앱 재시작 명령을 전송했습니다.');
+                                else alert(`앱 재시작 실패\n\n${r.error || ''}`);
+                              })
+                              .catch(() => alert('서버 요청 실패'));
+                          }}
+                        >
+                          ♻️ 앱 재시작
+                        </button>
+                        <button
+                          disabled={device.status !== 'online'}
                           title={device.status !== 'online' ? '오프라인 기기는 재부팅할 수 없습니다' : '기기 재부팅'}
                           style={{
                             fontSize: '0.7rem', padding: '3px 10px',

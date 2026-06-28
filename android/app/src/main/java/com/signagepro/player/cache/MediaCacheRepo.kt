@@ -171,9 +171,14 @@ class MediaCacheRepo(
         }
     }
 
+    /** 항상 남겨둘 여유공간 = 고정값과 파티션의 20% 중 큰 값.
+     *  작은 보드(2.9GB)에서 디스크가 과도하게 차는 걸 막는다(고정 600MB는 ~79%까지 채워 너무 높았음). */
+    private fun effectiveMinFree(): Long =
+        maxOf(minFreeBytes, baseDir.totalSpace / 5)   // /5 = 20%
+
     /** 캐시가 상한을 넘었거나 파티션 여유공간이 최소치 아래면 정리 필요. */
     private fun needsEviction(): Boolean =
-        currentSize() > maxCacheBytes || baseDir.usableSpace < minFreeBytes
+        currentSize() > maxCacheBytes || baseDir.usableSpace < effectiveMinFree()
 
     fun currentSize(): Long =
         baseDir.listFiles()?.sumOf { it.length() } ?: 0L
@@ -201,8 +206,8 @@ class MediaCacheRepo(
     companion object {
         /** 캐시 폴더 상한 (큰 디스크에서도 무한정 쌓지 않도록). */
         private const val DEFAULT_MAX_CACHE: Long = 2L * 1024 * 1024 * 1024   // 2GB
-        /** 파티션에 항상 남겨둘 최소 여유공간 (작은 플래시 보드 ENOSPC 방지). */
-        private const val DEFAULT_MIN_FREE: Long = 600L * 1024 * 1024         // 600MB
+        /** 파티션에 항상 남겨둘 최소 여유공간 하한 (실제로는 effectiveMinFree에서 파티션 20%와 비교해 더 큰 값 사용). */
+        private const val DEFAULT_MIN_FREE: Long = 1024L * 1024 * 1024        // 1GB
         /** 다운로드 직전 추가로 요구하는 여유 마진. */
         private const val SAFETY_MARGIN: Long = 64L * 1024 * 1024             // 64MB
     }

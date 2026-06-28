@@ -1317,10 +1317,14 @@ app.get('/api/groups/:groupId/playlist/undo', (req, res) => {
 // 직전 배포 되돌리기 — 보관된 스냅샷으로 재생목록 복구 (직전 1단계)
 app.post('/api/groups/:groupId/playlist/revert', async (req, res) => {
   const { groupId } = req.params;
-  const snap = loadPlaylistUndo()[groupId];
+  const undoMap = loadPlaylistUndo();
+  const snap = undoMap[groupId];
   if (!snap) return res.status(404).json({ error: '되돌릴 직전 배포가 없습니다.' });
   try {
     await overwriteGroupPlaylist(groupId, snap.items || []);
+    // 직전 1단계 — 되돌리면 스냅샷 소비(삭제)해 버튼이 사라지게 한다. 다음 배포 때 다시 생성.
+    delete undoMap[groupId];
+    savePlaylistUndo(undoMap);
     io.emit('playlist_updated', { groupId });
     res.json({ success: true, restored: snap.items?.length ?? 0, deployedAt: snap.deployedAt });
   } catch (err) {
