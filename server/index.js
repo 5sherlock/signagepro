@@ -1293,7 +1293,8 @@ app.post('/api/groups/:groupId/playlist', async (req, res) => {
     try {
       const prevItems = await snapshotGroupPlaylist(groupId);
       const undo = loadPlaylistUndo();
-      undo[groupId] = { items: prevItems, deployedAt: new Date().toISOString() };
+      // mode 'undo' = 보관된 items가 "직전(되돌릴)" 상태. 되돌리면 'redo'로 뒤집혀 "다시 원복"이 된다.
+      undo[groupId] = { items: prevItems, deployedAt: new Date().toISOString(), mode: 'undo' };
       savePlaylistUndo(undo);
     } catch (e) { console.warn('[UNDO] 배포 스냅샷 실패:', e.message); }
 
@@ -1308,27 +1309,29 @@ app.post('/api/groups/:groupId/playlist', async (req, res) => {
   }
 });
 
-// 직전 배포 되돌리기 상태 — 버튼 활성/시각 표시용
+// 되돌리기/다시원복 상태 — 버튼 표시(있는지)와 라벨(mode) 결정용
 app.get('/api/groups/:groupId/playlist/undo', (req, res) => {
   const snap = loadPlaylistUndo()[req.params.groupId];
-  res.json({ available: !!snap, deployedAt: snap?.deployedAt || null, count: snap?.items?.length ?? null });
+  res.json({ available: !!snap, mode: snap?.mode || null, deployedAt: snap?.deployedAt || null, count: snap?.items?.length ?? null });
 });
 
-// 직전 배포 되돌리기 — 보관된 스냅샷으로 재생목록 복구 (직전 1단계)
+// 직전 1단계 토글 — 보관된 상태로 전환하고, 떠난 상태를 보관(mode 플립)해 다시 원복 가능하게.
+// mode 'undo'면 되돌리기(직전으로), 'redo'면 다시 원복(되돌리기 취소). 무한 토글 가능, 새 배포 시 'undo'로 리셋.
 app.post('/api/groups/:groupId/playlist/revert', async (req, res) => {
   const { groupId } = req.params;
   const undoMap = loadPlaylistUndo();
   const snap = undoMap[groupId];
-  if (!snap) return res.status(404).json({ error: '되돌릴 직전 배포가 없습니다.' });
+  if (!snap) return res.status(404).json({ error: '되돌릴/원복할 상태가 없습니다.' });
   try {
-    await overwriteGroupPlaylist(groupId, snap.items || []);
-    // 직전 1단계 — 되돌리면 스냅샷 소비(삭제)해 버튼이 사라지게 한다. 다음 배포 때 다시 생성.
-    delete undoMap[groupId];
+    const leaving = await snapshotGroupPlaylist(groupId);   // 지금(떠나는) 상태
+    await overwriteGroupPlaylist(groupId, snap.items || []); // 보관된 상태로 전환
+    // 떠난 상태를 보관하고 방향만 뒤집는다 → 같은 버튼이 반대로 동작
+    undoMap[groupId] = { items: leaving, deployedAt: snap.deployedAt, mode: snap.mode === 'undo' ? 'redo' : 'undo' };
     savePlaylistUndo(undoMap);
     io.emit('playlist_updated', { groupId });
-    res.json({ success: true, restored: snap.items?.length ?? 0, deployedAt: snap.deployedAt });
+    res.json({ success: true, restored: snap.items?.length ?? 0, mode: undoMap[groupId].mode });
   } catch (err) {
-    console.error('[UNDO] 되돌리기 실패:', err);
+    console.error('[UNDO] 토글 실패:', err);
     res.status(500).json({ error: '되돌리기 실패' });
   }
 });

@@ -235,13 +235,13 @@ const VideoWallManager = ({ stores = [], selectedStoreId, setSelectedStoreId }) 
   // 되돌리기: 서버 스냅샷(직전 1단계, 그룹별)을 MediaManager(미디어 스케줄링)와 공유.
   // 한쪽 메뉴에서 되돌리면 서버 스냅샷이 소비되어 다른 메뉴의 버튼도 (마운트 시 재조회로) 사라진다.
   // 과거 localStorage 백업은 메뉴별로 따로 놀아 한쪽만 사라지던 문제가 있었음.
-  const [groupUndo, setGroupUndo] = useState({}); // { groupId: available(bool) }
+  const [groupUndo, setGroupUndo] = useState({}); // { groupId: 'undo'|'redo'|null }
   const refreshGroupUndo = useCallback(async (gids) => {
     const list = [...new Set((gids || []).filter(Boolean))];
     if (list.length === 0) return;
     const entries = await Promise.all(list.map(async (gid) => {
-      try { const r = await apiFetch(`${API}/api/groups/${gid}/playlist/undo`); const d = await r.json(); return [gid, !!d.available]; }
-      catch { return [gid, false]; }
+      try { const r = await apiFetch(`${API}/api/groups/${gid}/playlist/undo`); const d = await r.json(); return [gid, d.available ? (d.mode || 'undo') : null]; }
+      catch { return [gid, null]; }
     }));
     setGroupUndo((prev) => ({ ...prev, ...Object.fromEntries(entries) }));
   }, []);
@@ -748,9 +748,18 @@ const VideoWallManager = ({ stores = [], selectedStoreId, setSelectedStoreId }) 
                   <div style={{ flex: 1 }} />
                   <button onClick={() => resetOrder(g)} title="칸 순서를 기본(슬라이스 좌→우)으로 되돌리기" style={setBtn}><RotateCcw size={13} /> 순서 원래대로</button>
                   <button onClick={() => deploySet(g)} disabled={deploying === g.base} title="아래 배정대로 재생목록에 배포" style={{ ...setBtn, color: '#c4b5fd', borderColor: 'rgba(139,92,246,0.45)', cursor: deploying === g.base ? 'wait' : 'pointer' }}><MonitorPlay size={13} /> {deploying === g.base ? '배포 중…' : '배포'}</button>
-                  {setGroupIds(g).some((id) => groupUndo[id]) && (
-                    <button onClick={() => undoDeploy(g)} disabled={deploying === g.base} title="직전 배포 취소(이전 재생목록 복구)" style={{ ...setBtn, color: '#fbbf24', borderColor: 'rgba(251,191,36,0.45)' }}><RotateCcw size={13} /> 되돌리기</button>
-                  )}
+                  {(() => {
+                    const gids = setGroupIds(g).filter((id) => groupUndo[id]);
+                    if (gids.length === 0) return null;
+                    const isRedo = gids.every((id) => groupUndo[id] === 'redo');
+                    return (
+                      <button onClick={() => undoDeploy(g)} disabled={deploying === g.base}
+                        title={isRedo ? '되돌리기 취소(방금 배포 상태로 다시 원복)' : '직전 배포 취소(이전 재생목록 복구)'}
+                        style={{ ...setBtn, color: isRedo ? '#34d399' : '#fbbf24', borderColor: isRedo ? 'rgba(52,211,153,0.45)' : 'rgba(251,191,36,0.45)' }}>
+                        <RotateCcw size={13} style={isRedo ? { transform: 'scaleX(-1)' } : undefined} /> {isRedo ? '다시 원복' : '되돌리기'}
+                      </button>
+                    );
+                  })()}
                   <button onClick={() => playSet(g.base)} title="세트 동시 재생" style={setBtn}><Play size={13} /> 재생</button>
                   <button onClick={() => stopSet(g.base)} title="정지" style={setBtn}><Square size={12} /> 정지</button>
                   <button onClick={() => setShowOffset(true)} title="기기별 동기 미세조정(위상 오프셋)" style={setBtn}><SlidersHorizontal size={13} /> 동기 미세조정</button>

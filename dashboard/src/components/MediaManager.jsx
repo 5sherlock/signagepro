@@ -792,7 +792,7 @@ const MediaManager = ({ stores = [], groups = [], devices = [], selectedStoreId,
   const [transPreview, setTransPreview] = useState(null);
   const [uploadProgress, setUploadProgress] = useState(null); // null | { name, pct }
   const [deployPanel, setDeployPanel] = useState(null); // null | 'saving' | 'deploying'
-  const [undoInfo, setUndoInfo] = useState({ available: false, deployedAt: null }); // 직전 배포 되돌리기
+  const [undoInfo, setUndoInfo] = useState({ available: false, mode: null, deployedAt: null }); // 되돌리기/다시원복
   const [reverting, setReverting] = useState(false);
   const deployHasSeenDl = useRef(false); // 기기 다운로드가 한 번이라도 감지됐는지
   const fileRef = useRef();
@@ -869,12 +869,12 @@ const MediaManager = ({ stores = [], groups = [], devices = [], selectedStoreId,
 
   // 직전 배포 되돌리기 상태 조회
   const fetchUndo = useCallback(async () => {
-    if (!selectedGroupId) { setUndoInfo({ available: false, deployedAt: null }); return; }
+    if (!selectedGroupId) { setUndoInfo({ available: false, mode: null, deployedAt: null }); return; }
     try {
       const res = await apiFetch(`${API}/api/groups/${selectedGroupId}/playlist/undo`);
       const d = await res.json();
-      setUndoInfo({ available: !!d.available, deployedAt: d.deployedAt || null });
-    } catch { setUndoInfo({ available: false, deployedAt: null }); }
+      setUndoInfo({ available: !!d.available, mode: d.mode || null, deployedAt: d.deployedAt || null });
+    } catch { setUndoInfo({ available: false, mode: null, deployedAt: null }); }
   }, [selectedGroupId]);
 
   useEffect(() => { fetchUndo(); }, [fetchUndo]);
@@ -882,7 +882,10 @@ const MediaManager = ({ stores = [], groups = [], devices = [], selectedStoreId,
   // 직전 배포 되돌리기 실행
   const handleRevert = async () => {
     if (!selectedGroupId || !undoInfo.available || reverting) return;
-    if (!window.confirm('직전 배포를 되돌려 이전 재생목록으로 복구합니다.\n현재 그룹의 기기들이 이전 콘텐츠를 다시 받습니다. 진행할까요?')) return;
+    const msg = undoInfo.mode === 'redo'
+      ? '되돌리기를 취소하고 방금 배포한 상태로 다시 원복합니다.\n현재 그룹의 기기들이 해당 콘텐츠를 다시 받습니다. 진행할까요?'
+      : '직전 배포를 되돌려 이전 재생목록으로 복구합니다.\n현재 그룹의 기기들이 이전 콘텐츠를 다시 받습니다. 진행할까요?';
+    if (!window.confirm(msg)) return;
     setReverting(true);
     try {
       const res = await apiFetch(`${API}/api/groups/${selectedGroupId}/playlist/revert`, { method: 'POST' });
@@ -1313,21 +1316,23 @@ const MediaManager = ({ stores = [], groups = [], devices = [], selectedStoreId,
           <button className={`btn-deploy ${isDirty ? '' : 'inactive'}`} onClick={handleSave} disabled={saving || !isDirty}>
             <Save size={18} style={{ marginRight: 8 }} /> {saving ? '저장 중...' : '변경사항 저장 및 배포'}
           </button>
-          {/* 직전 배포가 있을 때만 노출 — 되돌리면 스냅샷이 소비되어 버튼이 사라진다 */}
+          {/* 되돌리기 ↔ 다시 원복 토글 (직전 1단계). 되돌리면 버튼이 '다시 원복'으로 바뀜 */}
           {undoInfo.available && (
             <button
               onClick={handleRevert}
               disabled={reverting || saving}
-              title={`직전 배포(${undoInfo.deployedAt ? new Date(undoInfo.deployedAt).toLocaleString() : ''})로 되돌립니다`}
+              title={undoInfo.mode === 'redo' ? '되돌리기를 취소하고 방금 배포 상태로 원복' : '직전 배포로 되돌립니다'}
               style={{
                 display: 'inline-flex', alignItems: 'center', gap: 6, marginLeft: 8,
                 padding: '0 14px', height: 40, borderRadius: 8, fontSize: '0.85rem', fontWeight: 600,
-                background: 'transparent', color: '#fbbf24',
-                border: '1px solid rgba(251,191,36,0.45)',
+                background: 'transparent',
+                color: undoInfo.mode === 'redo' ? '#34d399' : '#fbbf24',
+                border: `1px solid ${undoInfo.mode === 'redo' ? 'rgba(52,211,153,0.45)' : 'rgba(251,191,36,0.45)'}`,
                 cursor: (!reverting && !saving) ? 'pointer' : 'not-allowed',
               }}
             >
-              <RotateCcw size={16} /> {reverting ? '되돌리는 중...' : '직전 배포 되돌리기'}
+              <RotateCcw size={16} style={undoInfo.mode === 'redo' ? { transform: 'scaleX(-1)' } : undefined} />
+              {reverting ? '처리 중...' : (undoInfo.mode === 'redo' ? '다시 원복' : '직전 배포 되돌리기')}
             </button>
           )}
         </div>
