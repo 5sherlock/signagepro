@@ -114,12 +114,18 @@ class PlayerCoordinator(
 
     private fun initVisualizer() {
         try {
-            visualizer?.release()
-            visualizer = Visualizer(0).apply {   // 0 = 전역 출력 믹스
-                captureSize = Visualizer.getCaptureSizeRange()[0]
-                measurementMode = Visualizer.MEASUREMENT_MODE_PEAK_RMS
-                enabled = true
-            }
+            // 이전 인스턴스 확실히 정리: enabled 상태로 release 하면 글로벌 세션(0) 핸들이
+            // ENABLED 로 남아, 다음 Visualizer(0) 가 state 2(ENABLED)로 잡혀 setCaptureSize 가 실패한다
+            // ("setCaptureSize() called in wrong state: 2" — 일부 5.1.x ROM). 먼저 disable 후 release.
+            visualizer?.let { runCatching { it.enabled = false }; runCatching { it.release() } }
+            visualizer = null
+            val v = Visualizer(0)   // 0 = 전역 출력 믹스
+            // 새 핸들이 ENABLED 로 잡혀도 INITIALIZED 로 내려야 setCaptureSize/measurementMode 가 허용된다.
+            runCatching { v.enabled = false }
+            v.captureSize = Visualizer.getCaptureSizeRange()[0]
+            v.measurementMode = Visualizer.MEASUREMENT_MODE_PEAK_RMS
+            v.enabled = true
+            visualizer = v
             Log.i(TAG, "Visualizer 초기화 완료 (글로벌 믹스)")
         } catch (e: Exception) {
             Log.w(TAG, "Visualizer 초기화 실패 — VU 비활성화: ${e.message}")
