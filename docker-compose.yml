@@ -27,7 +27,9 @@ services:
     volumes:
       - signagepro_db:/data                       # sqlite DB 영속
       - signagepro_uploads:/app/server/uploads    # 업로드 미디어 영속 (정적 서빙 경로와 동일)
+      - signagepro_update:/app/server/update       # OTA app.apk + deploy-meta 영속 (재빌드/재생성에도 stage 유지)
 
 volumes:
   signagepro_db:
   signagepro_uploads:
+  signagepro_update:
