@@ -1456,7 +1456,12 @@ function App() {
       console.log('[socket] connected', socket.id);
       setServerOnline(true);
       // 재연결 시 DB 실제 상태로 동기화 (끊긴 동안 놓친 offline 이벤트 복구)
+      // + 초기 로드 실패 자가복구: stores/groups/schedules 도 함께 재동기.
+      //   (fetchStores 가 한 번 실패하면 storesLoaded 가 false 로 멈춰 "사업장 불러오는 중…" 고정되던 문제 해결)
       fetchDevices();
+      fetchStores();
+      fetchGroups();
+      fetchSchedules();
     });
     socket.on('disconnect', () => {
       setServerOnline(false);
