@@ -1344,6 +1344,235 @@ app.post('/api/groups/:groupId/playlist/revert', async (req, res) => {
   }
 });
 
+// ── 콘텐츠 예약 (장면 Scene + 시간 전환 ContentSchedule) API ──────────────
+// 장면 = 그룹 재생목록 배치의 이름붙인 스냅샷. 예약 = "이 시각에 이 장면으로 교체".
+// 스케줄러(NAS 24h)가 switchAt 도달 시 장면을 그룹 재생목록에 적용+push → 다음 예약까지 지속.
+
+// 장면 items로 그룹 재생목록 교체 + 보드 반영 (스케줄러/즉시적용 공용)
+async function applySceneToGroup(sceneId) {
+  const scene = await prisma.scene.findUnique({
+    where: { id: sceneId },
+    include: { items: { orderBy: { order: 'asc' } } },
+  });
+  if (!scene) throw new Error('scene not found');
+  const items = scene.items.map(it => ({
+    mediaId: it.mediaId,
+    duration: it.duration,
+    targetDeviceId: it.targetDeviceId,
+    transition: it.transition,
+    transitionTime: it.transitionTime,
+    slideDirection: it.slideDirection,
+  }));
+  // 되돌리기용: 교체 직전 현재 재생목록을 스냅샷 보관(배포와 동일). 안 하면 stale undo가 남아 되돌리기 시 옛 상태로 사라짐.
+  try {
+    const prevItems = await snapshotGroupPlaylist(scene.groupId);
+    const undo = loadPlaylistUndo();
+    undo[scene.groupId] = { items: prevItems, deployedAt: new Date().toISOString(), mode: 'undo' };
+    savePlaylistUndo(undo);
+  } catch (e) { console.warn('[ContentSched] undo 스냅샷 실패:', e.message); }
+  await overwriteGroupPlaylist(scene.groupId, items);
+  io.emit('playlist_updated', { groupId: scene.groupId });
+  return scene;
+}
+
+// 장면 목록
+app.get('/api/groups/:groupId/scenes', async (req, res) => {
+  try {
+    const scenes = await prisma.scene.findMany({
+      where: { groupId: req.params.groupId },
+      include: { _count: { select: { items: true } } },
+      orderBy: { createdAt: 'asc' },
+    });
+    res.json(scenes.map(s => ({ id: s.id, name: s.name, itemCount: s._count.items, createdAt: s.createdAt })));
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// 장면 저장 (전달된 items 또는 현재 그룹 배치 스냅샷)
+app.post('/api/groups/:groupId/scenes', async (req, res) => {
+  const { groupId } = req.params;
+  const { name, items: bodyItems } = req.body;
+  if (!name || !String(name).trim()) return res.status(400).json({ error: '장면 이름이 필요합니다.' });
+  try {
+    // 최대 5개 유지 — 초과 시 '미래 예약에 안 묶인' 가장 오래된 장면부터 자동 삭제(예약 걸린 건 보호)
+    const MAX_SCENES = 5;
+    const existing = await prisma.scene.findMany({
+      where: { groupId },
+      orderBy: { createdAt: 'asc' },
+      include: { schedules: { where: { applied: false, switchAt: { gt: new Date() } }, select: { id: true } } },
+    });
+    let overflow = existing.length + 1 - MAX_SCENES;
+    if (overflow > 0) {
+      for (const s of existing.filter(x => x.schedules.length === 0)) {
+        if (overflow <= 0) break;
+        await prisma.scene.delete({ where: { id: s.id } });
+        overflow--;
+      }
+      if (overflow > 0) return res.status(400).json({ error: '장면은 최대 5개입니다. 예약에 묶인 장면이 많아 자동 정리가 안 됩니다. 예약 또는 장면을 정리해 주세요.' });
+    }
+    const items = Array.isArray(bodyItems) ? bodyItems : await snapshotGroupPlaylist(groupId);
+    const group = await prisma.group.findUnique({ where: { id: groupId } });
+    const scene = await prisma.scene.create({
+      data: {
+        name: String(name).trim(),
+        groupId,
+        storeId: group?.storeId || null,
+        items: {
+          create: (items || []).map((it, idx) => ({
+            mediaId: it.mediaId,
+            order: idx,
+            duration: it.duration ?? 10,
+            targetDeviceId: it.targetDeviceId || null,
+            transition: it.transition || 'dissolve',
+            transitionTime: it.transitionTime ?? 1000,
+            slideDirection: it.slideDirection || 'right',
+          })),
+        },
+      },
+      include: { _count: { select: { items: true } } },
+    });
+    res.json({ success: true, scene: { id: scene.id, name: scene.name, itemCount: scene._count.items } });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// 장면 삭제
+app.delete('/api/scenes/:id', async (req, res) => {
+  try { await prisma.scene.delete({ where: { id: req.params.id } }); res.json({ success: true }); }
+  catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// 장면 즉시 적용 (예약 안 기다리고 지금 바로)
+app.post('/api/scenes/:id/apply', async (req, res) => {
+  try { const scene = await applySceneToGroup(req.params.id); res.json({ success: true, applied: scene.name }); }
+  catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// 콘텐츠 예약 목록
+app.get('/api/groups/:groupId/content-schedules', async (req, res) => {
+  try {
+    const list = await prisma.contentSchedule.findMany({
+      where: { groupId: req.params.groupId },
+      include: { scene: { select: { id: true, name: true } } },
+      orderBy: [{ switchAt: 'asc' }],
+    });
+    res.json(list);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// 콘텐츠 예약 생성 (oneshot: { sceneId, switchAt })
+app.post('/api/groups/:groupId/content-schedules', async (req, res) => {
+  const { groupId } = req.params;
+  const { sceneId, switchAt, type = 'oneshot' } = req.body;
+  if (!sceneId || !switchAt) return res.status(400).json({ error: 'sceneId, switchAt 필요' });
+  try {
+    const when = new Date(switchAt);
+    if (isNaN(when.getTime())) return res.status(400).json({ error: '잘못된 시각' });
+    const group = await prisma.group.findUnique({ where: { id: groupId } });
+    const sched = await prisma.contentSchedule.create({
+      data: { groupId, storeId: group?.storeId || null, sceneId, type, switchAt: when, applied: false, enabled: true },
+      include: { scene: { select: { id: true, name: true } } },
+    });
+    res.json({ success: true, schedule: sched });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// 대시보드용: 미래·미적용 예약 전체 (store 필터) — 사이드바 배지 / 관제 카드 표시
+// 그룹당 가장 임박한 1건만(nextByGroup) 반환해 관제 카드가 바로 쓰게 한다.
+app.get('/api/content-schedules/pending', async (req, res) => {
+  try {
+    const { storeId } = req.query;
+    const where = { applied: false, type: 'oneshot', enabled: true, switchAt: { gt: new Date() } };
+    if (storeId) where.storeId = storeId;
+    const list = await prisma.contentSchedule.findMany({
+      where,
+      include: { scene: { include: { items: { orderBy: { order: 'asc' } } } } },
+      orderBy: { switchAt: 'asc' },
+    });
+    // 그룹당 가장 임박한 1건
+    const nextByGroup = {};
+    for (const s of list) {
+      if (nextByGroup[s.groupId]) continue;
+      nextByGroup[s.groupId] = { switchAt: s.switchAt, sceneName: s.scene?.name || null, sceneId: s.sceneId, _sceneItems: (s.scene?.items || []) };
+    }
+    // 기기별로 "바뀌는 슬롯(순번)"만 계산 — 장면 vs 현재 라이브를 위치별 비교
+    const mediaIds = new Set();
+    for (const [groupId, g] of Object.entries(nextByGroup)) {
+      const curItems = await snapshotGroupPlaylist(groupId);
+      const byDev = (arr) => { const m = {}; arr.forEach(it => { const k = it.targetDeviceId || '__g__'; (m[k] = m[k] || []).push(it.mediaId); }); return m; };
+      const cur = byDev(curItems), sc = byDev(g._sceneItems);
+      const devKeys = new Set([...Object.keys(cur), ...Object.keys(sc)].filter(k => k !== '__g__'));
+      const changedByDevice = {};
+      for (const dk of devKeys) {
+        const c = cur[dk] || [], s = sc[dk] || [];
+        const maxLen = Math.max(c.length, s.length);
+        const changes = [];
+        for (let i = 0; i < maxLen; i++) {
+          if (c[i] !== s[i]) { changes.push({ index: i, mediaId: s[i] || null }); if (s[i]) mediaIds.add(s[i]); }
+        }
+        if (changes.length) changedByDevice[dk] = changes;
+      }
+      g.changedByDevice = changedByDevice;
+      g.changedDeviceIds = Object.keys(changedByDevice);
+      delete g._sceneItems;
+    }
+    // 바뀌는 슬롯의 새 이미지 경로 해석
+    if (mediaIds.size) {
+      const medias = await prisma.media.findMany({ where: { id: { in: [...mediaIds] } }, select: { id: true, path: true } });
+      const mmap = Object.fromEntries(medias.map(m => [m.id, m]));
+      for (const g of Object.values(nextByGroup)) {
+        for (const dk of Object.keys(g.changedByDevice)) {
+          g.changedByDevice[dk] = g.changedByDevice[dk].map(ch => ({ index: ch.index, path: ch.mediaId ? (mmap[ch.mediaId]?.path || null) : null, removed: !ch.mediaId }));
+        }
+      }
+    }
+    res.json({ count: list.length, groupCount: Object.keys(nextByGroup).length, nextByGroup });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// 콘텐츠 예약 수정 (시각/장면 변경 — 시각 바꾸면 재무장 applied=false)
+app.put('/api/content-schedules/:id', async (req, res) => {
+  const { sceneId, switchAt } = req.body;
+  try {
+    const data = {};
+    if (sceneId) data.sceneId = sceneId;
+    if (switchAt) {
+      const w = new Date(switchAt);
+      if (isNaN(w.getTime())) return res.status(400).json({ error: '잘못된 시각' });
+      data.switchAt = w; data.applied = false;
+    }
+    const sched = await prisma.contentSchedule.update({ where: { id: req.params.id }, data, include: { scene: { select: { id: true, name: true } } } });
+    res.json({ success: true, schedule: sched });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// 콘텐츠 예약 삭제
+app.delete('/api/content-schedules/:id', async (req, res) => {
+  try { await prisma.contentSchedule.delete({ where: { id: req.params.id } }); res.json({ success: true }); }
+  catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// 스케줄러: 도달한 1회성 예약 → 장면 적용. 같은 그룹에 여러 개 밀렸으면 가장 최근(최신) 것만 적용(놓침 보정).
+async function runContentScheduler() {
+  try {
+    const now = new Date();
+    const due = await prisma.contentSchedule.findMany({
+      where: { type: 'oneshot', enabled: true, applied: false, switchAt: { lte: now } },
+      orderBy: { switchAt: 'asc' },
+    });
+    if (!due.length) return;
+    const byGroup = new Map();
+    for (const s of due) byGroup.set(s.groupId, s); // asc 정렬이라 마지막이 최신
+    for (const [groupId, latest] of byGroup) {
+      try {
+        await applySceneToGroup(latest.sceneId);
+        console.log(`[ContentSched] ${groupId}: 장면 적용 sceneId=${latest.sceneId} switchAt=${latest.switchAt.toISOString()}`);
+      } catch (e) { console.warn(`[ContentSched] ${groupId} 적용 실패: ${e.message}`); }
+    }
+    await prisma.contentSchedule.updateMany({ where: { id: { in: due.map(s => s.id) } }, data: { applied: true } });
+  } catch (e) { console.warn('[ContentSched] 스캔 실패:', e.message); }
+}
+setInterval(runContentScheduler, 30 * 1000);
+setTimeout(runContentScheduler, 5000);
+
 // --- 자막(Ticker) API ---
 
 // 그룹 자막 조회

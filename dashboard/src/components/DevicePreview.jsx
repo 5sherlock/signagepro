@@ -147,8 +147,10 @@ export default function DevicePreview({ groupId, deviceId, onUpdate, pcAudio = f
       duration,
       transType: labelTransType,
       transTime,
+      slotIndex: currentIndex,
+      slotCount: playlist.length,
     });
-  }, [activeItem, currentTime, labelTransType, transTime, duration, onUpdate]);
+  }, [activeItem, currentTime, labelTransType, transTime, duration, onUpdate, currentIndex, playlist.length]);
 
   if (!playlist.length) {
     return (

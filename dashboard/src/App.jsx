@@ -1287,6 +1287,8 @@ function App() {
   const [pcAudioSet, setPcAudioSet] = useState(new Set());
   const [selectedStoreId, setSelectedStoreId] = useState(() => localStorage.getItem('SIGNAGE_MONITOR_STORE') || ''); // 마지막 선택 사업장 복원(새로고침 시 깜빡임 방지)
   const [storesLoaded, setStoresLoaded] = useState(false); // 사업장 목록 로드 완료 — 로드 전 전체-혼합 표시 방지
+  const [pendingSched, setPendingSched] = useState({ count: 0, groupCount: 0, nextByGroup: {} }); // 콘텐츠 교체 예약 — 사이드바 배지/관제 카드용
+  const [schedHover, setSchedHover] = useState(null); // 교체예정 배지 호버한 deviceId (교체될 그림 팝업)
   const [gridLayout, setGridLayout] = useState('auto');
   const [wallView, setWallView] = useState(false); // 월 미리보기 바 토글
   const [debugOverlay, setDebugOverlay] = useState(false); // 디버그 오버레이 전 기기 토글
@@ -1527,6 +1529,21 @@ function App() {
     return () => { socket.disconnect(); clearInterval(pollTimer); };
   }, []);
 
+  // 콘텐츠 교체 예약 — 사이드바 배지/관제 카드 표시용 (선택 사업장 기준, 30초 폴링)
+  useEffect(() => {
+    let alive = true;
+    const fetchPending = () => {
+      const q = selectedStoreId ? `?storeId=${selectedStoreId}` : '';
+      apiFetch(`${SOCKET_URL}/api/content-schedules/pending${q}`)
+        .then(r => r.json())
+        .then(d => { if (alive && d && d.nextByGroup) setPendingSched(d); })
+        .catch(() => {});
+    };
+    fetchPending();
+    const id = setInterval(fetchPending, 30000);
+    return () => { alive = false; clearInterval(id); };
+  }, [selectedStoreId]);
+
   const filteredDevices = (() => {
     const base = devices.filter(d => {
       if (!d.groupId) return false;
@@ -1613,6 +1630,9 @@ function App() {
           <a className={`nav-item ${activeTab === 'media' ? 'active' : ''}`} onClick={() => setActiveTab('media')}>
             <Film size={20} />
             <span>미디어 스케줄링</span>
+            {pendingSched.count > 0 && (
+              <span title={`콘텐츠 교체 예약 ${pendingSched.count}건`} style={{ marginLeft: 'auto', background: '#a78bfa', color: '#1e1b4b', fontWeight: 700, fontSize: '0.66rem', borderRadius: 10, padding: '1px 6px', minWidth: 16, textAlign: 'center', lineHeight: 1.5 }}>{pendingSched.count}</span>
+            )}
           </a>
           <a className={`nav-item ${activeTab === 'video' ? 'active' : ''}`} onClick={() => setActiveTab('video')}>
             <Video size={20} />
@@ -1880,6 +1900,19 @@ function App() {
                         )}
                       </div>
 
+                      {/* 현재 재생 중인 슬롯 번호 — 순환하며 갱신. 교체될 슬롯일 땐 보라 강조 */}
+                      {device.status === 'online' && deviceMeta[device.id] && typeof deviceMeta[device.id].slotIndex === 'number' && (() => {
+                        const meta = deviceMeta[device.id];
+                        const cur = meta.slotIndex, total = meta.slotCount || 0;
+                        const _sch = pendingSched.nextByGroup[device.groupId];
+                        const _changedIdx = ((_sch && _sch.changedByDevice && _sch.changedByDevice[device.id]) || []).map(c => c.index);
+                        const isChangeSlot = _changedIdx.includes(cur);
+                        return (
+                          <div title={isChangeSlot ? '지금 보이는 이 슬롯이 교체 예정' : '현재 재생 중인 슬롯 번호'} style={{ position: 'absolute', top: 8, left: 8, zIndex: 5, background: isChangeSlot ? 'rgba(167,139,250,0.95)' : 'rgba(15,23,42,0.82)', color: isChangeSlot ? '#1e1b4b' : '#e2e8f0', fontWeight: 700, fontSize: '0.66rem', borderRadius: 5, padding: '2px 8px', whiteSpace: 'nowrap', boxShadow: '0 2px 6px rgba(0,0,0,0.45)' }}>
+                            {cur + 1}{total ? `/${total}` : ''}번{isChangeSlot ? ' ⏰교체예정' : ''}
+                          </div>
+                        );
+                      })()}
 
                       {/* 자막 오버레이 — Android TickerView와 동일한 수식 */}
                       {device.tickerConfig?.enabled && device.status === 'online' && (() => {
@@ -2018,6 +2051,37 @@ function App() {
                           <span className="status-dot"></span>
                           {device.status === 'online' ? '온라인' : '오프라인'}
                         </div>
+                        {(() => {
+                          const sch = pendingSched.nextByGroup[device.groupId];
+                          if (!sch) return null;
+                          if (!(sch.changedDeviceIds || []).includes(device.id)) return null; // 실제로 내용이 바뀌는 기기만 표시
+                          const changed = (sch.changedByDevice && sch.changedByDevice[device.id]) || []; // 이 기기에서 바뀌는 슬롯(순번+새이미지)
+                          const t = new Date(sch.switchAt).toLocaleString('ko-KR', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+                          return (
+                            <div
+                              style={{ position: 'relative', display: 'inline-flex' }}
+                              onMouseEnter={() => setSchedHover(device.id)}
+                              onMouseLeave={() => setSchedHover(s => (s === device.id ? null : s))}
+                            >
+                              <div style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: '0.62rem', fontWeight: 700, color: '#c4b5fd', background: 'rgba(167,139,250,0.15)', border: '1px solid rgba(167,139,250,0.4)', borderRadius: 5, padding: '1px 6px', whiteSpace: 'nowrap', cursor: 'help' }}>
+                                ⏰ 교체예정 {t}
+                              </div>
+                              {schedHover === device.id && changed.length > 0 && (
+                                <div style={{ position: 'absolute', top: '100%', left: 0, marginTop: 4, zIndex: 60, background: '#0f172a', border: '1px solid rgba(167,139,250,0.5)', borderRadius: 8, padding: 8, display: 'flex', gap: 8, boxShadow: '0 8px 24px rgba(0,0,0,0.55)' }}>
+                                  {changed.slice(0, 5).map((ch, i) => (
+                                    <div key={i} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4 }}>
+                                      <div style={{ fontSize: '0.66rem', fontWeight: 700, color: '#fff', background: '#a78bfa', borderRadius: 4, padding: '1px 8px', whiteSpace: 'nowrap' }}>{ch.index + 1}번째 슬롯</div>
+                                      {ch.path
+                                        ? <img src={`${SOCKET_URL}/thumb/${ch.path.split('/').pop()}`} alt={`${ch.index + 1}번째`} onError={(e) => { if (!e.currentTarget.dataset.fb) { e.currentTarget.dataset.fb = '1'; e.currentTarget.src = `${SOCKET_URL}${ch.path}`; } }} style={{ width: 110, height: 68, objectFit: 'cover', borderRadius: 4, border: '1px solid rgba(167,139,250,0.45)', background: '#1e293b' }} />
+                                        : <div style={{ width: 110, height: 68, borderRadius: 4, background: '#1e293b', border: '1px solid rgba(148,163,184,0.3)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '0.66rem', color: '#94a3b8' }}>삭제</div>}
+                                    </div>
+                                  ))}
+                                  {changed.length > 5 && <div style={{ alignSelf: 'center', color: '#94a3b8', fontSize: '0.72rem', padding: '0 4px' }}>+{changed.length - 5}</div>}
+                                </div>
+                              )}
+                            </div>
+                          );
+                        })()}
                         {device.appVersion ? (() => {
                           // "0.4.0 (2026-05-27 12:50)" → verNum="0.4.0", verDate="2026-05-27 12:50"
                           const parenIdx = device.appVersion.indexOf(' (');

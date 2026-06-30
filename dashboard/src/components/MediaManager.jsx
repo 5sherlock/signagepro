@@ -52,7 +52,9 @@ import {
   ArrowUp,
   ArrowDown,
   GripVertical,
-  RotateCcw
+  RotateCcw,
+  CalendarClock,
+  Bookmark
 } from 'lucide-react';
 import './PreviewModal.css';
 import './MediaManager.css';
@@ -624,9 +626,10 @@ const TransitionBridgeV4 = ({ item, isLoop, onChange, onPreview }) => {
 };
 
 // ── [V4] 기기 고정형 행 (dnd-kit sortable) ───────────────────
-const DeviceRowV4 = ({ device, items, isDirty, onDrop, onRemoveItem, onChangeItem, onDeleteDevice, onPreview, onTransitionPreview, onReorder, libDragOver = false, dropTarget = null }) => {
+const DeviceRowV4 = ({ device, items, changedSlots = [], isDirty, onDrop, onRemoveItem, onChangeItem, onDeleteDevice, onPreview, onTransitionPreview, onReorder, libDragOver = false, dropTarget = null }) => {
   const [reorderDragIdx, setReorderDragIdx] = useState(null);
   const [reorderOverIdx, setReorderOverIdx] = useState(null);
+  const [hoverChange, setHoverChange] = useState(null); // 교체예정 슬롯 호버 → 새 이미지 비교 { idx, x, y }
   const timelineRef = useRef(null);
 
   useEffect(() => {
@@ -699,12 +702,17 @@ const DeviceRowV4 = ({ device, items, isDirty, onDrop, onRemoveItem, onChangeIte
           const nextItem = items.length > 1 ? items[(idx + 1) % items.length] : null;
           const isDraggedOver = reorderOverIdx === idx && reorderDragIdx !== idx;
           const isDragging = reorderDragIdx === idx;
+          const change = changedSlots.find(c => c.index === idx); // 예약으로 교체 예정 ({index, path})
+          const willChange = !!change;
 
           return (
             <React.Fragment key={item._key || idx}>
               {dropTarget && dropTarget.mode === 'insert' && dropTarget.index === idx && <span className="mm-insert-line" />}
               <div
                 className={`reorder-item-wrapper${isDragging ? ' reorder-dragging' : ''}${isDraggedOver ? ' reorder-over' : ''}${dropTarget && dropTarget.mode === 'replace' && dropTarget.index === idx ? ' lib-replace-target' : ''}`}
+                style={willChange ? { position: 'relative', outline: '2px solid #a78bfa', outlineOffset: '2px', borderRadius: 8 } : { position: 'relative' }}
+                onMouseEnter={(e) => { if (willChange) { const r = e.currentTarget.getBoundingClientRect(); setHoverChange({ idx, x: r.left + r.width / 2, y: r.top }); } }}
+                onMouseLeave={() => setHoverChange(h => (h && h.idx === idx ? null : h))}
                 onDragOver={e => {
                   if (e.dataTransfer.types.includes('device-row-id')) return;
                   e.preventDefault();
@@ -736,6 +744,21 @@ const DeviceRowV4 = ({ device, items, isDirty, onDrop, onRemoveItem, onChangeIte
                   setReorderOverIdx(null);
                 }}
               >
+                {willChange && hoverChange && hoverChange.idx === idx && change.path && (
+                  <div style={{ position: 'fixed', left: hoverChange.x, top: hoverChange.y - 6, transform: 'translate(-50%, -100%)', zIndex: 9999, background: '#0f172a', border: '1px solid rgba(167,139,250,0.65)', borderRadius: 8, padding: 8, boxShadow: '0 10px 28px rgba(0,0,0,0.6)', pointerEvents: 'none', display: 'flex', gap: 10, alignItems: 'center' }}>
+                    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 3 }}>
+                      <div style={{ fontSize: '0.62rem', color: '#94a3b8', fontWeight: 700 }}>교체 전 (현재)</div>
+                      {item.media?.path
+                        ? <img src={`${API}/thumb/${item.media.path.split('/').pop()}`} alt="" style={{ width: 140, height: 88, objectFit: 'cover', borderRadius: 4, display: 'block', background: '#000', border: '1px solid rgba(148,163,184,0.35)' }} />
+                        : <div style={{ width: 140, height: 88, borderRadius: 4, background: '#1e293b', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '0.66rem', color: '#94a3b8' }}>없음</div>}
+                    </div>
+                    <div style={{ color: '#a78bfa', fontWeight: 700, fontSize: '1.2rem' }}>→</div>
+                    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 3 }}>
+                      <div style={{ fontSize: '0.62rem', color: '#c4b5fd', fontWeight: 700 }}>교체 후 (예약)</div>
+                      <img src={`${API}/thumb/${change.path.split('/').pop()}`} alt="" style={{ width: 140, height: 88, objectFit: 'cover', borderRadius: 4, display: 'block', background: '#000', border: '1px solid rgba(167,139,250,0.55)' }} />
+                    </div>
+                  </div>
+                )}
                 {/* 드래그 핸들 — 이 영역만 잡아서 이동 */}
                 <div
                   className="timeline-item-drag-handle"
@@ -772,6 +795,253 @@ const DeviceRowV4 = ({ device, items, isDirty, onDrop, onRemoveItem, onChangeIte
   );
 };
 
+// 장면 선택 커스텀 드롭다운 — 최신순. 위로 열리면 최신이 트리거에 가깝게(맨 아래), 아래로 열리면 맨 위.
+const SceneSelect = ({ scenes, value, onChange, placeholder = '장면 선택…' }) => {
+  const [open, setOpen] = useState(false);
+  const [up, setUp] = useState(false);
+  const ref = useRef(null);
+  const sorted = [...scenes].sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+  const selected = scenes.find(s => s.id === value);
+  const list = up ? [...sorted].reverse() : sorted; // 위로 열면 뒤집어 최신이 트리거 옆(아래)에
+  const toggle = () => {
+    if (!open && ref.current) {
+      const r = ref.current.getBoundingClientRect();
+      setUp((window.innerHeight - r.bottom) < 250); // 아래 공간 부족 → 위로
+    }
+    setOpen(o => !o);
+  };
+  useEffect(() => {
+    const h = (e) => { if (ref.current && !ref.current.contains(e.target)) setOpen(false); };
+    if (open) document.addEventListener('mousedown', h);
+    return () => document.removeEventListener('mousedown', h);
+  }, [open]);
+  const fld = { background: '#0f172a', border: '1px solid rgba(148,163,184,0.3)', borderRadius: 6, color: '#e2e8f0', padding: '6px 10px', fontSize: '0.85rem' };
+  return (
+    <div ref={ref} style={{ position: 'relative', minWidth: 170 }}>
+      <button type="button" onClick={toggle} style={{ ...fld, display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%', gap: 8, cursor: 'pointer' }}>
+        <span style={{ color: selected ? '#e2e8f0' : '#64748b', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{selected ? selected.name : placeholder}</span>
+        <ChevronDown size={14} style={{ transform: open ? 'rotate(180deg)' : 'none', flexShrink: 0, transition: 'transform 0.15s' }} />
+      </button>
+      {open && (
+        <div style={{ position: 'absolute', left: 0, right: 0, [up ? 'bottom' : 'top']: 'calc(100% + 4px)', maxHeight: 224, overflowY: 'auto', background: '#0f172a', border: '1px solid rgba(167,139,250,0.5)', borderRadius: 6, zIndex: 200, boxShadow: '0 8px 24px rgba(0,0,0,0.55)' }}>
+          {list.length === 0 && <div style={{ padding: '8px 10px', color: '#64748b', fontSize: '0.82rem' }}>저장된 장면 없음</div>}
+          {list.map(s => (
+            <div key={s.id} onClick={() => { onChange(s.id); setOpen(false); }}
+              style={{ padding: '7px 10px', cursor: 'pointer', fontSize: '0.85rem', color: s.id === value ? '#c4b5fd' : '#e2e8f0', background: s.id === value ? 'rgba(167,139,250,0.14)' : 'transparent', whiteSpace: 'nowrap' }}
+              onMouseEnter={e => e.currentTarget.style.background = 'rgba(167,139,250,0.1)'}
+              onMouseLeave={e => e.currentTarget.style.background = s.id === value ? 'rgba(167,139,250,0.14)' : 'transparent'}>
+              {s.name}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+};
+
+// ── 콘텐츠 예약 모달 (장면 저장 + 시각 교체 예약) ─────────────────
+// 장면 = 현재 배치 스냅샷. 예약 = "이 시각에 이 장면으로 교체" → 서버 스케줄러가 자동 적용(무인).
+const ContentScheduleModal = ({ groupId, getCurrentItems, onClose, onApplied }) => {
+  const [scenes, setScenes] = useState([]);
+  const [scheds, setScheds] = useState([]);
+  const [sceneName, setSceneName] = useState('');
+  const [schedSceneId, setSchedSceneId] = useState('');
+  const [schedAt, setSchedAt] = useState('');
+  const [editingId, setEditingId] = useState(null); // 수정 중인 예약 id
+  const [showAllScenes, setShowAllScenes] = useState(false); // 장면 5개 초과 펼치기
+  const [showAllPast, setShowAllPast] = useState(false);     // 지난 예약 5개 초과 펼치기
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState('');
+
+  const load = useCallback(async () => {
+    try {
+      const [r1, r2] = await Promise.all([
+        apiFetch(`${SOCKET_URL}/api/groups/${groupId}/scenes`),
+        apiFetch(`${SOCKET_URL}/api/groups/${groupId}/content-schedules`),
+      ]);
+      setScenes(await r1.json());
+      setScheds(await r2.json());
+    } catch { setMsg('목록 로드 실패'); }
+  }, [groupId]);
+  useEffect(() => { if (groupId) load(); }, [groupId, load]);
+
+  const saveScene = async () => {
+    const name = sceneName.trim();
+    if (!name) { setMsg('장면 이름을 입력하세요'); return; }
+    setBusy(true); setMsg('');
+    try {
+      const items = getCurrentItems ? getCurrentItems() : undefined;
+      const r = await apiFetch(`${SOCKET_URL}/api/groups/${groupId}/scenes`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name, items }),
+      });
+      const d = await r.json();
+      if (d.success) { setSceneName(''); setMsg(`장면 "${name}" 저장됨 (${d.scene.itemCount}개)`); await load(); }
+      else setMsg(d.error || '저장 실패');
+    } catch { setMsg('저장 실패'); }
+    finally { setBusy(false); }
+  };
+
+  const delScene = async (id) => {
+    if (!window.confirm('이 장면을 삭제할까요? (연결된 예약도 함께 삭제됩니다)')) return;
+    setBusy(true);
+    try { await apiFetch(`${SOCKET_URL}/api/scenes/${id}`, { method: 'DELETE' }); await load(); }
+    finally { setBusy(false); }
+  };
+
+  const applyNow = async (id, name) => {
+    if (!window.confirm(`지금 즉시 "${name}" 장면으로 교체할까요? (전 기기 반영)`)) return;
+    setBusy(true);
+    try {
+      await apiFetch(`${SOCKET_URL}/api/scenes/${id}/apply`, { method: 'POST' });
+      setMsg(`"${name}" 즉시 적용됨`); onApplied && onApplied();
+    } finally { setBusy(false); }
+  };
+
+  const toLocalInput = (iso) => { try { const d = new Date(iso); return new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 16); } catch { return ''; } };
+  const startEdit = (s) => { setEditingId(s.id); setSchedSceneId(s.sceneId); setSchedAt(toLocalInput(s.switchAt)); setMsg('예약 수정 중 — 시각/장면 바꾼 뒤 저장'); };
+  const cancelEdit = () => { setEditingId(null); setSchedSceneId(''); setSchedAt(''); setMsg(''); };
+
+  const addSched = async () => {
+    if (!schedSceneId) { setMsg('교체할 장면을 선택하세요'); return; }
+    if (!schedAt) { setMsg('교체 시각을 선택하세요'); return; }
+    setBusy(true); setMsg('');
+    try {
+      const switchAt = new Date(schedAt).toISOString();
+      const url = editingId ? `${SOCKET_URL}/api/content-schedules/${editingId}` : `${SOCKET_URL}/api/groups/${groupId}/content-schedules`;
+      const r = await apiFetch(url, {
+        method: editingId ? 'PUT' : 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ sceneId: schedSceneId, switchAt }),
+      });
+      const d = await r.json();
+      if (d.success) { setEditingId(null); setSchedAt(''); setSchedSceneId(''); setMsg(editingId ? '예약 수정됨' : '예약 추가됨'); await load(); }
+      else setMsg(d.error || '예약 실패');
+    } catch { setMsg('예약 실패'); }
+    finally { setBusy(false); }
+  };
+
+  const delSched = async (id) => {
+    setBusy(true);
+    try { await apiFetch(`${SOCKET_URL}/api/content-schedules/${id}`, { method: 'DELETE' }); await load(); }
+    finally { setBusy(false); }
+  };
+
+  const fmt = (iso) => { try { return new Date(iso).toLocaleString('ko-KR', { dateStyle: 'medium', timeStyle: 'short' }); } catch { return iso; } };
+  const now = Date.now();
+  const box = { background: '#1e293b', border: '1px solid rgba(148,163,184,0.2)', borderRadius: 8, padding: 12, marginBottom: 12 };
+  const inp = { background: '#0f172a', border: '1px solid rgba(148,163,184,0.3)', borderRadius: 6, color: '#e2e8f0', padding: '6px 10px', fontSize: '0.85rem', colorScheme: 'dark' };
+  const btn = (c) => ({ display: 'inline-flex', alignItems: 'center', gap: 5, padding: '6px 12px', borderRadius: 6, border: `1px solid ${c}55`, background: `${c}22`, color: c, cursor: 'pointer', fontSize: '0.8rem', whiteSpace: 'nowrap' });
+
+  return (
+    <div onClick={onClose} style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+      <div onClick={e => e.stopPropagation()} style={{ background: '#0f172a', border: '1px solid rgba(148,163,184,0.25)', borderRadius: 12, width: 620, maxWidth: '92vw', maxHeight: '88vh', overflowY: 'auto', padding: 20, color: '#e2e8f0' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 }}>
+          <h3 style={{ margin: 0, display: 'flex', alignItems: 'center', gap: 8, fontSize: '1.05rem' }}><CalendarClock size={20} color="#a78bfa" /> 콘텐츠 예약 교체</h3>
+          <X size={20} style={{ cursor: 'pointer' }} onClick={onClose} />
+        </div>
+        <p style={{ fontSize: '0.78rem', color: '#94a3b8', marginTop: 0 }}>지정한 시각이 되면 <b>서버가 자동으로</b> 해당 장면으로 교체합니다(대시보드 꺼놔도 됨). 다음 예약 전까지 계속 유지됩니다.</p>
+
+        {/* 1) 장면 저장 */}
+        <div style={box}>
+          <div style={{ fontWeight: 600, marginBottom: 4, fontSize: '0.9rem' }}>① 타임라인 배치를 장면으로 저장</div>
+          <div style={{ fontSize: '0.74rem', color: '#94a3b8', marginBottom: 8, lineHeight: 1.5 }}>
+            먼저 <b>타임라인을 원하는 배치(예: 교체할 새 이미지)로 편집</b>한 뒤 저장하세요.
+            장면 저장은 <b style={{ color: '#34d399' }}>라이브 STB를 바꾸지 않습니다</b> — 예약 시각에만 교체됩니다.
+            (지금 즉시 라이브 반영은 닫고 "변경사항 저장 및 배포")
+          </div>
+          <div style={{ display: 'flex', gap: 8 }}>
+            <input style={{ ...inp, flex: 1 }} placeholder="장면 이름 (예: 야간메뉴, 여름프로모션)" value={sceneName} onChange={e => setSceneName(e.target.value)} onKeyDown={e => e.key === 'Enter' && saveScene()} />
+            <button style={btn('#10b981')} onClick={saveScene} disabled={busy}><Bookmark size={15} /> 현재 배치 저장</button>
+          </div>
+        </div>
+
+        {/* 2) 저장된 장면 (최신순, 최근 5개 + 더보기) */}
+        <div style={box}>
+          {(() => {
+            const sorted = [...scenes].sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+            const vis = showAllScenes ? sorted : sorted.slice(0, 5);
+            return (<>
+              <div style={{ fontWeight: 600, marginBottom: 8, fontSize: '0.9rem' }}>② 저장된 장면 ({scenes.length})</div>
+              {scenes.length === 0 ? <div style={{ color: '#64748b', fontSize: '0.82rem' }}>아직 없음 — 위에서 현재 배치를 저장하세요.</div> :
+                <div style={{ maxHeight: 230, overflowY: 'auto' }}>
+                  {vis.map(s => (
+                    <div key={s.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '6px 0', borderBottom: '1px solid rgba(148,163,184,0.1)' }}>
+                      <span style={{ fontSize: '0.85rem' }}>{s.name} <span style={{ color: '#64748b' }}>· {s.itemCount}개</span></span>
+                      <span style={{ display: 'flex', gap: 6 }}>
+                        <button style={btn('#3b82f6')} onClick={() => applyNow(s.id, s.name)} disabled={busy}><Play size={13} /> 즉시 적용</button>
+                        <button style={btn('#f87171')} onClick={() => delScene(s.id)} disabled={busy}><Trash2 size={13} /></button>
+                      </span>
+                    </div>
+                  ))}
+                  {sorted.length > 5 && (
+                    <button onClick={() => setShowAllScenes(v => !v)} style={{ marginTop: 6, background: 'transparent', border: 'none', color: '#94a3b8', fontSize: '0.78rem', cursor: 'pointer' }}>
+                      {showAllScenes ? '접기' : `더 보기 (전체 ${sorted.length})`}
+                    </button>
+                  )}
+                </div>}
+            </>);
+          })()}
+        </div>
+
+        {/* 3) 예약 추가/수정 */}
+        <div style={box}>
+          <div style={{ fontWeight: 600, marginBottom: 8, fontSize: '0.9rem' }}>③ {editingId ? '예약 수정' : '교체 예약 추가'}</div>
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+            <SceneSelect scenes={scenes} value={schedSceneId} onChange={setSchedSceneId} />
+            <input style={inp} type="datetime-local" value={schedAt} onChange={e => setSchedAt(e.target.value)} />
+            <button style={btn('#a78bfa')} onClick={addSched} disabled={busy}><Plus size={15} /> {editingId ? '수정 저장' : '예약'}</button>
+            {editingId && <button style={btn('#94a3b8')} onClick={cancelEdit} disabled={busy}>취소</button>}
+          </div>
+        </div>
+
+        {/* 4) 예약 목록 — 미래(대기) 전부 + 지난(적용됨) 최근 5개 */}
+        <div style={box}>
+          {(() => {
+            const isPast = (s) => s.applied || !s.switchAt || new Date(s.switchAt).getTime() <= now;
+            const sortDesc = (a, b) => new Date(b.createdAt) - new Date(a.createdAt);
+            const future = scheds.filter(s => !isPast(s)).sort(sortDesc);
+            const past = scheds.filter(isPast).sort(sortDesc);
+            const visPast = showAllPast ? past : past.slice(0, 5);
+            const row = (s) => {
+              const p = isPast(s);
+              return (
+                <div key={s.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '6px 0', borderBottom: '1px solid rgba(148,163,184,0.1)', opacity: p ? 0.55 : 1, background: editingId === s.id ? 'rgba(167,139,250,0.12)' : 'transparent', borderRadius: editingId === s.id ? 4 : 0 }}>
+                  <span style={{ fontSize: '0.85rem' }}>
+                    <span style={{ color: p ? '#64748b' : '#a78bfa' }}>{fmt(s.switchAt)}</span>
+                    {' → '}<b>{s.scene?.name || '(삭제된 장면)'}</b>
+                    {s.applied && <span style={{ color: '#10b981', marginLeft: 6, fontSize: '0.72rem' }}>✓적용됨</span>}
+                  </span>
+                  <span style={{ display: 'flex', gap: 6 }}>
+                    {!p && <button style={btn('#a78bfa')} onClick={() => startEdit(s)} disabled={busy}>수정</button>}
+                    <button style={btn('#f87171')} onClick={() => delSched(s.id)} disabled={busy}><Trash2 size={13} /></button>
+                  </span>
+                </div>
+              );
+            };
+            return (<>
+              <div style={{ fontWeight: 600, marginBottom: 8, fontSize: '0.9rem' }}>④ 예약된 교체 (대기 {future.length}{past.length ? ` · 지난 ${past.length}` : ''})</div>
+              {scheds.length === 0 ? <div style={{ color: '#64748b', fontSize: '0.82rem' }}>예약 없음</div> :
+                <div style={{ maxHeight: 250, overflowY: 'auto' }}>
+                  {future.map(row)}
+                  {future.length === 0 && <div style={{ color: '#64748b', fontSize: '0.8rem', padding: '4px 0' }}>대기 중인 예약 없음</div>}
+                  {past.length > 0 && <div style={{ fontSize: '0.72rem', color: '#64748b', margin: '8px 0 2px' }}>— 지난 교체 —</div>}
+                  {visPast.map(row)}
+                  {past.length > 5 && (
+                    <button onClick={() => setShowAllPast(v => !v)} style={{ marginTop: 4, background: 'transparent', border: 'none', color: '#94a3b8', fontSize: '0.78rem', cursor: 'pointer' }}>
+                      {showAllPast ? '지난 교체 접기' : `지난 교체 더 보기 (${past.length})`}
+                    </button>
+                  )}
+                </div>}
+            </>);
+          })()}
+        </div>
+
+        {msg && <div style={{ color: '#fbbf24', fontSize: '0.82rem', marginTop: 4 }}>{msg}</div>}
+      </div>
+    </div>
+  );
+};
+
 // ── 메인 MediaManager ─────────────────────────────────────
 const MediaManager = ({ stores = [], groups = [], devices = [], selectedStoreId, setSelectedStoreId, fetchDevices, deviceOrder = {}, onDeviceOrderChange }) => {
   const [mediaList, setMediaList] = useState([]);
@@ -788,6 +1058,24 @@ const MediaManager = ({ stores = [], groups = [], devices = [], selectedStoreId,
   const [lanes, setLanes] = useState({});
   const [savedState, setSavedState] = useState({});
   const [saving, setSaving] = useState(false);
+  const [showSchedModal, setShowSchedModal] = useState(false);
+  const [libPreview, setLibPreview] = useState(null); // 라이브러리 더블클릭 큰 미리보기
+  const [groupScheds, setGroupScheds] = useState([]);
+  const [changedByDevice, setChangedByDevice] = useState({}); // 다음 예약에서 기기별 바뀌는 슬롯 → 타임라인 표시
+  const fetchGroupScheds = useCallback(async () => {
+    if (!selectedGroupId) { setGroupScheds([]); setChangedByDevice({}); return; }
+    try {
+      const [r, rp] = await Promise.all([
+        apiFetch(`${API}/api/groups/${selectedGroupId}/content-schedules`),
+        apiFetch(`${API}/api/content-schedules/pending`),
+      ]);
+      setGroupScheds(await r.json());
+      const pj = await rp.json();
+      setChangedByDevice((pj.nextByGroup && pj.nextByGroup[selectedGroupId] && pj.nextByGroup[selectedGroupId].changedByDevice) || {});
+    } catch { setGroupScheds([]); setChangedByDevice({}); }
+  }, [selectedGroupId]);
+  useEffect(() => { fetchGroupScheds(); }, [fetchGroupScheds]);
+  useEffect(() => { if (!showSchedModal) fetchGroupScheds(); }, [showSchedModal, fetchGroupScheds]);
   const [previewData, setPreviewData] = useState(null);
   const [transPreview, setTransPreview] = useState(null);
   const [uploadProgress, setUploadProgress] = useState(null); // null | { name, pct }
@@ -1056,19 +1344,25 @@ const MediaManager = ({ stores = [], groups = [], devices = [], selectedStoreId,
     } catch (e) { alert('해제 실패'); }
   };
 
+  // 현재 기기별 배치(lanes)를 서버 items 형식으로 추출 — 배포·장면저장 공용
+  const getCurrentItems = () => {
+    const allItems = [];
+    const seen = new Set();
+    groupDevices.forEach(device => {
+      (lanes[device.id] || []).forEach(item => {
+        const key = `${item.mediaId}-${device.id}`;
+        if (!seen.has(key)) { seen.add(key); allItems.push({ mediaId: item.mediaId, duration: item.duration, transition: item.transition, transitionTime: item.transitionTime, slideDirection: item.slideDirection, targetDeviceId: device.id }); }
+      });
+    });
+    return allItems;
+  };
+
   const handleSave = async () => {
     if (!selectedGroupId || !isDirty) return;
     setSaving(true);
     setDeployPanel('saving');
     try {
-      const allItems = [];
-      const seen = new Set();
-      groupDevices.forEach(device => {
-        (lanes[device.id] || []).forEach(item => {
-          const key = `${item.mediaId}-${device.id}`;
-          if (!seen.has(key)) { seen.add(key); allItems.push({ mediaId: item.mediaId, duration: item.duration, transition: item.transition, transitionTime: item.transitionTime, slideDirection: item.slideDirection, targetDeviceId: device.id }); }
-        });
-      });
+      const allItems = getCurrentItems();
       await apiFetch(`${API}/api/groups/${selectedGroupId}/playlist`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ items: allItems }), });
       // 서버 저장 후 서버 상태를 다시 불러와 타임라인과 라이브러리를 정확히 동기화
       await fetchPlaylist();
@@ -1197,6 +1491,8 @@ const MediaManager = ({ stores = [], groups = [], devices = [], selectedStoreId,
         libDragMediaRef.current = media;
         setLibDragPos({ x: e.clientX, y: e.clientY });
       }}
+      onDoubleClick={e => { e.preventDefault(); libDragMediaRef.current = null; setLibDragPos(null); setLibPreview(media); }}
+      title="더블클릭: 크게 보기"
     >
       <div className="library-item-thumb">
         <MediaThumb path={media.path} style={{ width: '100%', height: 'auto', pointerEvents: 'none', display: 'block' }} />
@@ -1218,6 +1514,12 @@ const MediaManager = ({ stores = [], groups = [], devices = [], selectedStoreId,
 
   // 보관함: 현재 그룹 플레이리스트에 사용되지 않은(미사용) 미디어만 노출
   const archivedList = mediaList.filter(m => !usedMediaIds.has(m.id));
+
+  // 예약된(미래·미적용) 교체 — 예약교체 버튼 배지/배너용
+  const schedNowMs = Date.now();
+  const pendingScheds = groupScheds.filter(s => !s.applied && s.switchAt && new Date(s.switchAt).getTime() > schedNowMs);
+  const nextSched = pendingScheds.slice().sort((a, b) => new Date(a.switchAt) - new Date(b.switchAt))[0];
+  const fmtSched = (iso) => { try { return new Date(iso).toLocaleString('ko-KR', { dateStyle: 'short', timeStyle: 'short' }); } catch { return iso; } };
 
   return (
     <div className="mm-root" style={{ cursor: libDragPos ? 'grabbing' : undefined }}>
@@ -1252,7 +1554,7 @@ const MediaManager = ({ stores = [], groups = [], devices = [], selectedStoreId,
             {storeGroups.map(g => <option key={g.id} value={g.id}>{g.name}</option>)}
           </select>
         </div>
-        <div style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
+        <div style={{ display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap', justifyContent: 'flex-end' }}>
           {/* 일괄 전환 컨트롤 */}
           <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '4px 10px', background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.08)', borderRadius: 8 }}>
             <span style={{ fontSize: '0.72rem', color: '#64748b', whiteSpace: 'nowrap' }}>전체 전환:</span>
@@ -1312,6 +1614,26 @@ const MediaManager = ({ stores = [], groups = [], devices = [], selectedStoreId,
             </button>
           </div>
           <button
+            onClick={() => setShowSchedModal(true)}
+            disabled={!selectedGroupId}
+            title={pendingScheds.length ? `예약된 자동 교체 ${pendingScheds.length}건 — 다음 ${fmtSched(nextSched.switchAt)}` : '시각에 맞춰 자동으로 배치를 교체하도록 예약 (무인)'}
+            className={pendingScheds.length ? 'sched-btn-pulse' : ''}
+            style={{
+              position: 'relative',
+              display: 'flex', alignItems: 'center', gap: 6, fontSize: '0.78rem', padding: '8px 14px',
+              borderRadius: 8,
+              border: `1px solid ${pendingScheds.length ? 'rgba(167,139,250,0.9)' : 'rgba(167,139,250,0.5)'}`,
+              background: pendingScheds.length ? 'rgba(167,139,250,0.25)' : 'rgba(167,139,250,0.12)',
+              color: pendingScheds.length ? '#c4b5fd' : '#a78bfa', cursor: selectedGroupId ? 'pointer' : 'not-allowed',
+              opacity: selectedGroupId ? 1 : 0.5, whiteSpace: 'nowrap',
+            }}
+          >
+            <CalendarClock size={15} /> 예약 교체
+            {pendingScheds.length > 0 && (
+              <span style={{ background: '#a78bfa', color: '#1e1b4b', fontWeight: 700, fontSize: '0.7rem', borderRadius: 10, padding: '0 6px', minWidth: 16, textAlign: 'center' }}>{pendingScheds.length}</span>
+            )}
+          </button>
+          <button
             onClick={handleClearAllLanes}
             disabled={totalLaneItems === 0}
             title="현재 그룹 전 기기의 재생목록 비우기 (라이브러리는 유지)"
@@ -1336,6 +1658,7 @@ const MediaManager = ({ stores = [], groups = [], devices = [], selectedStoreId,
               style={{
                 display: 'inline-flex', alignItems: 'center', gap: 6, marginLeft: 8,
                 padding: '0 14px', height: 40, borderRadius: 8, fontSize: '0.85rem', fontWeight: 600,
+                whiteSpace: 'nowrap', flexShrink: 0,
                 background: 'transparent',
                 color: undoInfo.mode === 'redo' ? '#34d399' : '#fbbf24',
                 border: `1px solid ${undoInfo.mode === 'redo' ? 'rgba(52,211,153,0.45)' : 'rgba(251,191,36,0.45)'}`,
@@ -1392,6 +1715,13 @@ const MediaManager = ({ stores = [], groups = [], devices = [], selectedStoreId,
         </div>
       )}
 
+      {nextSched && (
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 24px', background: 'rgba(167,139,250,0.1)', borderBottom: '1px solid rgba(167,139,250,0.25)', color: '#c4b5fd', fontSize: '0.82rem' }}>
+          <CalendarClock size={15} />
+          <span><b>다음 자동 교체 예정:</b> {fmtSched(nextSched.switchAt)} → <b>{nextSched.scene?.name || '(장면)'}</b>{pendingScheds.length > 1 ? ` · 외 ${pendingScheds.length - 1}건` : ''}</span>
+          <button onClick={() => setShowSchedModal(true)} style={{ marginLeft: 'auto', background: 'transparent', border: '1px solid rgba(167,139,250,0.5)', color: '#c4b5fd', borderRadius: 6, padding: '2px 10px', fontSize: '0.76rem', cursor: 'pointer', whiteSpace: 'nowrap' }}>예약 관리</button>
+        </div>
+      )}
       <div className="mm-body">
         <div className="mm-library">
           <div className="mm-library-header">
@@ -1547,6 +1877,7 @@ const MediaManager = ({ stores = [], groups = [], devices = [], selectedStoreId,
                     key={device.id}
                     device={device}
                     items={lanes[device.id] || []}
+                    changedSlots={changedByDevice[device.id] || []}
                     isDirty={JSON.stringify(lanes[device.id] || []) !== JSON.stringify(savedState[device.id] || [])}
                     onDrop={media => handleDrop(device.id, media)}
                     onRemoveItem={idx => handleRemoveItem(device.id, idx)}
@@ -1580,11 +1911,31 @@ const MediaManager = ({ stores = [], groups = [], devices = [], selectedStoreId,
       )}
 
       {previewData && (
-        <PlaylistPreviewModal 
-          items={previewData.items} 
-          deviceName={previewData.deviceName} 
-          onClose={() => setPreviewData(null)} 
+        <PlaylistPreviewModal
+          items={previewData.items}
+          deviceName={previewData.deviceName}
+          onClose={() => setPreviewData(null)}
         />
+      )}
+      {showSchedModal && selectedGroupId && (
+        <ContentScheduleModal
+          groupId={selectedGroupId}
+          getCurrentItems={getCurrentItems}
+          onApplied={() => { fetchPlaylist(); }}
+          onClose={() => setShowSchedModal(false)}
+        />
+      )}
+      {libPreview && (
+        <div onClick={() => setLibPreview(null)} style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.85)', zIndex: 2000, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 12, padding: 24 }}>
+          {/\.(mp4|webm|mov)$/i.test(libPreview.path || '')
+            ? <video onClick={e => e.stopPropagation()} src={(libPreview.path || '').startsWith('http') ? libPreview.path : `${API}${libPreview.path}`} controls autoPlay loop style={{ maxWidth: '92vw', maxHeight: '82vh', borderRadius: 8, background: '#000' }} />
+            : <img onClick={e => e.stopPropagation()} src={(libPreview.path || '').startsWith('http') ? libPreview.path : `${API}${libPreview.path}`} alt={libPreview.filename} style={{ maxWidth: '92vw', maxHeight: '82vh', objectFit: 'contain', borderRadius: 8 }} />}
+          <div onClick={e => e.stopPropagation()} style={{ color: '#e2e8f0', fontSize: '0.85rem', display: 'flex', alignItems: 'center', gap: 14 }}>
+            <span>{libPreview.filename}</span>
+            {libPreview.size ? <span style={{ color: '#94a3b8' }}>{formatSize(libPreview.size)}</span> : null}
+            <button onClick={() => setLibPreview(null)} style={{ background: 'rgba(255,255,255,0.12)', border: '1px solid rgba(255,255,255,0.25)', color: '#fff', borderRadius: 6, padding: '4px 14px', cursor: 'pointer' }}>닫기</button>
+          </div>
+        </div>
       )}
     </div>
   );
