@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { LayoutGrid, Calendar, LogOut, Activity, RotateCw, Sun, Moon, Plus, Trash2, Check, Edit, ChevronUp, ChevronDown } from 'lucide-react';
+import { LayoutGrid, Calendar, LogOut, Activity, RotateCw, RefreshCw, Sun, Moon, Plus, Trash2, Check, Edit, ChevronUp, ChevronDown } from 'lucide-react';
 import { io } from 'socket.io-client';
 import { SOCKET_URL, apiFetch, getToken } from './config';
 import LoginScreen from './components/LoginScreen';
@@ -436,7 +436,20 @@ function App() {
                           <Moon size={18} />
                           <span>화면 끄기</span>
                         </button>
-                        
+
+                        <button
+                          className="control-icon-btn restart-app"
+                          onClick={() => {
+                            if (window.confirm(`${device.name} 앱을 재시작할까요?`)) {
+                              sendCommand(device.id, 'restart-app');
+                            }
+                          }}
+                          disabled={device.status === 'offline'}
+                        >
+                          <RefreshCw size={18} />
+                          <span>앱 재시작</span>
+                        </button>
+
                         <button
                           className="control-icon-btn reboot"
                           onClick={() => {
