@@ -468,6 +468,43 @@ function App() {
                 </div>
               )}
             </div>
+
+            {/* 아이콘 설명 범례 */}
+            {filteredDevices.length > 0 && (
+              <div className="control-legend">
+                <h3 className="legend-title">버튼 설명</h3>
+                <ul className="legend-list">
+                  <li className="legend-item">
+                    <span className="legend-icon on"><Sun size={16} /></span>
+                    <div className="legend-text">
+                      <span className="legend-name">화면 켜기</span>
+                      <span className="legend-desc">디스플레이 화면을 켭니다</span>
+                    </div>
+                  </li>
+                  <li className="legend-item">
+                    <span className="legend-icon off"><Moon size={16} /></span>
+                    <div className="legend-text">
+                      <span className="legend-name">화면 끄기</span>
+                      <span className="legend-desc">디스플레이 화면만 끕니다 (기기는 켜진 상태)</span>
+                    </div>
+                  </li>
+                  <li className="legend-item">
+                    <span className="legend-icon restart-app"><RefreshCw size={16} /></span>
+                    <div className="legend-text">
+                      <span className="legend-name">앱 재시작</span>
+                      <span className="legend-desc">사이니지 앱만 다시 시작 (기기 재부팅 없이 빠르게 복구)</span>
+                    </div>
+                  </li>
+                  <li className="legend-item">
+                    <span className="legend-icon reboot"><RotateCw size={16} /></span>
+                    <div className="legend-text">
+                      <span className="legend-name">재부팅</span>
+                      <span className="legend-desc">기기 전체를 전원 재시작 (완전 초기화, 1~2분 소요)</span>
+                    </div>
+                  </li>
+                </ul>
+              </div>
+            )}
           </div>
         )}
 
