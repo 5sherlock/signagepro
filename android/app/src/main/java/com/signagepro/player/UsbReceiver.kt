@@ -139,16 +139,13 @@ class UsbReceiver : BroadcastReceiver() {
             // 이후 PC에서 "adb connect <기기IP>:5555" 로 USB 없이 원격 접속 가능.
             // RK3229 Android 5.1.1 에서는 setprop + stop/start adbd 조합으로 활성화.
             "enable_adb_tcp" -> {
-                return try {
-                    Runtime.getRuntime().exec("setprop service.adb.tcp.port 5555").waitFor()
-                    Runtime.getRuntime().exec("stop adbd").waitFor()
-                    Thread.sleep(500)
-                    Runtime.getRuntime().exec("start adbd").waitFor()
+                // su 문법은 기기마다 다름 → RootUtil 이 흡수 (su -c / su 0 sh -c)
+                return if (RootUtil.enableAdbTcp5555()) {
                     Log.i(TAG, "ADB TCP 5555 활성화 완료")
                     "ADB TCP 활성화(5555)"
-                } catch (e: Exception) {
-                    Log.w(TAG, "ADB TCP 활성화 실패: ${e.message}")
-                    "ADB TCP 활성화 실패: ${e.message}"
+                } else {
+                    Log.w(TAG, "ADB TCP 활성화 실패 (root 없음/거부)")
+                    "ADB TCP 활성화 실패(root 없음/거부)"
                 }
             }
 

@@ -13,6 +13,7 @@ import android.os.Build
 import android.os.Environment
 import android.util.Log
 import com.signagepro.player.InstallReceiver
+import com.signagepro.player.RootUtil
 import com.signagepro.player.SignageDeviceAdmin
 import com.signagepro.player.api.ApiClient
 import com.signagepro.player.api.PlaylistDto
@@ -562,15 +563,13 @@ class PlayerCoordinator(
      */
     private fun trySilentInstallPm(apkFile: File): Boolean {
         // 1순위: root(su) 경유 — 설치 확인 다이얼로그 없이 자동 설치 (다운그레이드 -d 허용)
+        // su 문법은 RootUtil 이 흡수(큐버 su 0 sh -c / Ultracube su -c). 출력의 "Success" 로 판정.
         try {
-            val proc = Runtime.getRuntime().exec(arrayOf(
-                "su", "-c", "cp \"${apkFile.absolutePath}\" /data/local/tmp/update.apk && chmod 777 /data/local/tmp/update.apk && pm install -r -d /data/local/tmp/update.apk && rm /data/local/tmp/update.apk && sleep 2 && am start -n com.signagepro.player/.MainActivity"
-            ))
-            val exitCode = proc.waitFor()
-            val output = proc.inputStream.bufferedReader().readText()
-            val error  = proc.errorStream.bufferedReader().readText()
-            Log.i(TAG, "su pm install: exitCode=$exitCode out=$output err=$error")
-            if (exitCode == 0 && output.contains("Success", ignoreCase = true)) return true
+            val result = RootUtil.runAsRootWithOutput(
+                "cp \"${apkFile.absolutePath}\" /data/local/tmp/update.apk && chmod 777 /data/local/tmp/update.apk && pm install -r -d /data/local/tmp/update.apk && rm /data/local/tmp/update.apk && sleep 2 && am start -n com.signagepro.player/.MainActivity"
+            )
+            Log.i(TAG, "su pm install: $result")
+            if (result.contains("Success", ignoreCase = true)) return true
         } catch (e: Exception) {
             Log.w(TAG, "su pm install 실행 불가: ${e.message}")
         }
@@ -840,10 +839,11 @@ class PlayerCoordinator(
                     }
                 }
                 
-                // 2순위: su -c reboot (Rooted 기기 폴백)
+                // 2순위: su 로 reboot (Rooted 기기 폴백) — su 문법은 RootUtil 이 흡수
+                // (큐버 QR5G 는 `su -c` 거부, `su 0 sh -c` 필요. 이게 안 돼 재부팅 명령이 먹지 않았음)
                 try {
-                    Log.i(TAG, "su -c reboot 쉘 명령어 호출")
-                    Runtime.getRuntime().exec(arrayOf("su", "-c", "reboot"))
+                    Log.i(TAG, "su reboot 호출")
+                    if (!RootUtil.runAsRoot("reboot")) Log.e(TAG, "su reboot 실패 (root 없음/거부)")
                 } catch (e: Exception) {
                     Log.e(TAG, "su reboot 쉘 실행 실패: ${e.message}")
                 }

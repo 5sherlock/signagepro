@@ -4,7 +4,6 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.util.Log
-import java.io.IOException
 
 /**
  * 부팅 완료 시 PlayerActivity를 자동 실행.
@@ -46,20 +45,16 @@ class BootReceiver : BroadcastReceiver() {
 
     /**
      * 부팅 시 ADB over TCP(5555) 자동 활성화.
-     * root 권한이 있는 기기(크라이저 STB 등)에서 동작.
+     * root 권한이 있는 기기(dev-204 Ultracube, 큐버 QR5G-M110S 등)에서 동작.
      * root 없는 기기에서는 조용히 실패하며 앱 동작에 영향 없음.
+     *
+     * su 문법은 기기마다 달라 [RootUtil] 이 흡수한다. (`su -c` vs `su 0 sh -c`)
      */
     private fun enableAdbTcp() {
-        try {
-            val process = Runtime.getRuntime().exec(arrayOf("su", "-c",
-                "setprop service.adb.tcp.port 5555 && stop adbd && start adbd"
-            ))
-            process.waitFor()
+        if (RootUtil.enableAdbTcp5555()) {
             Log.i(TAG, "ADB TCP 5555 활성화 완료")
-        } catch (e: IOException) {
-            Log.w(TAG, "ADB TCP 활성화 실패 (root 없음): ${e.message}")
-        } catch (e: Exception) {
-            Log.w(TAG, "ADB TCP 활성화 오류: ${e.message}")
+        } else {
+            Log.w(TAG, "ADB TCP 활성화 실패 (root 없음/거부)")
         }
     }
 

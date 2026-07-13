@@ -58,17 +58,14 @@ class PlayerApp : MultiDexApplication() {
         }
     }
 
-    // ADB TCP 포트 5555 활성화 — 서버에서 adb install 로 무인 OTA 설치 가능하게
+    // ADB TCP 포트 5555 활성화 — 서버에서 adb install 로 무인 OTA 설치 가능하게.
+    // su 를 거쳐야 실제로 적용됨(userdebug 빌드도 앱은 일반 uid). 문법은 [RootUtil] 이 흡수.
     private fun enableAdbTcp() {
         Thread {
-            try {
-                Runtime.getRuntime().exec("setprop service.adb.tcp.port 5555").waitFor()
-                Runtime.getRuntime().exec("stop adbd").waitFor()
-                Thread.sleep(400)
-                Runtime.getRuntime().exec("start adbd").waitFor()
+            if (RootUtil.enableAdbTcp5555()) {
                 android.util.Log.i("AdbTcp", "ADB TCP :5555 활성화")
-            } catch (e: Exception) {
-                android.util.Log.w("AdbTcp", "ADB TCP 활성화 실패: ${e.message}")
+            } else {
+                android.util.Log.w("AdbTcp", "ADB TCP 활성화 실패 (root 없음/거부)")
             }
         }.start()
     }

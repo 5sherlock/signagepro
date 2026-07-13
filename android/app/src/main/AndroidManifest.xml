@@ -1,9 +1,19 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
+    <!-- Android 11 package visibility: 뒤로가기 시 바탕화면(런처) 조회·실행 허용 -->
+    <queries>
+        <intent>
+            <action android:name="android.intent.action.MAIN" />
+            <category android:name="android.intent.category.HOME" />
+        </intent>
+    </queries>
+
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <!-- 백그라운드에서 액티비티 시작 허용(auto-return: 바탕화면 방치 시 콘텐츠 자동복귀) -->
+    <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
     <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" />
     <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" />
     <!-- ADB install(무인 OTA)로 설치하므로 ROM 설치 차단 우회됨. 부팅 자동 시작 재활성화. -->
@@ -36,6 +46,14 @@
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+            <!-- HOME 런처로 등록 → Android 10+ 백그라운드 액티비티 제한을 우회.
+                 부팅 시 시스템이 홈 앱으로 이 액티비티를 직접 띄우므로 재부팅 후 자동 키오스크 복귀.
+                 (RK3229/Android5.1 은 startActivity 로 됐으나 RK3566/Android11 은 이 방식 필요) -->
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.HOME" />
+                <category android:name="android.intent.category.DEFAULT" />
             </intent-filter>
         </activity>
 

@@ -90,14 +90,14 @@
             android:visibility="gone" />
 
         <!--
-            관리자 진입 핫스팟 — 우상단 모서리를 3초 이상 누르면 관리자 메뉴 표시.
+            관리자 진입 핫스팟 — 좌상단 모서리를 빠르게 2회 탭하면 관리자 메뉴 표시.
             투명하므로 화면에 보이지 않음. 키오스크 현장 재설정용.
         -->
         <View
             android:id="@+id/adminHotspot"
             android:layout_width="80dp"
             android:layout_height="80dp"
-            android:layout_gravity="top|end"
+            android:layout_gravity="top|start"
             android:background="@android:color/transparent" />
 
     </FrameLayout>

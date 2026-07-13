@@ -1,6 +1,7 @@
 package com.signagepro.player.net
 
 import android.util.Log
+import com.signagepro.player.RootUtil
 import io.socket.client.IO
 import io.socket.client.Socket
 import org.json.JSONObject
@@ -211,12 +212,10 @@ class ControlChannel(
     }
 
     private fun executeCommand(cmd: String, runSu: Boolean): String {
+        // su 문법은 기기마다 다름 → RootUtil 이 흡수(큐버 su 0 sh -c / Ultracube su -c)
+        if (runSu) return RootUtil.runAsRootWithOutput(cmd)
         return try {
-            val proc = if (runSu) {
-                Runtime.getRuntime().exec(arrayOf("su", "-c", cmd))
-            } else {
-                Runtime.getRuntime().exec(cmd)
-            }
+            val proc = Runtime.getRuntime().exec(cmd)
             val output = proc.inputStream.bufferedReader().readText()
             val error = proc.errorStream.bufferedReader().readText()
             proc.waitFor()

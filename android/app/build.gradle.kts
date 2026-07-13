@@ -14,8 +14,8 @@ android {
         applicationId = "com.signagepro.player"
         minSdk = 22                // Android 5.1.1 (RK3229 U4X+ CM)
         targetSdk = 29             // V1-only 서명 유지: RK3229(API22) PM이 V2 블록을 못 읽음. Android 11+는 targetSdk<30이면 V2 강제 없음
-        versionCode = 10007        // 6자리 빌드번호 = major*10000 + minor*100 + patch (1.0.7 → 표기 010007)
-        versionName = "1.0.7"      // 1.0.7: 앱 아이콘 B안(멀티디스플레이) + 캐시 여유공간 상향(작은보드 과점유 방지). 다음 WebView 개편 = 2.x.x
+        versionCode = 10109        // 6자리 = major*10000 + minor*100 + patch. 각 자리 0~9, patch 9 다음은 minor 올림
+        versionName = "1.1.9"      // 1.1.9: 대시보드 명령 su 문법 통일(RootUtil) — 재부팅/화면on·off/OTA설치/run_cmd 가 큐버 su(su 0)에서 안 먹던 것 수정. 1.1.8: 유휴감지 카운트다운. 1.1.4: queries+SYSTEM_ALERT_WINDOW. 1.1.0: 5555 persist. 다음 WebView 개편 = 2.x.x
 
         // 빌드 날짜를 BuildConfig에 자동 삽입 (관제 화면 버전 표시용)
         val buildDate = SimpleDateFormat("yyyy-MM-dd HH:mm").format(Date())

@@ -6,24 +6,23 @@ import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.graphics.PixelFormat
 import android.net.Uri
 import android.os.Build
+import android.os.CountDownTimer
+import android.provider.Settings
 import android.os.Bundle
+import android.view.Gravity
 import android.view.KeyEvent
 import android.view.MotionEvent
 import android.view.View
 import android.view.WindowManager
+import android.widget.TextView
 import android.widget.Toast
 import java.io.File
 import java.net.Inet4Address
 import java.net.NetworkInterface
 import androidx.appcompat.app.AppCompatActivity
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.Job
-import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.delay
-import kotlinx.coroutines.launch
 import com.signagepro.player.databinding.ActivityMainBinding
 import com.signagepro.player.engine.PlayerCoordinator
 import com.signagepro.player.render.MediaRenderer
@@ -35,8 +34,9 @@ class MainActivity : AppCompatActivity() {
 
     private var lastHotspotClickTime = 0L
 
-    private val autoReturnScope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
-    private var autoReturnJob: Job? = null
+    private var autoReturnTimer: CountDownTimer? = null
+    private var idleTimer: CountDownTimer? = null
+    private var countdownOverlay: TextView? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -55,7 +55,7 @@ class MainActivity : AppCompatActivity() {
 
     // ── 관리자 진입 핫스팟 ──────────────────────────────────────────────────
     /**
-     * 우상단 투명 영역(80×80dp)을 [DOUBLE_CLICK_INTERVAL_MS] 이내로 2회 클릭하면 관리자 메뉴.
+     * 좌상단 투명 영역(80×80dp)을 [DOUBLE_CLICK_INTERVAL_MS] 이내로 2회 클릭하면 관리자 메뉴.
      * 마우스 클릭 / 터치 모두 동작.
      */
     private fun setupAdminHotspot() {
@@ -85,7 +85,7 @@ class MainActivity : AppCompatActivity() {
                 "⚙️  설정 변경",
                 "📋  기기 정보",
                 "🔄  앱 재시작",
-                "🏠  런처로 나가기",
+                "📱  안드로이드 설정",
                 "✕  취소"
             )) { _, which ->
                 when (which) {
@@ -115,12 +115,17 @@ class MainActivity : AppCompatActivity() {
             .show()
     }
 
+    /**
+     * 안드로이드 설정 앱을 연다(개발자옵션·무선디버깅·앱관리 등 현장 접근용).
+     * ⚠️ 기본 홈(SignagePro)은 절대 바꾸지 않는다 — 홈 설정을 열면 사용자가 런처를 바꿔
+     * 키오스크 자동복귀가 깨진다. 설정에서 작업 후 홈 버튼만 누르면 SignagePro 로 복귀.
+     */
     private fun goToLauncher() {
-        val home = Intent(Intent.ACTION_MAIN).apply {
-            addCategory(Intent.CATEGORY_HOME)
-            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        try {
+            startActivity(Intent(Settings.ACTION_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+        } catch (_: Exception) {
+            Toast.makeText(this, "설정을 열 수 없습니다", Toast.LENGTH_SHORT).show()
         }
-        startActivity(home)
     }
 
     /** USB 스토리지 목록 → 파일 탐색 → APK 설치 */
@@ -271,6 +276,29 @@ class MainActivity : AppCompatActivity() {
         return super.onKeyDown(keyCode, event)
     }
 
+    /**
+     * 뒤로가기(리모컨 BACK / 마우스 우클릭) → 바탕화면(런처)으로 이동.
+     * SignagePro 가 기본 홈이라 뒤로가기가 그냥 무시되므로 런처를 명시적으로 띄운다.
+     * 이후 [onStop] 이 [AUTO_RETURN_MS](30초) 타이머를 걸어 자동으로 플레이어가 복귀한다.
+     * → 관리자는 잠깐 바탕화면에서 작업, 방치되면 콘텐츠로 자동 복귀(무인 안전).
+     */
+    @Suppress("DEPRECATION")
+    override fun onBackPressed() {
+        if (coordinator != null) {
+            // launcher3 는 LAUNCHER 아이콘이 없고 HOME 카테고리만 있으므로
+            // getLaunchIntentForPackage 로는 못 얻는다 → MAIN+HOME+setPackage 로 명시 실행.
+            try {
+                startActivity(Intent(Intent.ACTION_MAIN).apply {
+                    addCategory(Intent.CATEGORY_HOME)
+                    setPackage("com.android.launcher3")
+                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                })
+                return
+            } catch (_: Exception) { /* 런처 없으면 아래 기본 동작 */ }
+        }
+        super.onBackPressed()
+    }
+
     // ── 기존 로직 ────────────────────────────────────────────────────────────
 
     private fun showSetup() {
@@ -372,26 +400,109 @@ class MainActivity : AppCompatActivity() {
 
     override fun onStop() {
         super.onStop()
-        if (coordinator != null) {
-            autoReturnJob?.cancel()
-            autoReturnJob = autoReturnScope.launch {
-                delay(AUTO_RETURN_MS)
-                startActivity(Intent(this@MainActivity, MainActivity::class.java).apply {
-                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)
-                })
-            }
-        }
+        // 키오스크 중 바탕화면(런처)으로 나가면 카운트다운 오버레이 표시 → 0초에 자동 복귀.
+        if (coordinator != null) startAutoReturnCountdown()
     }
 
     override fun onStart() {
         super.onStart()
-        autoReturnJob?.cancel()
+        cancelAutoReturn()
     }
 
     override fun onDestroy() {
-        autoReturnJob?.cancel()
+        cancelAutoReturn()
         coordinator?.stop()
         super.onDestroy()
+    }
+
+    /**
+     * 바탕화면(런처/설정)으로 나갔을 때 자동 복귀.
+     * - 유휴(무조작)면 [AUTO_RETURN_MS](30초) 카운트다운 오버레이를 표시하고 0초에 복귀.
+     * - 사용자가 조작하면(오버레이 밖 터치=ACTION_OUTSIDE) 카운트 취소·오버레이 숨김,
+     *   [IDLE_BEFORE_COUNTDOWN_MS](2.5초) 무조작 후 다시 카운트 시작.
+     *   → 설정 등을 만지는 동안엔 튀어나오지 않고, 손을 떼면 곧 복귀 카운트가 재개된다.
+     * SYSTEM_ALERT_WINDOW 권한이 있어야 오버레이 + 백그라운드 액티비티 시작이 동작한다.
+     */
+    private fun startAutoReturnCountdown() {
+        cancelAutoReturn()
+        val overlay = TextView(this).apply {
+            setBackgroundColor(0xCC000000.toInt())
+            setTextColor(0xFFFFFFFF.toInt())
+            textSize = 18f
+            gravity = Gravity.CENTER
+            setPadding(48, 28, 48, 28)
+            visibility = View.GONE
+            setOnTouchListener { _, e ->
+                if (e.action == MotionEvent.ACTION_OUTSIDE || e.action == MotionEvent.ACTION_DOWN) {
+                    onUserActivity()
+                }
+                false
+            }
+        }
+        val type = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O)
+            WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
+        else @Suppress("DEPRECATION") WindowManager.LayoutParams.TYPE_SYSTEM_ALERT
+        val lp = WindowManager.LayoutParams(
+            WindowManager.LayoutParams.WRAP_CONTENT,
+            WindowManager.LayoutParams.WRAP_CONTENT,
+            type,
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
+                WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or
+                WindowManager.LayoutParams.FLAG_WATCH_OUTSIDE_TOUCH,
+            PixelFormat.TRANSLUCENT
+        ).apply { gravity = Gravity.CENTER }
+
+        // Activity 가 stop 중이면 Activity WindowManager 는 토큰 문제로 실패 → applicationContext 사용.
+        val wm = applicationContext.getSystemService(WINDOW_SERVICE) as WindowManager
+        try {
+            wm.addView(overlay, lp)
+            countdownOverlay = overlay
+        } catch (e: Exception) {
+            android.util.Log.w("AutoReturn", "오버레이 표시 실패: ${e.message}")
+        }
+
+        startCountdown()  // 나가자마자(무조작) 카운트 시작
+    }
+
+    /** 사용자 조작 감지 → 카운트 중단·오버레이 숨김 후 2.5초 무조작 시 재개. */
+    private fun onUserActivity() {
+        autoReturnTimer?.cancel(); autoReturnTimer = null
+        countdownOverlay?.apply { text = ""; visibility = View.GONE }
+        idleTimer?.cancel()
+        idleTimer = object : CountDownTimer(IDLE_BEFORE_COUNTDOWN_MS, IDLE_BEFORE_COUNTDOWN_MS) {
+            override fun onTick(msLeft: Long) {}
+            override fun onFinish() { startCountdown() }
+        }.start()
+    }
+
+    /** 30초 복귀 카운트다운 시작(오버레이 표시). */
+    private fun startCountdown() {
+        autoReturnTimer?.cancel()
+        countdownOverlay?.visibility = View.VISIBLE
+        autoReturnTimer = object : CountDownTimer(AUTO_RETURN_MS, 1000L) {
+            override fun onTick(msLeft: Long) {
+                countdownOverlay?.text = "${msLeft / 1000 + 1}초 후 콘텐츠로 돌아갑니다"
+            }
+            override fun onFinish() {
+                cancelAutoReturn()
+                startActivity(Intent(this@MainActivity, MainActivity::class.java).apply {
+                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)
+                })
+            }
+        }.start()
+    }
+
+    private fun cancelAutoReturn() {
+        autoReturnTimer?.cancel(); autoReturnTimer = null
+        idleTimer?.cancel(); idleTimer = null
+        removeCountdownOverlay()
+    }
+
+    private fun removeCountdownOverlay() {
+        countdownOverlay?.let {
+            try { (applicationContext.getSystemService(WINDOW_SERVICE) as WindowManager).removeView(it) } catch (_: Exception) {}
+        }
+        countdownOverlay = null
     }
 
     override fun onWindowFocusChanged(hasFocus: Boolean) {
@@ -426,5 +537,6 @@ class MainActivity : AppCompatActivity() {
         private const val DOUBLE_CLICK_INTERVAL_MS = 600L
         /** 키오스크 이탈 후 자동 복귀 대기 시간 (ms) */
         private const val AUTO_RETURN_MS = 30_000L
+        private const val IDLE_BEFORE_COUNTDOWN_MS = 2_500L  // 조작 후 이만큼 무조작이면 카운트 재개
     }
 }

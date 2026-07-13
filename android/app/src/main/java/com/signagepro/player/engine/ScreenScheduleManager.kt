@@ -5,6 +5,7 @@ import android.content.ComponentName
 import android.content.Context
 import android.os.PowerManager
 import android.util.Log
+import com.signagepro.player.RootUtil
 import com.signagepro.player.SignageDeviceAdmin
 import com.signagepro.player.api.ScheduleDto
 import kotlinx.coroutines.CoroutineScope
@@ -138,9 +139,8 @@ class ScreenScheduleManager(private val context: Context) {
 
         if (!success) {
             try {
-                Log.i(TAG, "su -c input keyevent 224 쉘 명령어 호출")
-                Runtime.getRuntime().exec(arrayOf("su", "-c", "input keyevent 224"))
-                success = true
+                Log.i(TAG, "su input keyevent 224(화면 켜기) 호출")
+                success = RootUtil.runAsRoot("input keyevent 224")
             } catch (e: Exception) {
                 Log.e(TAG, "su screen on 쉘 실행 실패: ${e.message}")
             }
@@ -167,9 +167,8 @@ class ScreenScheduleManager(private val context: Context) {
 
         if (!success) {
             try {
-                Log.i(TAG, "su -c input keyevent 223 쉘 명령어 호출")
-                Runtime.getRuntime().exec(arrayOf("su", "-c", "input keyevent 223"))
-                success = true
+                Log.i(TAG, "su input keyevent 223(화면 끄기) 호출")
+                success = RootUtil.runAsRoot("input keyevent 223")
             } catch (e: Exception) {
                 Log.e(TAG, "su screen off 쉘 실행 실패: ${e.message}")
             }
