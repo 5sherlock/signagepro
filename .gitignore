@@ -86,3 +86,8 @@ rk3566.txt
 
 # 샘플 미디어 (대용량 mp4/png, 제품 소스 아님)
 sample_media/
+# 부트애니 생성물(38MB zip / 6MB bmp) — 저장소 비대화 방지.
+#   zip: 전역 *.zip 규칙에 이미 걸림. build_bootanim.py + source_*.mp4 로 재생성.
+#   bmp: 애니 첫 프레임(part0/0000.png)을 1920x1080 24bit BMP 로 뽑은 것.
+# ※ OEM_backup_*.zip 은 공장 기본 부트애니 백업(재생성 불가) → git add -f 로 커밋함.
+branding/bootanimation/custom_logo.bmp
