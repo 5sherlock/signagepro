@@ -76,6 +76,11 @@ server/update/deploy-meta.json
 .claude/
 cloudflareTokenKey.md
 
+# 서버 접속 정보·계정·인프라 인벤토리 포함 → 공개 저장소에 올리지 않음
+사이니지프로_사용자_매뉴얼.md
+인수인계.md
+개발_인수인계.md
+
 # 하드웨어 참고자료 (제품 소스 아님)
 rk3566.txt
 

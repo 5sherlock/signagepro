@@ -1,12 +1,20 @@
-# 셋톱박스(dev-204) 루팅 작업 핸드오프 (→ Gemini)
+# 셋톱박스(dev-204) 루팅 작업 핸드오프
 
-> 작성: 2026-06-13. Claude가 진행하던 작업을 Gemini가 이어받기 위한 자체 완결 문서.
-> 이 문서만 읽고 바로 이어서 진행 가능하도록 작성함. 작업 환경은 Windows + PowerShell/Git Bash.
+> 작성: 2026-06-13. **갱신: 2026-07-02 — ✅ 루팅 완료(작업 종료). 아래는 완료 기록 + 향후 신규 RK356x 보드 루팅 참고용.**
+> 작업 환경: Windows + PowerShell/Git Bash.
 
 ---
 
-## 0. 한 줄 요약
-**dev-204 (Android 11, LAN IP `172.30.1.19`) 를 루팅**해서, 앞으로 구매할 **루팅된 신규 기기들과 동일한 개발 환경**을 만드는 것이 목표. 현재 **USB로 기기가 PC에 인식되지 않아** 막힌 상태(포트 변경 시도 중).
+## 0. 한 줄 요약 (2026-07-02 실측)
+**dev-204 루팅 완료.** 목표였던 "신규 기기와 동일한 루팅 개발 환경"이 갖춰졌습니다.
+
+- **기기 확정**: Ultracube **U4X CM V2**, SoC **RK356x(RK3566)**, Android 11.
+- **root 작동 확인**: `/system/bin/su` 존재, `su -c id` → `uid=0(root)`. (`ro.debuggable=1`)
+- **영구 ADB TCP 5555 활성** (재부팅 유지). SignagePro **1.0.7**(versionCode 10007) 설치.
+- **Tailscale 노드**: `100.75.80.108` (`com.tailscale.ipn`). 접속: `adb connect 100.75.80.108:5555`.
+- 2026-06-13의 "USB 미인식으로 막힘"은 **해소됨**(현재 네트워크 ADB로 접속). 원래 LAN IP `172.30.1.19` → 지금은 Tailscale로 접속.
+
+> 이후 이 문서는 **완료 기록**이자, **새 RK356x 보드가 비루팅으로 입고될 경우의 루팅 절차 참고서**로 사용하세요. (신규 기기는 가급적 루팅 상태로 구매)
 
 ---
 
@@ -23,24 +31,22 @@
 ---
 
 ## 2. 대상 기기 현황
-| 기기 | OS | SoC | LAN IP | 상태 | 처리 방침 |
-|------|----|----|--------|------|-----------|
-| dev-201 | Android 5.1.1 | RK3229 | (미상) | 오프라인 | 사용자가 USB로 0.4.29 설치 |
-| dev-202 | Android 5.1.1 | RK3229 | (미상) | 오프라인 | 동일 |
-| dev-203 | Android 5.1.1 | RK3229 | (미상) | 오프라인 | 동일 |
-| **dev-204** | **Android 11** | **미상(확인 필요)** | **172.30.1.19** | 오프라인 | **루팅 대상 ← 이 작업** |
+| 기기 | OS | SoC | 접속 | 상태 | 결과 |
+|------|----|----|------|------|------|
+| dev-201 | Android 5.1.1 | RK3229 | — | — | 5.1.1 구형(비루팅 대안: 무선디버깅/ZeroTier) |
+| dev-202 | Android 5.1.1 | RK3229 | — | — | 동일 |
+| dev-203 | Android 5.1.1 | RK3229 | — | — | 동일 |
+| **dev-204** | **Android 11** | **RK356x (Ultracube U4X CM V2)** | **Tailscale `100.75.80.108:5555`** | 온라인 | **✅ 루팅 완료 · ADB TCP 상시 · 1.0.7 · Tailscale** |
 
-- 204는 LAN ping 응답 OK. 단 **ADB TCP(5555) 꺼져 있음**(`adb connect 172.30.1.19:5555` → 연결 거부 10061).
-- 204의 정확한 SoC/모델은 **아직 확인 못 함**(ADB 접속이 안 돼서).
+- 2026-07-02 실측: `adb connect 100.75.80.108:5555` → `device product:rk356x_box model:Ultracube_U4X_CM_V2`.
+- root 확인: `su -c id` → `uid=0(root)`. `service.adb.tcp.port=5555`, `ro.debuggable=1`, `release-keys`.
 
 ---
 
-## 3. 지금까지 진행 / 막힌 지점
-- `adb devices` 에 204가 **안 잡힘**. `adb kill-server && adb start-server` 후에도 동일.
-- Windows USB 장치 스캔 결과: **안드로이드 기기 VID 없음.** 보이는 건 Logitech 키보드/마우스(VID `0x046D`)와 ASMedia USB 허브(VID `0x174C`)뿐.
-  - 안드로이드 제조사 VID 참고: Rockchip `0x2207`, Amlogic `0x1b8e`, Google `0x18d1`, Allwinner `0x1f3a`.
-- **추정 원인**: TV박스의 USB-A 포트는 보통 **호스트 포트**(USB 메모리용)라 PC에 기기로 안 붙음. **OTG/device 포트**(별도 micro-USB/USB-C, 또는 "OTG" 표시 포트)로 연결해야 함. 또는 데이터 케이블이 아닐 수 있음.
-- **사용자가 현재 "셋톱 USB 포트를 바꿔보는 중".** → 다시 연결되면 아래 4번 진단부터 진행.
+## 3. 진행 경과 (해결됨)
+- **2026-06-13 막힘**: USB 미인식(TV박스 USB-A가 호스트 포트) → `adb devices` 에 안 잡힘. → **해소됨**(네트워크/Tailscale ADB로 접속 확립).
+- **루팅 달성**: `/system/bin/su` 존재 + `su -c id` uid=0. 4번 판정 기준의 "이미 root"에 해당 → 5번 플래싱 불필요.
+- **6번(영구 ADB·앱·Tailscale) 전부 완료** 상태(0.5절 요약 참고).
 
 **사용 ADB 경로**: `D:\WorkSpace\signagepro\server\bin\adb.exe` (버전 1.0.41). 또는 시스템 `adb`.
 
@@ -99,7 +105,9 @@ $adb = "D:\WorkSpace\signagepro\server\bin\adb.exe"
 
 ---
 
-## 6. 루팅 성공(또는 이미 root) 후 할 일
+## 6. 루팅 성공(또는 이미 root) 후 할 일  — ✅ dev-204는 전부 완료
+> dev-204 기준 아래 6-1~6-3 모두 적용 완료. 절차는 **신규 RK356x 보드** 세팅 시 참고용으로 남겨둠. (신규 보드는 버전을 최신으로 대체 — 현재 플릿 기준 **1.0.7**)
+
 ### 6-1. 영구 ADB TCP 활성화 (재부팅 유지)
 ```powershell
 & $adb shell "su -c 'setprop service.adb.tcp.port 5555; stop adbd; start adbd'"
@@ -109,8 +117,9 @@ $adb = "D:\WorkSpace\signagepro\server\bin\adb.exe"
 - 앱의 `BootReceiver`/`PlayerApp`이 부팅마다 이걸 자동 수행하므로, root만 되면 **재부팅 후에도 자동 유지**됨.
 - 이후 네트워크 ADB: `adb connect 172.30.1.19:5555`
 
-### 6-2. SignagePro 앱 최신(0.4.29) 설치
-- APK: `D:\WorkSpace\signagepro\android\app\build\outputs\apk\debug\app-debug.apk` (versionCode 29, versionName 0.4.29, 이미 빌드됨)
+### 6-2. SignagePro 앱 설치 (현재 dev-204 = 1.0.7 / versionCode 10007)
+> ⚠️ 아래 0.4.29 경로·버전은 2026-06-13 당시 값. 현재 플릿은 **1.0.7**. 신규 설치 시 최신 릴리스 APK 사용.
+- (구) APK: `D:\WorkSpace\signagepro\android\app\build\outputs\apk\debug\app-debug.apk` (versionCode 29, versionName 0.4.29)
 ```powershell
 & $adb connect 172.30.1.19:5555
 & $adb -s 172.30.1.19:5555 install -r "D:\WorkSpace\signagepro\android\app\build\outputs\apk\debug\app-debug.apk"
@@ -141,11 +150,14 @@ $adb = "D:\WorkSpace\signagepro\server\bin\adb.exe"
 
 ---
 
-## 9. Gemini가 바로 할 일 (요약)
-1. 사용자가 USB 포트 변경/재연결 → `adb devices` 로 204 인식 확인.
-2. 인식되면 **4번 진단** 실행 → SoC/모델/root 여부 판정.
-3. 이미 root거나 `adb root` 되면 → **6번**(영구 ADB + 0.4.29 + Tailscale)으로 바로 진행.
-4. 비루팅 확정이면 → **4번에서 얻은 SoC 기준으로 5번 루팅 경로**를 구체화(그 기기 펌웨어/도구 안내). 플래싱은 사용자 물리 작업 + 신중히.
-5. USB가 끝내 안 잡히면(호스트 포트뿐) → OTG/device 포트 탐색 또는 박스 모델 확인 후 벤더 플래싱 도구(RKDevTool/Amlogic) 경로로 전환.
+## 9. 상태 (완료)
+dev-204 루팅 작업은 **종료**되었습니다. 남은 To-Do 없음.
+- ✅ 기기 인식(Tailscale ADB) · SoC/모델 확정(RK356x / Ultracube U4X CM V2)
+- ✅ root 확인(su, uid=0) — 플래싱 불필요였음
+- ✅ 영구 ADB TCP 5555 · SignagePro 1.0.7 · Tailscale(`100.75.80.108`)
 
-**핵심: SoC 확인 전에는 플래싱 명령 실행 금지(벽돌 위험).**
+### 향후 신규 RK356x 보드 입고 시
+1. `adb connect <IP>:5555` (또는 USB) → **4번 진단**으로 root 여부 판정.
+2. 이미 root면 → **6번**(영구 ADB + 최신 APK + Tailscale)만 적용.
+3. 비루팅이면 → **5번** 절차(RK356x는 RKDevTool + 패치 boot.img). **SoC 확인 전 플래싱 금지(벽돌 위험).**
+4. 가능하면 **루팅 상태로 구매**해 5번 자체를 생략.
