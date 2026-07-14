@@ -498,6 +498,8 @@ export default function TickerManager({ token, selectedStoreId: propStoreId, sto
                 <TickerWallPreview
                   ticker={ticker}
                   deviceLabels={orderedDevices.map(d => d.name || d.id)}
+                  deviceIds={orderedDevices.map(d => d.id)}
+                  groupId={selectedGroup.id}
                 />
               </div>
             )}

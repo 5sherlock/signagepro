@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { tickerLocalX, SCREEN_W, SCREEN_H } from '../lib/tickerLayout';
+import DevicePreview from './DevicePreview';
 
 // 그룹의 N개 화면을 이음새 없이 가로로 붙여 렌더하는 비디오월 동기 자막 미리보기.
 // 물리 모니터 4대 없이도 한 화면에서 자막이 화면 경계를 넘어 연속으로 흐르는지 검증할 수 있다.
@@ -22,7 +23,7 @@ function hexToRgba(hex, alpha) {
   return `rgba(${r},${g},${b},${alpha})`;
 }
 
-export default function TickerWallPreview({ ticker, deviceLabels = [], cycleMs = 0 }) {
+export default function TickerWallPreview({ ticker, deviceLabels = [], deviceIds = [], groupId = null, cycleMs = 0 }) {
   const N = Math.max(1, deviceLabels.length || 1);
   const wrapRef = useRef(null);
   const [now, setNow] = useState(() => Date.now());
@@ -71,11 +72,19 @@ export default function TickerWallPreview({ ticker, deviceLabels = [], cycleMs =
             flex: '0 0 auto', overflow: 'hidden',
             borderRight: idx < N - 1 ? '1px dashed rgba(96,165,250,0.5)' : 'none',
           }}>
+            {/* 배경 = 실제 송출화면. DevicePreview 가 그룹 플레이리스트를 NTP 시각 기준으로
+                재현하므로 기기가 지금 틀고 있는 것과 같은 슬라이드가 깔린다.
+                자막만 검은 배경 위에 흐르면 실제 화면에서 어떻게 보일지 검증이 안 된다. */}
+            {groupId && deviceIds[idx] ? (
+              <div style={{ position: 'absolute', inset: 0, zIndex: 0 }}>
+                <DevicePreview groupId={groupId} deviceId={deviceIds[idx]} pcAudio={false} />
+              </div>
+            ) : null}
             <div style={{ position: 'absolute', top: 3, left: 5, fontSize: 10, color: '#60a5fa', zIndex: 2, fontWeight: 700, pointerEvents: 'none' }}>
               {deviceLabels[idx] || `#${idx}`}
             </div>
             {ticker.text ? (
-              <div style={{ position: 'absolute', left: 0, right: 0, top: barTop, height: barH, background: bg, overflow: 'hidden' }}>
+              <div style={{ position: 'absolute', left: 0, right: 0, top: barTop, height: barH, background: bg, overflow: 'hidden', zIndex: 1 }}>
                 <span style={{
                   position: 'absolute', whiteSpace: 'nowrap', left: 0, top: '50%',
                   transform: `translate(${localX}px, -50%)`,
