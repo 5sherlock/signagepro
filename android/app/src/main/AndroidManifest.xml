@@ -14,6 +14,10 @@
     <uses-permission android:name="android.permission.WAKE_LOCK" />
     <!-- 백그라운드에서 액티비티 시작 허용(auto-return: 바탕화면 방치 시 콘텐츠 자동복귀) -->
     <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
+    <!-- 자동복귀용. SignagePro 가 HOME 액티비티라 launcher3 뒤에서도 visible=true 로 남고,
+         그러면 startActivity(HOME 인텐트) 를 시스템이 "이미 보임"으로 보고 태스크를 앞으로
+         당기지 않는다(START 로그는 찍히는데 화면은 그대로). 태스크를 명시적으로 끌어올려야 함. -->
+    <uses-permission android:name="android.permission.REORDER_TASKS" />
     <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" />
     <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" />
     <!-- ADB install(무인 OTA)로 설치하므로 ROM 설치 차단 우회됨. 부팅 자동 시작 재활성화. -->
