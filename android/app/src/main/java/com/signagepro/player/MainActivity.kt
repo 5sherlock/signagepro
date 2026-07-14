@@ -372,12 +372,35 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    /**
+     * Device Owner면 상태바를 끈다 → 내부적으로 `DISABLE_NOTIFICATION_ALERTS` 가 걸려
+     * **헤드업 알림(송출 화면 위에 뜨는 배너)이 억제**된다.
+     *
+     * 필요한 이유: OTA 는 Device Owner 권한의 PackageInstaller 무음 설치를 쓰는데
+     * (PlayerCoordinator.installViaPackageInstaller), 안드로이드는 DO 가 앱을 설치/갱신하면
+     * "관리자에 의해 업데이트되었습니다" 알림을 **무조건** 띄운다. SessionParams 로 끌 수 없어
+     * 앱 쪽에서 막을 방법이 없다 → 알림을 못 뜨게 하는 쪽으로 처리한다.
+     * 알림창을 못 내리게 되는 부수효과는 무인 키오스크엔 오히려 이득.
+     */
+    private fun enforceStatusBarDisabled() {
+        if (Build.VERSION.SDK_INT < 23) return
+        val dpm = getSystemService(Context.DEVICE_POLICY_SERVICE) as DevicePolicyManager
+        if (!dpm.isDeviceOwnerApp(packageName)) return
+        try {
+            dpm.setStatusBarDisabled(ComponentName(this, SignageDeviceAdmin::class.java), true)
+            android.util.Log.i("MainActivity", "상태바·알림 배너 비활성화 (Device Owner)")
+        } catch (e: Exception) {
+            android.util.Log.w("MainActivity", "상태바 비활성화 실패: ${e.message}")
+        }
+    }
+
     private fun startKiosk() {
         binding.setupContainer.visibility = View.GONE
         binding.kioskContainer.visibility = View.VISIBLE
         applyImmersiveMode()
         requestDeviceAdminIfNeeded()
         enforceTailscaleAlwaysOn()
+        enforceStatusBarDisabled()
 
         val renderer = MediaRenderer(this, binding.layerA, binding.layerB)
         coordinator = PlayerCoordinator(
