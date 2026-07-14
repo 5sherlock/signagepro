@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useRef, useCallback, Fragment } from 'react';
 import { Activity, Monitor, Film, Settings, LayoutGrid, Plus, Subtitles, Video } from 'lucide-react';
 import TickerManager from './components/TickerManager';
 import { io } from 'socket.io-client';
@@ -1286,6 +1286,8 @@ function App() {
   // PC 스피커로 듣기 — deviceId Set (체크된 기기만 음소거 해제)
   const [pcAudioSet, setPcAudioSet] = useState(new Set());
   const [selectedStoreId, setSelectedStoreId] = useState(() => localStorage.getItem('SIGNAGE_MONITOR_STORE') || ''); // 마지막 선택 사업장 복원(새로고침 시 깜빡임 방지)
+  // 구역(그룹) 필터 — 한 사업장에 구역이 여러 개면(매장/제조바) 한 구역만 보고 싶을 때.
+  const [selectedZoneId, setSelectedZoneId] = useState(() => localStorage.getItem('SIGNAGE_MONITOR_ZONE') || 'all');
   const [storesLoaded, setStoresLoaded] = useState(false); // 사업장 목록 로드 완료 — 로드 전 전체-혼합 표시 방지
   const [pendingSched, setPendingSched] = useState({ count: 0, groupCount: 0, nextByGroup: {} }); // 콘텐츠 교체 예약 — 사이드바 배지/관제 카드용
   const [schedHover, setSchedHover] = useState(null); // 교체예정 배지 호버한 deviceId (교체될 그림 팝업)
@@ -1381,6 +1383,8 @@ function App() {
   useEffect(() => {
     if (selectedStoreId && selectedStoreId !== 'all') localStorage.setItem('SIGNAGE_MONITOR_STORE', selectedStoreId);
   }, [selectedStoreId]);
+
+  useEffect(() => { localStorage.setItem('SIGNAGE_MONITOR_ZONE', selectedZoneId); }, [selectedZoneId]);
 
   useEffect(() => {
     const checkServer = () => {
@@ -1544,11 +1548,26 @@ function App() {
     return () => { alive = false; clearInterval(id); };
   }, [selectedStoreId]);
 
+  // 현재 사업장에 존재하는 구역(그룹) 목록 — 구역 셀렉트 옵션용.
+  const zonesInStore = (() => {
+    const seen = new Map();
+    devices.forEach(d => {
+      if (!d.groupId) return;
+      if (selectedStoreId !== 'all' && selectedStoreId !== 'unassigned' && d.storeId !== selectedStoreId) return;
+      if (!seen.has(d.groupId)) seen.set(d.groupId, d.group?.name || d.groupId);
+    });
+    return [...seen].map(([id, name]) => ({ id, name }));
+  })();
+  // 사업장을 바꾸면 localStorage 에 남은 구역 ID 가 그 사업장에 없을 수 있다.
+  // 그대로 필터에 쓰면 기기가 하나도 안 보인다 → 유효하지 않으면 '전체'로 폴백.
+  const effectiveZoneId = zonesInStore.some(z => z.id === selectedZoneId) ? selectedZoneId : 'all';
+
   const filteredDevices = (() => {
     const base = devices.filter(d => {
       if (!d.groupId) return false;
       // 'all'(사용자가 명시적으로 전체 선택)일 때만 전체. ''(로드 전 과도기)는 아무것도
       // 매칭 안 함 — 대신 렌더에서 storesLoaded 가드로 "불러오는 중"을 보여줘 전체-혼합 깜빡임을 막는다.
+      if (effectiveZoneId !== 'all' && d.groupId !== effectiveZoneId) return false;
       if (selectedStoreId === 'all') return true;
       if (selectedStoreId === 'unassigned') return !d.storeId;
       return d.storeId === selectedStoreId;
@@ -1556,11 +1575,16 @@ function App() {
     // 그룹별 저장된 순서 적용
     const orderMap = deviceOrder; // { [groupId]: [id, id, ...] }
     const orderedIds = Object.values(orderMap).flat();
-    if (orderedIds.length === 0) return base;
-    return [
+    const ordered = orderedIds.length === 0 ? base : [
       ...orderedIds.map(id => base.find(d => d.id === id)).filter(Boolean),
       ...base.filter(d => !orderedIds.includes(d.id)),
     ];
+    // 구역(그룹)별로 묶는다. 한 사업장에 그룹이 여러 개면(예: 매장 + 제조바) order 값이
+    // 그룹마다 0부터 다시 매겨져 섞여 보인다 — 관제에서 어느 구역인지 분간이 안 된다.
+    // 그룹 등장 순서를 유지한 채 같은 그룹끼리 모아준다(그룹 내 순서는 그대로).
+    const zoneSeq = [];
+    ordered.forEach(d => { if (!zoneSeq.includes(d.groupId)) zoneSeq.push(d.groupId); });
+    return zoneSeq.flatMap(gid => ordered.filter(d => d.groupId === gid));
   })();
 
   // 월 미리보기: 그룹 자막(mode==='group')이 켜진 그룹을 deviceIndex 순서로 N개 슬롯에 배치.
@@ -1695,6 +1719,23 @@ function App() {
                     <option key={s.id} value={s.id}>{s.name}</option>
                   ))}
                 </select>
+
+                {/* 구역(그룹) 선택 — 구역이 2개 이상일 때만 노출. 1개뿐이면 고를 게 없다. */}
+                {zonesInStore.length > 1 && (
+                  <>
+                    <span style={{ fontSize: '0.9rem', color: 'var(--text-secondary)', marginLeft: '12px' }}>구역:</span>
+                    <select
+                      value={effectiveZoneId}
+                      onChange={(e) => setSelectedZoneId(e.target.value)}
+                      className="glass-select"
+                    >
+                      <option value="all">전체</option>
+                      {zonesInStore.map(z => (
+                        <option key={z.id} value={z.id}>{z.name}</option>
+                      ))}
+                    </select>
+                  </>
+                )}
 
                 <span style={{ fontSize: '0.9rem', color: 'var(--text-secondary)', marginLeft: '12px' }}>그리드:</span>
                 <select
@@ -1847,8 +1888,28 @@ function App() {
                 } : {}}
               >
                 {filteredDevices.map((device, index) => (
+                  <Fragment key={device.id}>
+                  {/* 구역(그룹)이 바뀌는 지점에 헤더를 끼운다. grid-column: 1/-1 로 한 줄을 통째로
+                      차지하므로 그리드를 쪼개지 않고도 구역이 시각적으로 갈린다. */}
+                  {(index === 0 || filteredDevices[index - 1].groupId !== device.groupId) && (() => {
+                    const zone = filteredDevices.filter(d => d.groupId === device.groupId);
+                    const on = zone.filter(d => d.status === 'online').length;
+                    return (
+                      <div style={{
+                        gridColumn: '1 / -1', display: 'flex', alignItems: 'center', gap: 10,
+                        margin: index === 0 ? '0 0 4px' : '18px 0 4px',
+                        paddingBottom: 6, borderBottom: '1px solid rgba(148,163,184,0.18)',
+                      }}>
+                        <span style={{ fontSize: '0.95rem', fontWeight: 700, color: '#38bdf8' }}>
+                          {device.group?.name || '미배정'}
+                        </span>
+                        <span style={{ fontSize: '0.78rem', color: '#64748b' }}>
+                          {zone.length}대 · 온라인 {on}
+                        </span>
+                      </div>
+                    );
+                  })()}
                   <div
-                    key={device.id}
                     className="glass-card device-card animate-fade-in"
                     style={{ animationDelay: `${index * 0.1}s`, position: 'relative' }}
                   >
@@ -2419,6 +2480,7 @@ function App() {
                       </div>
                     </div>
                   </div>
+                  </Fragment>
                 ))}
               </div>
 
