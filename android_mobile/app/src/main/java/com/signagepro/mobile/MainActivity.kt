@@ -22,7 +22,7 @@ class MainActivity : AppCompatActivity() {
 
     companion object {
         // ─── 접속할 서버 주소 ───────────────────────────────────────────────────
-        private const val SERVER_URL = "http://121.189.102.108:3300/mobile"
+        private const val SERVER_URL = "https://jeju-osulloc.tailafea2d.ts.net/mobile"
         // ──────────────────────────────────────────────────────────────────────
     }
 

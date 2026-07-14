@@ -11,8 +11,8 @@ android {
         applicationId = "com.signagepro.mobile"
         minSdk = 22
         targetSdk = 34
-        versionCode = 1
-        versionName = "1.0.0"
+        versionCode = 10001       // 6자리 = major*10000 + minor*100 + patch (1.0.1 → 010001), STB 규칙과 동일
+        versionName = "1.0.1"
     }
 
     buildTypes {
