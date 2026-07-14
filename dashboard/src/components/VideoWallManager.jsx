@@ -87,6 +87,24 @@ const VideoWallManager = ({ stores = [], selectedStoreId, setSelectedStoreId }) 
   // 기기별 위상 오프셋(ms) — 잔여 시계 스큐를 화면별로 직접 상쇄. 세션 동안 설정값 추적.
   const [devices, setDevices] = useState([]);
   const [offsets, setOffsets] = useState({});
+  // 비디오월은 '한 벽 = 한 구역'이다. /api/devices 는 전 기기를 주므로 사업장·구역으로 좁히지 않으면
+  // 다른 매장/구역 기기가 같은 줄에 섞이고, 슬라이스가 엉뚱한 화면에 배포된다.
+  const [selectedZoneId, setSelectedZoneId] = useState('all');
+  const zonesInStore = (() => {
+    const seen = new Map();
+    devices.forEach((d) => {
+      if (!d.groupId) return;
+      if (selectedStoreId && d.storeId !== selectedStoreId) return;
+      if (!seen.has(d.groupId)) seen.set(d.groupId, d.group?.name || d.groupId);
+    });
+    return [...seen].map(([id, name]) => ({ id, name }));
+  })();
+  const effectiveZoneId = zonesInStore.some((z) => z.id === selectedZoneId) ? selectedZoneId : 'all';
+  const wallDevices = devices.filter((d) => {
+    if (selectedStoreId && d.storeId !== selectedStoreId) return false;
+    if (effectiveZoneId !== 'all' && d.groupId !== effectiveZoneId) return false;
+    return true;
+  });
 
   const fetchDevices = useCallback(async () => {
     try {
@@ -127,7 +145,7 @@ const VideoWallManager = ({ stores = [], selectedStoreId, setSelectedStoreId }) 
   // 서버가 측정한 기기별 시계 스큐(clockSkew)로 오프셋을 일괄 산출·적용 → 시작점 자동 정렬.
   // offset_i = skew_i - median(skew). 이후 화면 보며 미세조정.
   const autoAlign = async () => {
-    const withSkew = devices.filter((d) => Number.isFinite(d.clockSkew));
+    const withSkew = wallDevices.filter((d) => Number.isFinite(d.clockSkew));
     if (withSkew.length < 2) { alert('스큐 측정값이 부족합니다. (기기 2대 이상 + 하트비트 수신 필요)'); return; }
     const sorted = withSkew.map((d) => d.clockSkew).sort((a, b) => a - b);
     const ref = sorted[Math.floor(sorted.length / 2)]; // median
@@ -255,18 +273,18 @@ const VideoWallManager = ({ stores = [], selectedStoreId, setSelectedStoreId }) 
     }));
     setGroupUndo((prev) => ({ ...prev, ...Object.fromEntries(entries) }));
   }, []);
-  const groupIdsKey = [...new Set(devices.map((d) => d.groupId).filter(Boolean))].sort().join(',');
+  const groupIdsKey = [...new Set(wallDevices.map((d) => d.groupId).filter(Boolean))].sort().join(',');
   useEffect(() => { if (groupIdsKey) refreshGroupUndo(groupIdsKey.split(',')); }, [groupIdsKey, refreshGroupUndo]);
   // 세트가 배포/되돌리는 대상 그룹들 = 그 세트 칸에 배정된 기기들의 groupId
   const setGroupIds = (g) => {
     const ids = new Set();
-    effOrder(g).forEach((_, i) => { const dev = devices[i]; if (dev?.groupId) ids.add(dev.groupId); });
+    effOrder(g).forEach((_, i) => { const dev = wallDevices[i]; if (dev?.groupId) ids.add(dev.groupId); });
     return [...ids];
   };
   const [showOffset, setShowOffset] = useState(false); // 동기 미세조정(위상 오프셋) 모달
 
   // 칸 수 = max(기기 수, 슬라이스 수). 기기가 더 많으면 오른쪽이 빈 칸.
-  const rowCells = (g) => Math.max(devices.length, g.items.length);
+  const rowCells = (g) => Math.max(wallDevices.length, g.items.length);
   const buildDefaultOrder = (g) => {
     const arr = new Array(rowCells(g)).fill(null);
     g.items.forEach((s, i) => { arr[i] = s.id; });
@@ -325,7 +343,7 @@ const VideoWallManager = ({ stores = [], selectedStoreId, setSelectedStoreId }) 
     const order = effOrder(g);
     const pairs = []; const clearIds = [];
     order.forEach((sliceId, i) => {
-      const dev = devices[i];
+      const dev = wallDevices[i];
       if (!dev) return;
       if (sliceId) { const slice = g.items.find((s) => s.id === sliceId); if (slice) pairs.push({ deviceId: dev.id, slice, dev }); }
       else clearIds.push({ deviceId: dev.id, dev });
@@ -696,6 +714,12 @@ const VideoWallManager = ({ stores = [], selectedStoreId, setSelectedStoreId }) 
           <option value="">사업장 선택</option>
           {stores.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
         </select>
+        {zonesInStore.length > 1 && (
+          <select className="glass-select" style={{ marginLeft: 8 }} value={effectiveZoneId} onChange={(e) => setSelectedZoneId(e.target.value)}>
+            <option value="all">구역 전체</option>
+            {zonesInStore.map((z) => <option key={z.id} value={z.id}>{z.name}</option>)}
+          </select>
+        )}
         <div style={{ flex: 1 }} />
         <button
           onClick={openProc}
@@ -789,7 +813,7 @@ const VideoWallManager = ({ stores = [], selectedStoreId, setSelectedStoreId }) 
                       {order.map((sliceId, i) => {
                         const slice = sliceId ? g.items.find((s) => s.id === sliceId) : null;
                         const sUrl = slice ? ((slice.path || '').startsWith('http') ? slice.path : `${API}${slice.path}`) : null;
-                        const dev = devices[i];
+                        const dev = wallDevices[i];
                         return (
                           <div key={sliceId ?? `empty-${i}`}
                             draggable={!!slice}
