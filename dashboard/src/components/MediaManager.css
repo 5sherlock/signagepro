@@ -1400,20 +1400,29 @@
 .mm-lanes.compact {
   flex: 1;
   min-height: 0;
-  gap: 8px;
+  gap: 6px;
   padding: 8px;
+  overflow-y: auto;  /* 기기가 많아 다 안 들어가면 스크롤 — 잘라내지 않는다 */
 }
 .mm-lanes.compact .device-row-v4 {
-  flex: 1 1 0;       /* 기기 수와 무관하게 균등 분배 (4·5·6개 모두 한 화면) */
-  min-height: 0;
-  overflow: hidden;
-  padding: 6px 10px;
+  /* 남는 높이는 균등 분배하되(flex-grow:1) **내용보다 작아지지는 않는다**.
+     기존 `flex: 1 1 0; min-height: 0`은 기기 수가 늘면(5대~) 행 높이가 카드 내용보다
+     작아지고 카드 하단(전체 미리보기 버튼 · 표시 시간)이 잘려 겹쳐 보였다.
+
+     ⚠️ `overflow: hidden` 을 함께 두면 안 된다 — CSS 사양상 flex 아이템의
+     `min-height: auto`(내용 기반 최소 크기)는 **overflow 가 visible 이 아니면 0으로 강제**된다.
+     즉 overflow:hidden 이 min-height:auto 를 무력화해 다시 잘린다.
+     가로 넘침은 .device-timeline-v4 가 overflow-x:hidden + flex-wrap 으로 이미 처리한다. */
+  flex: 1 1 auto;
+  min-height: auto;
+  overflow: visible;
+  padding: 4px 10px;
 }
 .mm-lanes.compact .device-card-v4 {
   min-height: 0;
   width: 130px;
   min-width: 130px;
-  padding: 24px 10px 8px;
+  padding: 18px 10px 6px;
 }
 .mm-lanes.compact .device-full-preview-btn {
   margin-top: 8px;
@@ -1421,7 +1430,7 @@
   font-size: 0.62rem;
 }
 .mm-lanes.compact .media-card-thumb {
-  aspect-ratio: 16 / 10;
+  aspect-ratio: 16 / 9;
 }
 
 /* 카드 축소 */
@@ -1440,11 +1449,11 @@
   display: none;
 }
 .mm-lanes.compact .media-card-name {
-  padding: 3px 4px;
-  font-size: 0.6rem;
+  padding: 2px 4px;
+  font-size: 0.58rem;
 }
 .mm-lanes.compact .media-card-duration {
-  padding: 3px 4px;
+  padding: 2px 4px;
   gap: 3px;
 }
 .mm-lanes.compact .media-card-duration span {
