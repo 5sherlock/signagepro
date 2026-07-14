@@ -43,8 +43,16 @@ class NtpClient(
     // Tailscale 등 지터 큰 경로 대비 — 하트비트 ACK 오프셋을 슬라이딩 윈도로 모아
     // "최소 RTT 근방 샘플들의 중앙값"으로 커밋한다. 한 번 튄 RTT가 시계를 흔들지 않도록.
     // offset = epoch - elapsedRealtime (실시간이 양쪽 동일 속도라 ~일정한 값).
-    private data class AckSample(val offset: Long, val rtt: Long)
+    //
+    // src: 이 오프셋이 서버에서 왔는지 외부 NTP에서 왔는지. 두 출처의 시계가 어긋나 있으면
+    //      섞을 때 기기마다 혼합 비율이 달라져 오히려 기기 간 스큐가 생긴다 → 한 번에 한 출처만 쓴다.
+    // atElapsed: 샘플 수집 시각. 개수로만 만료시키면 서버가 죽어도 낡은 SERVER 샘플이
+    //      윈도에 영원히 남아 NTP 폴백으로 전환되지 않는다 → 나이로도 만료시킨다.
+    private data class AckSample(val offset: Long, val rtt: Long, val src: Source, val atElapsed: Long)
     private val ackSamples = ArrayDeque<AckSample>()
+
+    /** NTP 폴백 호출 간격 제한용 (pool.ntp.org 과다 호출 방지) */
+    @Volatile private var lastNtpAtElapsed: Long = 0L
 
     init {
         // 재부팅 후에도 마지막 동기값을 복원해 RTC 어긋남 구간을 최소화.
@@ -81,14 +89,38 @@ class NtpClient(
         false
     }
 
+    /**
+     * 외부 NTP 1왕복. 서버 burst와 동일하게 RTT/2 편도 보정 후 같은 필터에 주입한다.
+     * (보정 없이 commit하면 출처가 바뀔 때 수십 ms 점프가 생겨 비디오월이 튄다)
+     */
     private fun syncFromNtp(): Boolean {
         return try {
+            val t0 = SystemClock.elapsedRealtime()
             val epochMs = requestTime(host, timeoutMs)
-            commit(epochMs, Source.NTP)
+            val t1 = SystemClock.elapsedRealtime()
+            val rtt = t1 - t0
+            if (rtt !in 0..MAX_PLAUSIBLE_RTT_MS) return false
+            addSampleAndCommit(epochMs + rtt / 2 - t1, rtt, Source.NTP)
             true
         } catch (e: Exception) {
             false
         }
+    }
+
+    /**
+     * **서버 시각 동기 실패 시 폴백.** 서버가 끊기면 하트비트 ACK도 burst도 멈춰 시각 동기가
+     * 완전히 정지하고, 보드마다 크리스탈 오차로 자유주행(free-run) 하다 서로 벌어진다
+     * → 롤링/비디오월이 따로 논다. 외부 NTP로 계속 물려 기기 간 시계를 붙들어 둔다.
+     *
+     * 인터넷까지 끊긴 경우엔 이것도 실패하므로 드리프트를 막을 수 없다(그때는 네트워크를 고쳐야 함).
+     */
+    suspend fun burstSyncNtp(rounds: Int = NTP_BURST_ROUNDS): Boolean = withContext(Dispatchers.IO) {
+        val now = SystemClock.elapsedRealtime()
+        if (lastNtpAtElapsed != 0L && now - lastNtpAtElapsed < NTP_MIN_INTERVAL_MS) return@withContext false
+        lastNtpAtElapsed = now
+        var ok = false
+        repeat(rounds) { if (syncFromNtp()) ok = true }
+        ok
     }
 
     private fun syncFromServer(serverUrl: String): Boolean {
@@ -118,7 +150,7 @@ class NtpClient(
         if (rtt < 0 || rtt > MAX_PLAUSIBLE_RTT_MS) return   // 비정상/지연 샘플 폐기
         // offset = epoch - elapsed. RTT/2로 편도 보정한 현재 epoch에서 elapsed를 뺌.
         val offset = serverEpochMs + rtt / 2 - recvElapsed
-        addSampleAndCommit(offset, rtt)
+        addSampleAndCommit(offset, rtt, Source.SERVER)
     }
 
     /**
@@ -144,7 +176,7 @@ class NtpClient(
                 val rtt = t1 - t0
                 if (rtt in 0..MAX_PLAUSIBLE_RTT_MS) {
                     // offset = epoch - elapsed (RTT/2 편도보정한 recv 시점 epoch 기준)
-                    addSampleAndCommit(epochMs + rtt / 2 - t1, rtt)
+                    addSampleAndCommit(epochMs + rtt / 2 - t1, rtt, Source.SERVER)
                     ok = true
                 }
             } catch (e: Exception) { /* 개별 라운드 실패 무시 */ }
@@ -154,20 +186,35 @@ class NtpClient(
 
     /**
      * 오프셋 샘플을 슬라이딩 윈도에 넣고 '최소 RTT 근방' 샘플들의 중앙값으로 커밋.
-     * 하트비트 ACK와 burst가 공유 — 지연 적은(정확한) 샘플이 자연히 우세해 지터 억제.
+     * 하트비트 ACK · 서버 burst · NTP 폴백이 모두 공유 — 지연 적은(정확한) 샘플이 우세해 지터 억제.
+     *
+     * 출처 선택: **서버 샘플이 하나라도 살아있으면 서버만** 쓰고 NTP 샘플은 무시한다.
+     * 서버 시계와 NTP가 조금이라도 다를 때 둘을 섞으면 기기마다 혼합 비율이 달라져
+     * 기기 간 스큐가 생기기 때문 — 그건 이 폴백이 막으려는 문제 그 자체다.
+     * 서버가 죽어 SERVER 샘플이 전부 만료되면(SAMPLE_MAX_AGE_MS) 자연히 NTP로 넘어간다.
      */
-    private fun addSampleAndCommit(offset: Long, rtt: Long) {
+    private fun addSampleAndCommit(offset: Long, rtt: Long, src: Source) {
         val filtered: Long
+        val chosen: Source
         synchronized(ackSamples) {
-            ackSamples.addLast(AckSample(offset, rtt))
+            val nowElapsed = SystemClock.elapsedRealtime()
+            ackSamples.addLast(AckSample(offset, rtt, src, nowElapsed))
+            // 나이 만료 먼저 — 서버가 끊기면 SERVER 샘플이 빠져나가야 NTP로 전환된다.
+            while (ackSamples.isNotEmpty() &&
+                   nowElapsed - ackSamples.first().atElapsed > SAMPLE_MAX_AGE_MS) {
+                ackSamples.removeFirst()
+            }
             while (ackSamples.size > ACK_WINDOW) ackSamples.removeFirst()
-            val minRtt = ackSamples.minOf { it.rtt }
-            val good = ackSamples.filter { it.rtt <= minRtt + RTT_TOLERANCE_MS }
+
+            chosen = if (ackSamples.any { it.src == Source.SERVER }) Source.SERVER else Source.NTP
+            val pool = ackSamples.filter { it.src == chosen }
+            val minRtt = pool.minOf { it.rtt }
+            val good = pool.filter { it.rtt <= minRtt + RTT_TOLERANCE_MS }
                 .map { it.offset }.sorted()
             filtered = good[good.size / 2]
         }
         // now() == filtered + elapsedRealtime() 이 되도록 anchor 커밋.
-        commit(filtered + SystemClock.elapsedRealtime(), Source.SERVER)
+        commit(filtered + SystemClock.elapsedRealtime(), chosen)
     }
 
     /**
@@ -227,5 +274,10 @@ class NtpClient(
         private const val RTT_TOLERANCE_MS = 40L    // 최소 RTT + 이만큼 이내 샘플만 채택
         private const val MAX_PLAUSIBLE_RTT_MS = 5000L  // 이보다 큰 RTT는 폐기
         private const val BURST_ROUNDS = 12         // burstSync 1회당 빠른 왕복 횟수
+        // 샘플 나이 만료. 하트비트 10초 / burst 20초 주기라 서버가 살아있으면 항상 갱신된다.
+        // 서버가 끊기면 이 시간 뒤 SERVER 샘플이 비고 NTP 폴백이 인계받는다.
+        private const val SAMPLE_MAX_AGE_MS = 120_000L
+        private const val NTP_BURST_ROUNDS = 3      // NTP 폴백 1회당 왕복 횟수
+        private const val NTP_MIN_INTERVAL_MS = 60_000L  // pool.ntp.org 과다 호출 방지
     }
 }

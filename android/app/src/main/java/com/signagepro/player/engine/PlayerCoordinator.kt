@@ -258,8 +258,14 @@ class PlayerCoordinator(
     private fun startTimeSyncLoop(serverUrl: String) {
         scope.launch(Dispatchers.IO) {
             while (isActive) {
-                try { ntp.burstSync(serverUrl) }
-                catch (e: Exception) { Log.w(TAG, "burst 시각 동기 실패: ${e.message}") }
+                try {
+                    // 서버가 끊기면 하트비트 ACK도 burst도 멈춰 시각 동기가 완전히 정지하고,
+                    // 보드마다 자유주행하다 서로 벌어진다 → 롤링/비디오월이 따로 논다.
+                    // 외부 NTP로 폴백해 서버 없이도 기기 간 시계를 붙들어 둔다.
+                    if (!ntp.burstSync(serverUrl) && ntp.burstSyncNtp()) {
+                        Log.i(TAG, "서버 시각 동기 실패 → NTP 폴백 (${ntp.sourceLabel})")
+                    }
+                } catch (e: Exception) { Log.w(TAG, "burst 시각 동기 실패: ${e.message}") }
                 delay(BURST_REFRESH_MS)
             }
         }
