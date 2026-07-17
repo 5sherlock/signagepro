@@ -40,24 +40,42 @@ class SystemMetrics(private val context: Context) {
             .coerceIn(0f, 100f)
     } catch (_: Exception) { 0f }
 
-    fun cpuTemperature(): Float = try {
-        val paths = arrayOf(
-            "/sys/class/thermal/thermal_zone0/temp",
-            "/sys/class/thermal/thermal_zone1/temp",
-            "/sys/devices/virtual/thermal/thermal_zone0/temp",
-            "/sys/class/hwmon/hwmon0/temp1_input"
-        )
-        var temp = 0f
-        for (path in paths) {
-            val file = File(path)
-            if (file.exists()) {
-                val raw = file.readText().trim().toFloatOrNull() ?: continue
-                temp = if (raw > 1000) raw / 1000f else raw
-                if (temp in 10f..120f) break
-            }
+    fun cpuTemperature(): Float {
+        // Android 7+(API24): sysfs thermal이 SELinux(enforcing)로 untrusted_app에 막히는 기기(큐버 QR5G
+        // 등 Android 11)에선 이 경로가 유일하다. HardwarePropertiesManager는 Device Owner면 호출 가능.
+        // (크라이저 RK3229/Android 5.1은 API<24라 여기 안 들어가고 아래 sysfs 폴백으로 읽힌다)
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.N) {
+            try {
+                val hpm = context.getSystemService(Context.HARDWARE_PROPERTIES_SERVICE)
+                        as? android.os.HardwarePropertiesManager
+                val temps = hpm?.getDeviceTemperatures(
+                    android.os.HardwarePropertiesManager.DEVICE_TEMPERATURE_CPU,
+                    android.os.HardwarePropertiesManager.TEMPERATURE_CURRENT
+                )
+                val t = temps?.firstOrNull { it in 10f..120f }
+                if (t != null) return t
+            } catch (_: Throwable) { /* DO 아님/미지원 → sysfs 폴백 */ }
         }
-        temp
-    } catch (_: Exception) { 0f }
+        // 폴백: sysfs (permissive ROM — 크라이저 Android 5.1 등)
+        return try {
+            val paths = arrayOf(
+                "/sys/class/thermal/thermal_zone0/temp",
+                "/sys/class/thermal/thermal_zone1/temp",
+                "/sys/devices/virtual/thermal/thermal_zone0/temp",
+                "/sys/class/hwmon/hwmon0/temp1_input"
+            )
+            var temp = 0f
+            for (path in paths) {
+                val file = File(path)
+                if (file.exists()) {
+                    val raw = file.readText().trim().toFloatOrNull() ?: continue
+                    temp = if (raw > 1000) raw / 1000f else raw
+                    if (temp in 10f..120f) break
+                }
+            }
+            temp
+        } catch (_: Exception) { 0f }
+    }
 
     fun diskSpace(): Pair<Long, Long> = try {
         val stat = android.os.StatFs(context.filesDir.absolutePath)

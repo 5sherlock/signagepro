@@ -104,7 +104,7 @@ function TimeStepper({ value, onChange }) {
   );
 }
 
-function ScreenScheduleSection({ onUnauth, deviceOrder = {} }) {
+function ScreenScheduleSection({ onUnauth, deviceOrder = {}, selectedStoreId, selectedZoneId }) {
   const [schedules, setSchedules] = useState([]);
   const [devices, setDevices] = useState([]);
   const [stores, setStores] = useState([]);
@@ -181,6 +181,21 @@ function ScreenScheduleSection({ onUnauth, deviceOrder = {} }) {
 
 
   const activeDays = draft.days ? draft.days.split(',').map(Number) : [];
+
+  // 관제/미디어/동영상과 동일한 전역 사업장·구역으로 스케줄 목록을 좁힌다(구역=all이면 전체 그대로).
+  const visibleSchedules = schedules.filter(s => {
+    if (!s.deviceId) {
+      // 사업장/전체 단위 스케줄
+      if (!s.storeId) return true; // 전체
+      if (selectedStoreId && selectedStoreId !== 'all' && selectedStoreId !== 'unassigned' && s.storeId !== selectedStoreId) return false;
+      return true; // 사업장 단위는 구역 무관(사업장 전체 적용)
+    }
+    const dev = devices.find(d => d.id === s.deviceId);
+    if (!dev) return true;
+    if (selectedStoreId && selectedStoreId !== 'all' && selectedStoreId !== 'unassigned' && dev.storeId !== selectedStoreId) return false;
+    if (selectedZoneId && selectedZoneId !== 'all' && dev.groupId !== selectedZoneId) return false;
+    return true;
+  });
   const isFormOpen = showForm || !!editId;
   const inp = { padding: '7px 11px', borderRadius: '8px', border: '1px solid var(--border)', background: 'rgba(255,255,255,0.06)', color: 'var(--text-primary)', fontSize: '0.95rem', colorScheme: 'dark', outline: 'none', width: '100%' };
 
@@ -234,7 +249,7 @@ function ScreenScheduleSection({ onUnauth, deviceOrder = {} }) {
       )}
 
       {/* ── 스케줄 카드 목록 ── */}
-      {schedules.length === 0 && !isFormOpen && (
+      {visibleSchedules.length === 0 && !isFormOpen && (
         <div style={{ textAlign: 'center', padding: '32px 0', color: '#475569', fontSize: '0.88rem' }}>
           <div style={{ fontSize: '2rem', marginBottom: '8px' }}>📅</div>
           등록된 스케줄이 없습니다.<br />
@@ -242,9 +257,9 @@ function ScreenScheduleSection({ onUnauth, deviceOrder = {} }) {
         </div>
       )}
 
-      {schedules.length > 0 && (
+      {visibleSchedules.length > 0 && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', marginBottom: isFormOpen ? '20px' : '0' }}>
-          {schedules.map(s => {
+          {visibleSchedules.map(s => {
             const isEditing = editId === s.id;
             // 수정 중인 카드는 draft 값을 실시간 반영
             const liveOnTime  = isEditing ? draft.onTime  : s.onTime;
@@ -420,7 +435,7 @@ function ScreenScheduleSection({ onUnauth, deviceOrder = {} }) {
   );
 }
 
-function SettingsTab({ onUnauth, deviceOrder = {} }) {
+function SettingsTab({ onUnauth, deviceOrder = {}, selectedStoreId, selectedZoneId }) {
   const [otaStatus, setOtaStatus] = useState(null);
   const [pushing, setPushing] = useState(false);
   const [adbRunning, setAdbRunning] = useState(false);
@@ -589,21 +604,33 @@ function SettingsTab({ onUnauth, deviceOrder = {} }) {
     xhr.send(form);
   };
 
-  // 선택된 기기 이름 목록
-  const selectedDevices = allDevices.filter(d => selectedIds.has(d.id));
+  // 관제/미디어/동영상과 같은 전역 사업장·구역으로 OTA 기기 목록을 좁힌다(구역=all이면 전체 그대로).
+  const visibleDevices = allDevices.filter(d => {
+    if (selectedStoreId && selectedStoreId !== 'all' && selectedStoreId !== 'unassigned' && d.storeId !== selectedStoreId) return false;
+    if (selectedStoreId === 'unassigned' && d.storeId) return false;
+    if (selectedZoneId && selectedZoneId !== 'all' && d.groupId !== selectedZoneId) return false;
+    return true;
+  });
+
+  // 선택된 기기 이름 목록 (보이는 기기 기준)
+  const selectedDevices = visibleDevices.filter(d => selectedIds.has(d.id));
   const selectedLabel = selectedDevices.length === 0
     ? '선택된 기기 없음'
-    : selectedDevices.length === allDevices.length
-      ? `전체 ${allDevices.length}대`
+    : selectedDevices.length === visibleDevices.length
+      ? `전체 ${visibleDevices.length}대`
       : `${selectedDevices.map(d => d.name).join(', ')} (${selectedDevices.length}대)`;
 
   const toggleDevice = (id) =>
     setSelectedIds(prev => { const s = new Set(prev); s.has(id) ? s.delete(id) : s.add(id); return s; });
 
+  const allVisibleSelected = visibleDevices.length > 0 && visibleDevices.every(d => selectedIds.has(d.id));
   const toggleAll = () =>
-    setSelectedIds(prev =>
-      prev.size === allDevices.length ? new Set() : new Set(allDevices.map(d => d.id))
-    );
+    setSelectedIds(prev => {
+      const next = new Set(prev);
+      if (allVisibleSelected) visibleDevices.forEach(d => next.delete(d.id));
+      else visibleDevices.forEach(d => next.add(d.id));
+      return next;
+    });
 
   const pushUpdate = async () => {
     if (selectedIds.size === 0) { alert('배포할 기기를 선택하세요.'); return; }
@@ -809,19 +836,19 @@ function SettingsTab({ onUnauth, deviceOrder = {} }) {
               style={{ fontSize: '0.78rem', padding: '3px 10px', background: 'rgba(255,255,255,0.07)', border: '1px solid rgba(255,255,255,0.12)', borderRadius: '6px', color: '#e2e8f0', cursor: 'pointer' }}
               onClick={toggleAll}
             >
-              {selectedIds.size === allDevices.length ? '전체 해제' : '전체 선택'}
+              {allVisibleSelected ? '전체 해제' : '전체 선택'}
             </button>
           </div>
-          {allDevices.length === 0 ? (
+          {visibleDevices.length === 0 ? (
             <p style={{ fontSize: '0.82rem', color: '#64748b', padding: '10px 0' }}>기기 없음</p>
           ) : (
             <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
               {(() => {
                 const storeGroups = stores.map(store => ({
                   store,
-                  devices: allDevices.filter(d => d.storeId === store.id)
+                  devices: visibleDevices.filter(d => d.storeId === store.id)
                 })).filter(g => g.devices.length > 0);
-                const unassigned = allDevices.filter(d => !stores.some(s => s.id === d.storeId));
+                const unassigned = visibleDevices.filter(d => !stores.some(s => s.id === d.storeId));
                 if (unassigned.length > 0) storeGroups.push({ store: { id: null, name: '미배정' }, devices: unassigned });
                 return storeGroups;
               })().map(({ store, devices }) => {
@@ -956,7 +983,7 @@ function SettingsTab({ onUnauth, deviceOrder = {} }) {
         </p>
       </div>
 
-      <ScreenScheduleSection onUnauth={onUnauth} deviceOrder={deviceOrder} />
+      <ScreenScheduleSection onUnauth={onUnauth} deviceOrder={deviceOrder} selectedStoreId={selectedStoreId} selectedZoneId={selectedZoneId} />
     </div>
   );
 }
@@ -1076,6 +1103,21 @@ function RemoteControlModal({ device, onClose }) {
   );
 }
 
+// SoC별 HDMI 출력 최대 능력(칩셋 데이터시트 기준). 현장 박스에 실제로 쓰는 SoC만 단정한다.
+// 앱(untrusted_app)은 Android 11 SELinux(sysfs_hdmi)로 EDID/DRM modes를 못 읽어 '박스 최대 능력'을
+// 런타임에 못 구한다 → 서버로 오는 SoC명으로 대시보드가 능력을 역참조한다.
+const SOC_OUTPUT_CAP = {
+  RK3566: { maxRes: '3840×2160', is4K: true },   // 큐버 QR5G-M110S / Ultracube U4X+CM
+  RK3568: { maxRes: '3840×2160', is4K: true },
+  RK3229: { maxRes: '3840×2160', is4K: true },   // 구 크라이저 (HDMI 1.4 → 4K@30)
+};
+const socCapability = (soc) => SOC_OUTPUT_CAP[String(soc || '').toUpperCase()] || null;
+// "1920x1080" / "3840×2160" → 가로 픽셀. 상한 비교(4K=3840)용.
+const resWidth = (res) => {
+  const m = /(\d{3,5})\s*[x×]\s*(\d{3,5})/i.exec(res || '');
+  return m ? parseInt(m[1], 10) : 0;
+};
+
 function DeviceDiagnosticsModal({ device, onClose }) {
   const formatBytesGB = (bytes) => {
     if (!bytes) return '0 GB';
@@ -1095,9 +1137,26 @@ function DeviceDiagnosticsModal({ device, onClose }) {
   const ramUsed = ram.total - ram.free;
   const ramUsedPct = ram.total > 0 ? Math.round((ramUsed / ram.total) * 100) : 0;
 
-  const edid = device.tvEdid || { brand: 'Unknown', model: 'Unknown', serial: '-', maxRes: 'Unknown' };
-  const cec = device.tvCec || (device.status === 'online' ? (device.hdmiConnected ? '켜짐' : '꺼짐') : 'Unknown');
-  const stbSpec = device.stbSpec || { hdmiVer: 'Unknown', maxRes: 'Unknown' };
+  const stbSpec = device.stbSpec || { soc: 'Unknown', curRes: 'Unknown' };
+
+  // 출력 해상도: '낼 수 있는 최대'(= min(TV EDID, STB 칩셋)) 대비 '현재 출력'.
+  const tvEdid = device.tvEdid || null;
+  const tvMaxRes = tvEdid?.maxRes && tvEdid.maxRes !== 'Unknown' ? tvEdid.maxRes : null;
+  const tvBrand = tvEdid?.brand && tvEdid.brand !== 'Unknown' && !/제한/.test(tvEdid.brand) ? tvEdid.brand : null;
+  const socCap = socCapability(stbSpec.soc);
+  const curW = resWidth(stbSpec.curRes);
+  const tvW = resWidth(tvMaxRes);
+  const stbW = socCap ? resWidth(socCap.maxRes) : 0;
+  // 상한 = 아는 값(TV·STB) 중 최소. TV를 못 읽는 기기(A11 SELinux)는 STB 기준만 판정 → 과잉경고 방지.
+  const known = [tvW, stbW].filter(w => w > 0);
+  const capW = known.length ? Math.min(...known) : 0;
+  const capFromTv = capW > 0 && capW === tvW;
+  const capBoth = capW > 0 && tvW > 0 && tvW === stbW;
+  const capRes = capW > 0 ? (capFromTv ? tvMaxRes : socCap?.maxRes) : null;
+  const capSrc = capBoth ? 'TV·STB' : capFromTv ? 'TV 상한' : 'STB 상한';
+  // 현재 출력이 상한과 같으면 최적, 낮으면 SW로 낮게 설정된 상태
+  const isOptimal = capW > 0 && curW > 0 && curW >= capW;
+  const isUnderset = capW > 0 && curW > 0 && curW < capW;
 
   const temp = device.cpuTemp || 0;
   const isTempHigh = temp > 75;
@@ -1112,46 +1171,47 @@ function DeviceDiagnosticsModal({ device, onClose }) {
         
         <div className="diag-modal-body">
           <div className="diag-section">
-            <h3 className="diag-section-title">📺 TV 디스플레이 상태 (EDID / CEC)</h3>
-            <div className="diag-grid">
-              <div className="diag-info-box">
-                <div className="diag-info-label">제조사 (Brand)</div>
-                <div className="diag-info-value">{edid.brand}</div>
-              </div>
-              <div className="diag-info-box">
-                <div className="diag-info-label">모델명 (Model Name)</div>
-                <div className="diag-info-value" title={edid.model}>{edid.model}</div>
-              </div>
-              <div className="diag-info-box">
-                <div className="diag-info-label">시리얼 번호</div>
-                <div className="diag-info-value">{edid.serial}</div>
-              </div>
-              <div className="diag-info-box">
-                <div className="diag-info-label">전원 상태 (CEC)</div>
-                <div className="diag-info-value" style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                  <span className={`status-dot ${cec === '켜짐' ? 'online' : 'offline'}`} style={{ position: 'static', transform: 'none' }}></span>
-                  <span style={{ color: cec === '켜짐' ? '#10b981' : '#f59e0b', fontWeight: 700 }}>{cec}</span>
-                </div>
-              </div>
-              <div className="diag-info-box">
-                <div className="diag-info-label">TV 최대 해상도</div>
-                <div className="diag-info-value">{edid.maxRes || 'Unknown'}</div>
-              </div>
-            </div>
-          </div>
-
-          <div className="diag-section">
             <h3 className="diag-section-title">📟 셋톱박스 하드웨어 상태</h3>
 
             <div className="diag-grid" style={{ marginBottom: '12px' }}>
               <div className="diag-info-box">
-                <div className="diag-info-label">HDMI 최대 출력 버전</div>
-                <div className="diag-info-value">{stbSpec.hdmiVer}</div>
+                <div className="diag-info-label">칩셋 (SoC)</div>
+                <div className="diag-info-value">{stbSpec.soc}</div>
               </div>
               <div className="diag-info-box">
-                <div className="diag-info-label">최대 출력 해상도</div>
-                <div className="diag-info-value">{stbSpec.maxRes}</div>
+                <div className="diag-info-label">현재 출력 해상도</div>
+                <div className="diag-info-value">{stbSpec.curRes}</div>
               </div>
+            </div>
+
+            {/* 출력 해상도 — 낼 수 있는 최대(min(TV,STB)) 대비 현재 출력 */}
+            <div className="diag-info-box" style={{ marginBottom: '12px' }}>
+              <div className="diag-info-label" style={{ marginBottom: '8px' }}>📐 출력 해상도</div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', fontSize: '0.82rem' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                  <span style={{ color: '#94a3b8' }}>낼 수 있는 최대</span>
+                  <span style={{ fontWeight: 600 }}>
+                    {capFromTv && tvBrand ? `${tvBrand} ` : ''}{capRes || '미확인'}
+                    {capW > 0 && (
+                      <span style={{ color: '#64748b', fontWeight: 400, fontSize: '0.72rem', marginLeft: '6px' }}>({capSrc})</span>
+                    )}
+                  </span>
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                  <span style={{ color: '#94a3b8' }}>현재 출력</span>
+                  <span style={{ fontWeight: 600 }}>{stbSpec.curRes}</span>
+                </div>
+              </div>
+              {isOptimal && (
+                <div style={{ marginTop: '8px', padding: '6px 10px', borderRadius: '6px', background: 'rgba(34,197,94,0.15)', color: '#22c55e', fontSize: '0.78rem', fontWeight: 600 }}>
+                  ✓ 최적 — 낼 수 있는 최대 해상도로 출력 중
+                </div>
+              )}
+              {isUnderset && (
+                <div style={{ marginTop: '8px', padding: '6px 10px', borderRadius: '6px', background: 'rgba(234,179,8,0.15)', color: '#eab308', fontSize: '0.78rem', fontWeight: 600 }}>
+                  ⚠️ 낮게 설정됨 — {capRes}까지 가능하나 {stbSpec.curRes} 출력 (SW 설정)
+                </div>
+              )}
             </div>
 
             <div className="diag-hardware-container">
@@ -2513,6 +2573,8 @@ function App() {
               fetchGroups={fetchGroups}
               selectedStoreId={selectedStoreId}
               setSelectedStoreId={setSelectedStoreId}
+              selectedZoneId={selectedZoneId}
+              setSelectedZoneId={setSelectedZoneId}
               deviceOrder={deviceOrder}
               onDeviceOrderChange={setDeviceOrder}
             />
@@ -2522,8 +2584,11 @@ function App() {
           <div className="content-area" style={{ paddingTop: '10px' }}>
             <VideoWallManager
               stores={stores}
+              groups={groups}
               selectedStoreId={selectedStoreId}
               setSelectedStoreId={setSelectedStoreId}
+              selectedZoneId={selectedZoneId}
+              setSelectedZoneId={setSelectedZoneId}
             />
           </div>
         )}
@@ -2536,7 +2601,7 @@ function App() {
           />
         </div>
         {activeTab === 'settings' && (
-          <SettingsTab onUnauth={onUnauth} deviceOrder={deviceOrder} />
+          <SettingsTab onUnauth={onUnauth} deviceOrder={deviceOrder} selectedStoreId={selectedStoreId} selectedZoneId={selectedZoneId} />
         )}
       </main>
       {selectedDiagDevice && (

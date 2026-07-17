@@ -79,7 +79,7 @@ const inp = {
  * 업로드는 기존 미디어와 동일한 POST /api/media (multipart) 를 쓰되, 동영상만 노출.
  * 파일명에 "wallsync" 가 들어가면 플레이어가 wall-동기 비디오로 인식한다(배지 표시).
  */
-const VideoWallManager = ({ stores = [], selectedStoreId, setSelectedStoreId }) => {
+const VideoWallManager = ({ stores = [], groups = [], selectedStoreId, setSelectedStoreId, selectedZoneId, setSelectedZoneId }) => {
   const [videos, setVideos] = useState([]);
   const [uploadProgress, setUploadProgress] = useState(null); // null | { name, pct }
   const fileRef = useRef();
@@ -89,16 +89,11 @@ const VideoWallManager = ({ stores = [], selectedStoreId, setSelectedStoreId }) 
   const [offsets, setOffsets] = useState({});
   // 비디오월은 '한 벽 = 한 구역'이다. /api/devices 는 전 기기를 주므로 사업장·구역으로 좁히지 않으면
   // 다른 매장/구역 기기가 같은 줄에 섞이고, 슬라이스가 엉뚱한 화면에 배포된다.
-  const [selectedZoneId, setSelectedZoneId] = useState('all');
-  const zonesInStore = (() => {
-    const seen = new Map();
-    devices.forEach((d) => {
-      if (!d.groupId) return;
-      if (selectedStoreId && d.storeId !== selectedStoreId) return;
-      if (!seen.has(d.groupId)) seen.set(d.groupId, d.group?.name || d.groupId);
-    });
-    return [...seen].map(([id, name]) => ({ id, name }));
-  })();
+  // 구역 선택은 관제·미디어와 공유되는 전역 상태(App)에서 내려온다 — 왼쪽 메뉴 전반이 같은 구역을 본다.
+  // 다른 메뉴(관제·미디어)와 동일하게 사업장의 '전체 구역'을 groups에서 가져온다(기기 유무 무관).
+  const zonesInStore = groups
+    .filter((g) => g.storeId === selectedStoreId)
+    .map((g) => ({ id: g.id, name: g.name }));
   const effectiveZoneId = zonesInStore.some((z) => z.id === selectedZoneId) ? selectedZoneId : 'all';
   const wallDevices = devices.filter((d) => {
     if (selectedStoreId && d.storeId !== selectedStoreId) return false;
@@ -714,7 +709,7 @@ const VideoWallManager = ({ stores = [], selectedStoreId, setSelectedStoreId }) 
           <option value="">사업장 선택</option>
           {stores.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
         </select>
-        {zonesInStore.length > 1 && (
+        {zonesInStore.length > 0 && (
           <select className="glass-select" style={{ marginLeft: 8 }} value={effectiveZoneId} onChange={(e) => setSelectedZoneId(e.target.value)}>
             <option value="all">구역 전체</option>
             {zonesInStore.map((z) => <option key={z.id} value={z.id}>{z.name}</option>)}

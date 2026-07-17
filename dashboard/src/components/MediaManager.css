@@ -423,22 +423,22 @@
   display: flex;
   background: rgba(255, 255, 255, 0.01);
   border-radius: 14px;
-  min-height: 180px;
+  min-height: 120px;   /* 행이 미디어 카드 높이를 따르게(과거 180은 컴팩트에서 미디어보다 커 device가 늘어났음) */
   padding: 12px;
 }
 
 .device-card-v4 {
   width: 180px;
   min-width: 180px;
-  min-height: 160px;
-  padding: 16px;
-  padding-top: 40px;
+  min-height: 0;               /* 옆 미디어 카드 높이에 맞춤(행 stretch로 미디어 높이를 따라감) */
+  padding: 12px;
+  padding-top: 28px;          /* 삭제 아이콘(top:8) 공간만 확보 */
   border: 2px solid rgba(255, 255, 255, 0.05);
   background: rgba(255, 255, 255, 0.02);
   border-radius: 12px;
   display: flex;
   flex-direction: column;
-  justify-content: flex-start;
+  justify-content: center;    /* 이름·미리보기 버튼을 세로 중앙에 — 빈 공간 제거 */
   align-items: center; /* 내부 요소 중앙 정렬 */
   position: relative;
   transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
@@ -1412,7 +1412,7 @@
      ⚠️ `overflow: hidden` 을 함께 두면 안 된다 — CSS 사양상 flex 아이템의
      `min-height: auto`(내용 기반 최소 크기)는 **overflow 가 visible 이 아니면 0으로 강제**된다.
      즉 overflow:hidden 이 min-height:auto 를 무력화해 다시 잘린다.
-     가로 넘침은 .device-timeline-v4 가 overflow-x:hidden + flex-wrap 으로 이미 처리한다. */
+     가로 넘침은 .device-timeline-v4 가 overflow-x:auto(가로 스크롤)로 처리한다. */
   flex: 1 1 auto;
   min-height: auto;
   overflow: visible;
@@ -1423,6 +1423,8 @@
   width: 130px;
   min-width: 130px;
   padding: 18px 10px 6px;
+  /* 컴팩트에선 행(row)이 flex로 늘어나므로 stretch를 끊어 내용 크기로 — 중앙 정렬된 작은 미디어 카드에 맞춤 */
+  align-self: center;
 }
 .mm-lanes.compact .device-full-preview-btn {
   margin-top: 8px;
@@ -1433,12 +1435,11 @@
   aspect-ratio: 16 / 9;
 }
 
-/* 카드 축소 */
+/* 카드 축소 — compact 모드도 가로 스크롤 유지(하단 wrap 금지).
+   wrap은 행 높이를 늘려 'many devices 한 화면' 목적과 상충하므로, 넘치면 가로로 스크롤한다. */
 .mm-lanes.compact .device-timeline-v4 {
   padding: 0 10px;
-  flex-wrap: wrap;
-  overflow-x: hidden;
-  row-gap: 6px;
+  overflow-x: auto;
 }
 .mm-lanes.compact .media-card-v4 {
   width: 92px;

@@ -2389,7 +2389,8 @@ async function handleTcpMessage(socket, msg) {
       if (p.startsWith('cec:')) tvCec = p.substring(4).trim();
       if (p.startsWith('stb:')) {
         const sp = p.substring(4).split('|');
-        if (sp.length >= 2) stbSpec = { hdmiVer: sp[0], maxRes: sp[1] };
+        // sp[0]=SoC 칩명, sp[1]=현재 실제 출력 해상도 (박스 최대 능력은 SW로 알 수 없어 미보고)
+        if (sp.length >= 2) stbSpec = { soc: sp[0], curRes: sp[1] };
       }
       if (p.startsWith('ticker:')) { const t = parseInt(p.substring(7)); if (!isNaN(t)) tickerCycleMs = t; }
     });

@@ -14,8 +14,8 @@ android {
         applicationId = "com.signagepro.player"
         minSdk = 22                // Android 5.1.1 (RK3229 U4X+ CM)
         targetSdk = 29             // V1-only 서명 유지: RK3229(API22) PM이 V2 블록을 못 읽음. Android 11+는 targetSdk<30이면 V2 강제 없음
-        versionCode = 10205        // 6자리 = major*10000 + minor*100 + patch. 각 자리 0~9, patch 9 다음은 minor 올림
-        versionName = "1.2.5"      // 1.2.5: 자동복귀 복귀동작을 moveTaskToFront 로 — HOME 액티비티라 visible=true 로 남아 startActivity 로는 태스크가 안 올라오던 것 수정. 1.2.4: 자동복귀를 onStop 이 아니라 나가는 시점(뒤로가기·설정)에 직접 건다 — 두 번째 이탈부터 카운트다운이 안 뜨던 것 수정. 1.2.3: 상태바/알림배너 비활성(DO) — OTA 시 "관리자에 의해 업데이트" 배너가 송출화면에 뜨던 것 차단. 1.2.2: 자동복귀 먹통 수정 — 복귀를 HOME 인텐트로(같은 홈 스택이라 NEW_TASK|SINGLE_TOP 이 안 먹었음). 1.2.1: 자동복귀 [정지] 버튼(3분 보류 후 자동 재개). 1.2.0: 시각동기 NTP 폴백 — 서버 끊겨도 기기 간 시계 유지(롤링/비디오월 어긋남 방지). 1.1.9: 대시보드 명령 su 문법 통일(RootUtil). 1.1.8: 유휴감지 카운트다운. 1.1.4: queries+SYSTEM_ALERT_WINDOW. 1.1.0: 5555 persist. 다음 WebView 개편 = 2.x.x
+        versionCode = 10208        // 6자리 = major*10000 + minor*100 + patch. 각 자리 0~9, patch 9 다음은 minor 올림
+        versionName = "1.2.8"      // 1.2.8: 진단 STB - 능력 단정(4K) 철회. 박스 최대출력은 SW로 알 수 없어(커넥터 modes=TV협상값), 칩셋(SoC)+현재 실제 출력만 보고. 1.2.7: STB SoC 기준 표기(철회됨). 1.2.6: Android 11(큐버) CPU온도를 HardwarePropertiesManager(DO)로 읽음(sysfs가 SELinux로 막힘), EDID 못읽으면 'OS 제한' 표기. 1.2.5: 자동복귀 복귀동작을 moveTaskToFront 로 — HOME 액티비티라 visible=true 로 남아 startActivity 로는 태스크가 안 올라오던 것 수정. 1.2.4: 자동복귀를 onStop 이 아니라 나가는 시점(뒤로가기·설정)에 직접 건다 — 두 번째 이탈부터 카운트다운이 안 뜨던 것 수정. 1.2.3: 상태바/알림배너 비활성(DO) — OTA 시 "관리자에 의해 업데이트" 배너가 송출화면에 뜨던 것 차단. 1.2.2: 자동복귀 먹통 수정 — 복귀를 HOME 인텐트로(같은 홈 스택이라 NEW_TASK|SINGLE_TOP 이 안 먹었음). 1.2.1: 자동복귀 [정지] 버튼(3분 보류 후 자동 재개). 1.2.0: 시각동기 NTP 폴백 — 서버 끊겨도 기기 간 시계 유지(롤링/비디오월 어긋남 방지). 1.1.9: 대시보드 명령 su 문법 통일(RootUtil). 1.1.8: 유휴감지 카운트다운. 1.1.4: queries+SYSTEM_ALERT_WINDOW. 1.1.0: 5555 persist. 다음 WebView 개편 = 2.x.x
 
         // 빌드 날짜를 BuildConfig에 자동 삽입 (관제 화면 버전 표시용)
         val buildDate = SimpleDateFormat("yyyy-MM-dd HH:mm").format(Date())

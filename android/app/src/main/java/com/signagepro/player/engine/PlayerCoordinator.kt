@@ -970,33 +970,43 @@ class PlayerCoordinator(
                 } catch (e: Exception) {}
             }
         }
-        return TvEdidInfo("Unknown", "Unknown", "-", "Unknown", "Unknown")
+        // EDID sysfs 실패 — Android 7+(SELinux enforcing)에선 untrusted_app이 /sys/class/drm/*/edid 를
+        // 못 읽는다(큐버 QR5G Android 11). 제조사/모델/시리얼/TV해상도는 공개 API로 얻을 수 없어 'OS 제한'
+        // 으로 표기해 현장에서 TV 고장으로 오해하지 않게 한다. (STB 출력 해상도·HDMI는 readStbDisplaySpec가
+        // Display API로 정상 제공 → 진단 화면 '셋톱박스 하드웨어 상태'에 표시됨)
+        val na = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.N) "OS 제한(11+)" else "Unknown"
+        return TvEdidInfo(na, na, "-", na, "Unknown")
     }
 
+    // ro.* 시스템 프로퍼티 읽기 (SystemProperties는 @hide → 리플렉션). SoC 식별(ro.board.platform)용.
+    private fun getSystemProp(key: String): String = try {
+        val c = Class.forName("android.os.SystemProperties")
+        (c.getMethod("get", String::class.java).invoke(null, key) as? String) ?: ""
+    } catch (_: Throwable) { "" }
+
+    // 반환: (SoC 칩명, 현재 실제 출력 해상도).
+    // 박스의 'HDMI 최대 출력 능력'은 SW로 알 수 없다 — 커넥터 modes는 연결된 TV에 협상된 것뿐이고
+    // (미연결이면 비어 있음), 데이터시트 값은 제품 실제와 다를 수 있다. 그래서 능력은 단정하지 않고
+    // 검증 가능한 값만 보고한다: 칩셋(ro.board.platform) + 현재 활성 출력 모드(Display.mode).
     private fun readStbDisplaySpec(): Pair<String, String> {
-        // supportedModes는 API 23+, Android 5.x(API 22) 기기에서 NoSuchMethodError 발생
-        if (android.os.Build.VERSION.SDK_INT < android.os.Build.VERSION_CODES.M) {
-            return "Unknown" to "Unknown"
+        val platform = getSystemProp("ro.board.platform").lowercase()
+        val soc = when {
+            platform.startsWith("rk356") -> "RK3566"
+            platform.startsWith("rk322") || platform.startsWith("rk3229") -> "RK3229"
+            platform.isBlank() -> "Unknown"
+            else -> platform.uppercase()
         }
-        return try {
+        if (!isHdmiConnected()) return soc to "미연결"
+        if (android.os.Build.VERSION.SDK_INT < android.os.Build.VERSION_CODES.M) return soc to "Unknown"
+        val cur = try {
             val dm = context.getSystemService(android.content.Context.DISPLAY_SERVICE)
                     as android.hardware.display.DisplayManager
             val display = dm.getDisplay(android.view.Display.DEFAULT_DISPLAY)
-            val maxMode = display.supportedModes.maxByOrNull { it.physicalWidth.toLong() * it.physicalHeight }
-            val realMetrics = android.util.DisplayMetrics().also { display.getRealMetrics(it) }
-            val maxW = maxMode?.physicalWidth ?: realMetrics.widthPixels
-            val maxH = maxMode?.physicalHeight ?: realMetrics.heightPixels
-            val hdmiVer = when {
-                maxW >= 7680 -> "HDMI 2.1"
-                maxW >= 3840 -> "HDMI 2.0"
-                maxW >= 1920 -> "HDMI 1.4"
-                maxW > 0    -> "HDMI 1.3"
-                else        -> "Unknown"
-            }
-            hdmiVer to "${maxW}x${maxH}"
-        } catch (e: Throwable) {  // NoSuchMethodError(Error 계열) 포함 전체 포착
-            "Unknown" to "Unknown"
-        }
+            val m = display.mode  // 현재 활성 모드 = 실제 출력
+            if (m != null && m.physicalWidth > 0) "${m.physicalWidth}x${m.physicalHeight}"
+            else android.util.DisplayMetrics().also { display.getRealMetrics(it) }.let { "${it.widthPixels}x${it.heightPixels}" }
+        } catch (e: Throwable) { "Unknown" }
+        return soc to cur
     }
 
     private fun checkTvCecPower(): String {

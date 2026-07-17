@@ -681,7 +681,7 @@ const DeviceRowV4 = ({ device, items, changedSlots = [], isDirty, onDrop, onRemo
         </div>
         {isDirty && <div className="device-card-pending">(배포 대기)</div>}
 
-        <div style={{ flex: 1, minHeight: '20px' }}></div>
+        <div style={{ height: '10px' }}></div>
 
         {items.length > 0 && (
           <button className="device-full-preview-btn" onClick={onPreview}>
@@ -1043,7 +1043,7 @@ const ContentScheduleModal = ({ groupId, getCurrentItems, onClose, onApplied }) 
 };
 
 // ── 메인 MediaManager ─────────────────────────────────────
-const MediaManager = ({ stores = [], groups = [], devices = [], selectedStoreId, setSelectedStoreId, fetchDevices, deviceOrder = {}, onDeviceOrderChange }) => {
+const MediaManager = ({ stores = [], groups = [], devices = [], selectedStoreId, setSelectedStoreId, selectedZoneId, setSelectedZoneId, fetchDevices, deviceOrder = {}, onDeviceOrderChange }) => {
   const [mediaList, setMediaList] = useState([]);
   const [bulkTransition, setBulkTransition] = useState('dissolve');
   const [bulkDuration, setBulkDuration] = useState(2000);
@@ -1117,15 +1117,24 @@ const MediaManager = ({ stores = [], groups = [], devices = [], selectedStoreId,
   // 렌더마다 최신 groupDevices를 ref에 동기화 — fetchPlaylist 스테일 클로저 방지
   groupDevicesRef.current = groupDevices;
 
+  // 사업장 변경 시 편성 초기화 (그룹 선택은 아래 동기화 이펙트가 처리)
   useEffect(() => {
-    setSelectedGroupId('');
     setLanes({});
     setSavedState({});
   }, [selectedStoreId]);
 
+  // 관제(왼쪽 메뉴 상단)와 구역 선택 공유: 전역 selectedZoneId → 로컬 selectedGroupId 반영.
+  // 관제가 '전체(all)'/무효 구역이면 편성엔 특정 구역이 필요하므로 첫 구역으로 대체(전역은 안 건드림).
   useEffect(() => {
-    if (storeGroups.length > 0 && !selectedGroupId) setSelectedGroupId(storeGroups[0].id);
-  }, [storeGroups.length, selectedStoreId]);
+    const shared = (selectedZoneId && selectedZoneId !== 'all' && storeGroups.some(g => g.id === selectedZoneId))
+      ? selectedZoneId : null;
+    if (shared) {
+      if (selectedGroupId !== shared) setSelectedGroupId(shared);
+    } else if (storeGroups.length > 0 && (!selectedGroupId || !storeGroups.some(g => g.id === selectedGroupId))) {
+      setSelectedGroupId(storeGroups[0].id);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedZoneId, storeGroups.map(g => g.id).join(','), selectedStoreId]);
 
   const fetchMedia = useCallback(async () => {
     if (!selectedStoreId) return;
@@ -1549,7 +1558,7 @@ const MediaManager = ({ stores = [], groups = [], devices = [], selectedStoreId,
           <select className="glass-select" value={selectedStoreId} onChange={e => setSelectedStoreId(e.target.value)}>
             {stores.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
           </select>
-          <select className="glass-select" value={selectedGroupId} onChange={e => setSelectedGroupId(e.target.value)}>
+          <select className="glass-select" value={selectedGroupId} onChange={e => { setSelectedGroupId(e.target.value); if (setSelectedZoneId) setSelectedZoneId(e.target.value); }}>
             <option value="">그룹 선택</option>
             {storeGroups.map(g => <option key={g.id} value={g.id}>{g.name}</option>)}
           </select>
