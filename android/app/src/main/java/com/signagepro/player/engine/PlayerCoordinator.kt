@@ -101,6 +101,10 @@ class PlayerCoordinator(
     @Volatile private var currentSlideInfo: String? = null
     @Volatile private var wallSyncDebug: String? = null   // 디버그 오버레이용 wall 동기 상태
     @Volatile private var lastHdmiConnected: Boolean = true  // HDMI 핫플러그 재연결 감지용
+    // 큐버 등 SELinux enforcing 기기는 HDMI sysfs(drm/extcon)를 untrusted_app이 못 읽어,
+    // 워치독이 매 주기(STALL_WATCH_INTERVAL_MS)마다 접근을 시도하면 커널 audit 로그가 폭주한다
+    // (avc denied 수천 건 → audit_lost). 한 번 '접근 불가'로 판명되면 이후 sysfs 폴링을 건너뛴다.
+    @Volatile private var hdmiSysfsInaccessible: Boolean = false
     @Volatile private var wallOffsetMs: Long = 0L            // 비디오월 기기별 위상 오프셋(ms)
     @Volatile private var debugOverlayOn: Boolean = false    // 디버그 오버레이 표시 여부(기본 OFF, 원격 토글)
     private var debugJob: Job? = null                        // 디버그 오버레이 루프 Job
@@ -1034,6 +1038,10 @@ class PlayerCoordinator(
     }
 
     private fun checkHdmiConnectedPhysical(): Boolean {
+        // 이 기기에서 HDMI sysfs 전체가 접근 불가로 판명됐으면 더는 훑지 않는다(연결됨 간주).
+        // 아래 headless 폴백과 동일한 결과 — 단지 반복 sysfs 접근(→audit 폭주)만 제거한다.
+        if (hdmiSysfsInaccessible) return true
+
         fun isConnectedText(text: String): Boolean {
             val t = text.trim()
             return t == "1" || t.equals("connected", ignoreCase = true) ||
@@ -1080,7 +1088,12 @@ class PlayerCoordinator(
         val hasAnyHdmiFile = paths.any { java.io.File(it).exists() } ||
                 (drmDir.exists() && drmDir.isDirectory &&
                     drmDir.listFiles()?.any { it.name.contains("HDMI", ignoreCase = true) } == true)
-        if (!hasAnyHdmiFile) return true
+        if (!hasAnyHdmiFile) {
+            // HDMI sysfs가 하나도 안 보임(부재 또는 SELinux 차단) → 이 기기에선 sysfs로 핫플러그를
+            // 감지할 수 없다. 다음 주기부터 폴링을 건너뛰어 audit 로그 폭주를 막는다.
+            hdmiSysfsInaccessible = true
+            return true
+        }
         return false
     }
 
