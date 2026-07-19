@@ -2601,7 +2601,9 @@ function App() {
           />
         </div>
         {activeTab === 'settings' && (
-          <SettingsTab onUnauth={onUnauth} deviceOrder={deviceOrder} selectedStoreId={selectedStoreId} selectedZoneId={selectedZoneId} />
+          // effectiveZoneId 를 넘긴다(raw selectedZoneId 아님) — 삭제된/타 사업장 구역 ID 가
+          // localStorage 에 남아 구역 셀렉트가 숨겨진 상태여도 OTA·스케줄 목록이 통째로 비지 않도록 '전체' 폴백.
+          <SettingsTab onUnauth={onUnauth} deviceOrder={deviceOrder} selectedStoreId={selectedStoreId} selectedZoneId={effectiveZoneId} />
         )}
       </main>
       {selectedDiagDevice && (
